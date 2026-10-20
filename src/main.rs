@@ -8,6 +8,7 @@ mod app;
 mod diagnostics;
 mod platform;
 mod radial;
+mod session;
 mod ui;
 
 fn main() {

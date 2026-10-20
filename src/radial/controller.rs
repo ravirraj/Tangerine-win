@@ -203,12 +203,10 @@ impl RadialController {
                 vec![Effect::None]
             }
             InteractionEvent::DragPayloadResolved { paths } => {
-                // The shell publishes the payload a moment after the drag has
-                // begun. This is the one documented way the file set may change
-                // during an interaction.
-                if !paths.is_empty() {
-                    self.files = paths;
-                }
+                // The shell's answer for this session is the list. It is set
+                // even when it is empty: a session with no files must not keep
+                // the files of another session.
+                self.files = paths;
                 vec![Effect::None]
             }
             InteractionEvent::Failed { .. } => {
@@ -265,9 +263,10 @@ impl RadialController {
                 vec![Effect::None]
             }
             InteractionEvent::DragPayloadResolved { paths } => {
-                if !paths.is_empty() {
-                    self.files = paths;
-                }
+                // The shell's answer for this session is the list. It is set
+                // even when it is empty: a session with no files must not keep
+                // the files of another session.
+                self.files = paths;
                 vec![Effect::None]
             }
             InteractionEvent::SegmentSelected { index } => self.select(index),
@@ -756,5 +755,75 @@ mod tests {
         c.handle(InteractionEvent::DragStarted { paths: Vec::new() });
         c.handle(InteractionEvent::DragPayloadResolved { paths: paths() });
         assert_eq!(c.files().len(), 1);
+    }
+
+    // ------------------------------------------------------- session consistency
+
+    #[test]
+    fn a_new_drag_replaces_the_files_of_the_previous_drag() {
+        let mut c = controller();
+        open_wheel(&mut c);
+        assert_eq!(c.files().len(), 1);
+
+        // The next drag carries other files.
+        c.handle(InteractionEvent::DragEnded);
+        c.handle(InteractionEvent::DragStarted {
+            paths: vec![
+                PathBuf::from("C:\\Users\\test\\one.txt"),
+                PathBuf::from("C:\\Users\\test\\two.txt"),
+            ],
+        });
+        assert_eq!(c.files().len(), 2);
+        assert_eq!(c.files()[0], PathBuf::from("C:\\Users\\test\\one.txt"));
+    }
+
+    #[test]
+    fn a_drag_with_no_files_does_not_keep_the_files_of_the_previous_drag() {
+        let mut c = controller();
+        open_wheel(&mut c);
+        assert_eq!(c.files().len(), 1);
+
+        // The next drag has no files at all: the shell could not say what was
+        // being dragged. The old files must not be shown for it.
+        c.handle(InteractionEvent::DragEnded);
+        c.handle(InteractionEvent::DragStarted { paths: Vec::new() });
+        assert!(c.files().is_empty());
+    }
+
+    #[test]
+    fn the_files_of_a_drag_are_kept_while_the_wheel_is_up() {
+        let mut c = controller();
+        open_wheel(&mut c);
+        assert_eq!(c.files().len(), 1);
+        // The drop missed every choice, so the wheel stays up and takes
+        // clicks. The files of that drag stay with it, so that a click acts
+        // on the files that were dragged.
+        c.handle(InteractionEvent::SegmentEntered(None));
+        c.handle(InteractionEvent::DragEnded);
+        assert_eq!(c.files().len(), 1);
+        // Once the interaction is over, the files are gone.
+        c.finish_execution();
+        assert!(c.files().is_empty());
+    }
+
+    #[test]
+    fn a_resolved_payload_replaces_the_files_of_the_session() {
+        let mut c = controller();
+        open_wheel(&mut c);
+        c.handle(InteractionEvent::DragPayloadResolved {
+            paths: vec![PathBuf::from("C:\\Users\\test\\other.heic")],
+        });
+        assert_eq!(c.files().len(), 1);
+        assert_eq!(c.files()[0], PathBuf::from("C:\\Users\\test\\other.heic"));
+    }
+
+    #[test]
+    fn a_resolved_payload_of_no_files_clears_the_files_of_the_session() {
+        let mut c = controller();
+        open_wheel(&mut c);
+        // The shell says the selection is empty. The files of the drag are
+        // then empty as well, and never the ones of another drag.
+        c.handle(InteractionEvent::DragPayloadResolved { paths: Vec::new() });
+        assert!(c.files().is_empty());
     }
 }

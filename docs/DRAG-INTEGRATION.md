@@ -11,7 +11,9 @@ drop is taken over, and the drag is not cancelled.
 
 The one thing that does **not** work the way the macOS product works is that
 the payload of a Windows drag is not on the clipboard, so it cannot simply be
-read. It has to be picked up by being the target of the drag.
+read. The files are read from the shell instead: the shell knows what is
+selected in the Explorer window the drag started in, and that selection is
+what is being dragged.
 
 ## What was tried, and what was found
 
@@ -43,11 +45,13 @@ clipboard was left alone.
 That is deliberate on Windows 8 and later: a drag no longer replaces what the
 user has copied.
 
-There is a second trap here. The `DragDrop` format *does* turn up on the
+There was a second trap here. The `DragDrop` format *does* turn up on the
 clipboard, but it can be the **leftovers of an earlier drag**. A first
 version of the application read it and reported the wrong file: the folder the
-user had dragged a moment before. The fix is in `explorer.rs`: the clipboard
-is only believed when its sequence number has changed since the press.
+user had dragged a moment before.
+
+The clipboard is no longer read at all. The list of files comes from the
+shell, which is the only place the payload of a drag can be read from.
 
 ### 2. The OLE clipboard — also does not carry the drag
 
@@ -64,7 +68,7 @@ operation, not the drag:
 (Those are the formats of a web page copied out of a browser.) The OLE
 clipboard is not where a Windows drag keeps its payload either.
 
-### 3. Being the target of the drag — this is the one
+### 3. Being the target of the drag — the drop target still does its job
 
 A drag hands its payload to the drop targets it passes over, and to nobody
 else. So the application registers its own window as a drop target
@@ -91,8 +95,79 @@ It works, and the whole gesture runs:
 [action] placeholder: WebP (convert.webp) in the convert wheel on 1 file(s), source ExplorerDrag.
 ```
 
-The file list arrives about 40 ms after the wheel opens, which is why the
-wheel can open with no files and pick them up a moment later.
+The drop target is still needed for the **drop**: it is what takes the drop
+over, so that a file dropped on a choice does not land in the folder
+underneath. What it is *not* used for any more is the list of files. The list
+comes from the shell, and the list the drop target reports is only used as a
+check: when the two disagree, the log says so.
+
+### 4. The shell's own view of the window — this is where the files come from
+
+The drop target cannot be the only source, for two reasons.
+
+- It only fires once the drag passes **over** the wheel, which is well after
+  the wheel has opened. The wheel would show "No files" until then.
+- It does not always fire at all. In one long series of runs, `DragEnter`
+  never fired, on any run, although `RegisterDragDrop` always succeeded. The
+  shell may simply not offer a drag to a third party drop target on Windows 11.
+
+What the shell *does* publish is the selection of the window the drag started
+in, and that selection is what is being dragged. The shell has had this
+automation interface for twenty years: it is the same `Shell.Application`
+object that a script uses.
+
+The chain is:
+
+```
+Shell.Application
+  -> Windows()            the open Explorer windows
+     -> Item(n)           one of them
+        -> HWND           its window handle
+        -> Document       the shell's view of that window
+           -> SelectedItems()
+              -> Item(n)
+                 -> Path   the full path of the file
+```
+
+This was measured with a real Explorer window, with a real mouse drag, before
+anything was written in Rust:
+
+```
+BEFORE the drag:
+  the window is showing : C:\Users\thorfinn\AppData\Local\Temp\opencode\dragtest
+    path = 'C:\Users\thorfinn\AppData\Local\Temp\opencode\dragtest\file1.txt'
+  the selection has     : 1 item(s)
+DURING the drag (the button is down):
+  the window is showing : C:\Users\thorfinn\AppData\Local\Temp\opencode\dragtest
+    path = 'C:\Users\thorfinn\AppData\Local\Temp\opencode\dragtest\file1.txt'
+  the selection has     : 1 item(s)
+AFTER the drop:
+  the window is showing : C:\Users\thorfinn\AppData\Local\Temp\opencode\dragtest
+    path = 'C:\Users\thorfinn\AppData\Local\Temp\opencode\dragtest\file1.txt'
+  the selection has     : 1 item(s)
+```
+
+The shell answers before, during and after the drag, and it answers with the
+full path of every file.
+
+In Rust this is `src/platform/windows/shellselection.rs`. It uses the late
+bound `IDispatch` interface of the `windows` crate, on the apartment thread
+the application already has (`OleInitialize`).
+
+Three things about the shell's own answers had to be found by trying:
+
+- **`Item` is a method, not a property.** Asking for it as a property fails
+  with `DISP_E_MEMBERNOTFOUND`. Both ways of asking are tried.
+- **The handle is not always a 32 bit number.** Every kind of whole number is
+  understood.
+- **The shell has to be asked while Explorer is idle.** While a drag is going,
+  Explorer is in its own drag loop and the shell has to wait for it: the first
+  read during a drag takes about 50 ms, the next one takes 2 ms. The window
+  and its document are therefore found on the **press**, when Explorer is still
+  idle, and only the selection is read when the drag has begun.
+
+The result is that the wheel opens with the right number of files on it, from
+the first moment it is on the screen.
 
 ## How the drag is found, step by step
 
@@ -110,8 +185,9 @@ leak and no input for anyone else to swallow.
    press. A click does not move that far, so a click is never a drag.
 3. **The modifier.** The modifier keys are read with `GetAsyncKeyState` and
    mapped to a wheel with `ModifierMap`. `Shift` opens the Convert wheel.
-4. **The payload.** The wheel registers itself as a drop target, and the file
-   list arrives with the `DragEnter` callback.
+4. **The payload.** The files are read from the shell, using the window the
+   drag started in. The window is found on the press, when Explorer is idle,
+   and the selection is read when the drag has begun.
 5. **The choice.** The drop arrives in the `Drop` callback, and the segment
    under the pointer is taken.
 
@@ -200,7 +276,7 @@ on screen.
 | Idea | Why not |
 | --- | --- |
 | A low level mouse hook | It sees movement, but not the payload, and it is a global hook that has to be trusted. The polling and the drop target do the job without one. |
-| UI Automation on Explorer's list | It would give the selection rather than the drag, and it is a large amount of COM code for a worse answer. Kept as the next thing to try if a source that does not publish a drop target has to be supported. |
+| UI Automation on Explorer's list | It would give the selection rather than the drag, and it is a large amount of COM code for a worse answer. The shell's own automation gives the same answer with far less code. |
 | `OleGetClipboard` | Measured: it does not carry the drag. |
 | The `DragDrop` clipboard format | Measured: it is either absent or the leftovers of an earlier drag. |
 | Owning the whole drag | The macOS product registers a drop destination and takes the drop. The same is done here, but only while the wheel is on screen. |
@@ -210,8 +286,10 @@ on screen.
 - **A source that is not Explorer is not recognised.** Only Explorer's file
   lists are looked at. Another program that drags files (a browser, an
   editor) will not open the wheel.
-- **The files arrive a moment after the wheel.** The wheel can open with no
-  files, and picks them up about 40 ms later.
+- **The files are known when the wheel opens.** They are read from the shell
+  before the wheel is put on the screen, so the number of files on the wheel
+  is right from the start. The read takes about 50 ms while Explorer is in
+  its drag loop, which is the one price of this way of reading them.
 - **A drop on the hub or a gap is taken by the application**, and the files
   are not moved by Explorer.
 - **The list of files is what the drag carries**, so it is the selection the

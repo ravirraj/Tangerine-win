@@ -190,6 +190,74 @@ with the wheel on the screen.
 
 ---
 
+## 1c. The wheel did not know what was being dragged
+
+This was reported after the first Milestone 1 build: the wheel opened on a
+drag, but it said it had **no files** on it, and the choice that was made was
+made on nothing.
+
+### The root cause
+
+There were two sources of the file list, and **neither of them was the drag**.
+
+- The **clipboard** was read, and Explorer does not put a drag on the
+  clipboard. The format list and the sequence number were measured before,
+  during and after a real drag: they did not change at all. The one time the
+  `DragDrop` format is on the clipboard, it is the leftovers of an earlier
+  drag.
+- The **OLE drop target** was registered, and `RegisterDragDrop` always
+  succeeded, but `DragEnter` did not fire. Not once, in a long series of
+  runs. The wheel therefore never learned anything from it either.
+
+So the count that was shown was accidental: the "0 file(s)" at the start was
+the honest answer, and the "1 file(s)" that turned up later was the drop
+target having been told about the drag by the system rather than by the
+program.
+
+The one thing that does publish the payload of a drag is the shell itself: it
+knows what is selected in the Explorer window the drag started in, and that
+selection is what is being dragged.
+
+### What was changed
+
+- `src/platform/windows/shellselection.rs` is new. It asks the shell, through
+  the automation interface the shell has always had, what is selected in an
+  Explorer window, and gives back the **full path** of every file.
+- `src/session.rs` is new. It owns the file list of one drag, the window the
+  drag started in, and where the list came from. It refuses an answer that
+  belongs to another drag, and a drag that could not be resolved has no files
+  at all rather than the files of an earlier drag.
+- `src/platform/windows/explorer.rs` no longer reads the clipboard. It finds
+  the Explorer window the press was on and hands it over.
+- `src/app.rs` reads the files once per drag, at the start of the drag, and
+  the list is the only one the wheel uses from then on. The list the drop
+  target reports is a check and nothing more: when the two disagree, the log
+  says so.
+- `src/radial/controller.rs` takes the shell's answer as the list, even when
+  it is empty, so that a drag with no files cannot keep the files of the drag
+  before it.
+
+The window and its document are found on the **press**, while Explorer is
+still idle, and only the selection is read when the drag has begun. While a
+drag is going, Explorer is in its own drag loop and the shell has to wait for
+it: the first read during a drag takes about 50 ms, the next one takes 2 ms.
+
+### The checks
+
+`tests/windows-integration.ps1` drives a real Explorer window with a real
+mouse and reads what the program logged. Nothing is mocked.
+
+| Case | Result |
+| --- | --- |
+| One file | 1 file, and the shell names the file that was dragged |
+| Three files | 3 files, and the choice is made on 3 files |
+| Two drags in a row, with different files | The first carries 2 files, the second 1, and the second does not keep the files of the first |
+| A drag that is cancelled with Escape | The files are read, and nothing is run |
+| Dragging a file that was not selected before | Only the file that was dragged is carried |
+| A drag that does not come from Explorer | The press is rejected, and no drag is started |
+
+---
+
 ## 2. Files created or modified
 
 Nothing existed before this milestone except `reference/Open-Tangerine-main.zip`.
@@ -215,16 +283,19 @@ Everything below is new.
 | `src/platform/windows/input.rs` | 191 | The pointer, the keys, the scroll wheel |
 | `src/platform/windows/monitors.rs` | 88 | Where the screens are |
 | `src/platform/windows/overlay.rs` | 407 | The transparent window the wheel is drawn in |
+| `src/platform/windows/shellselection.rs` | 508 | Asking the shell what is being dragged |
+| `src/session.rs` | 263 | The file list of one drag |
 | `src/ui/mod.rs` | 3 | |
 | `src/ui/animation.rs` | 204 | The one animation model |
 | `src/ui/wheel.rs` | 296 | The view model |
 | `src/ui/wheel.slint` | 193 | The markup |
+| `tests/windows-integration.ps1` | 552 | The Windows tests with a real Explorer |
 | `README.md` | 75 | |
 | `docs/INTERACTION.md` | 119 | |
-| `docs/DRAG-INTEGRATION.md` | 140 | |
+| `docs/DRAG-INTEGRATION.md` | 200 | |
 | `docs/MILESTONE-1-REPORT.md` | | This file |
 
-4 330 lines of Rust, of which about 1 300 are tests.
+6 300 lines of Rust, of which about 1 500 are tests.
 
 ---
 
@@ -347,8 +418,27 @@ than worked around.
 ### The rest
 
 The platform layer has tests that do not touch the screen: the drag detector
-ignores movement while the button is up, reading the clipboard never panics,
-the monitor lookup works, the modifier reading is consistent.
+ignores movement while the button is up, the monitor lookup works, the
+modifier reading is consistent.
+
+The file list of a drag has its own tests, in `session.rs` and in
+`controller.rs`:
+
+| What is checked | Where |
+| --- | --- |
+| A new drag drops the files of the drag before it | `session.rs` |
+| An answer about another drag is refused | `session.rs` |
+| A drag that could not be resolved has no files at all | `session.rs` |
+| An empty selection is resolved, and empty | `session.rs` |
+| The files of one drag are never mixed with another's | `session.rs` |
+| The wheel takes the shell's answer, even when it is empty | `controller.rs` |
+| The files of a drag stay with the wheel while it is up | `controller.rs` |
+
+### The Windows tests
+
+`tests/windows-integration.ps1` is the other half of the checking. It drives
+a real Explorer window with a real mouse and reads what the program logged.
+The six cases are listed in section 1c; all six pass.
 
 ---
 
@@ -458,7 +548,8 @@ that has been counted by eye; both follow from the measured frame rate.
   marked in the log, and the controller can never report it as an Explorer
   drag.
 - **An Explorer drag is found, the files in it are found, the drop is taken
-  over, and the drag is not cancelled.** Checked end to end.
+  over, and the drag is not cancelled.** Checked end to end, with a real
+  Explorer window and a real mouse.
 - **The program is a good citizen**: no global keyboard or mouse hook except
   one narrow one for the scroll wheel, no input is swallowed, Explorer is
   never touched outside a drag, and the hook and the window are cleaned up
@@ -494,9 +585,11 @@ that has been counted by eye; both follow from the measured frame rate.
    take the risk away: when the drop lands on the hub or in a gap, hand the
    drop back to the program underneath instead of taking it.
 
-2. **The file list arrives about 40 ms after the wheel opens.** The wheel
-   briefly shows no file count. It can be hidden by waiting for the payload
-   before the wheel appears, at the price of a later wheel.
+2. **The file list is read while Explorer is in its drag loop.** The shell
+   cannot be asked quickly at that moment: the first read takes about 50 ms
+   and the wheel waits for it, so the wheel opens about 50 ms later than it
+   would otherwise. The number of files on the wheel is right from the start,
+   which is the trade that was made.
 
 3. **Only one drag at a time.** A second drag during an interaction is
    ignored. That is deliberate, but it is a limitation.
@@ -519,6 +612,12 @@ that has been counted by eye; both follow from the measured frame rate.
    was driven with `mouse_event` and `SetCursorPos`. The behaviour was
    confirmed on a real Explorer window with a real ghost image, but nobody has
    yet held a mouse and dragged a file while holding `Shift`.
+
+8. **A file that has no path of its own is left out.** A virtual item — a
+   search result, a library file, a OneDrive placeholder that has not been
+   fetched — can have a name but no path. Such an item is not in the list,
+   and the list is shorter than the number of items on the screen. It is
+   never guessed at.
 
 ---
 

@@ -58,6 +58,7 @@ src/
   main.rs                  the entry point
   app.rs                   the loop, the wiring, the diagnostics
   diagnostics.rs           the timestamped log
+  session.rs               the file list of one drag
   radial/
     actions.rs             what the three wheels offer
     controller.rs          the interaction state machine
@@ -70,16 +71,36 @@ src/
     input.rs               the pointer, the keys, the scroll wheel
     monitors.rs            where the screens are
     overlay.rs             the transparent window the wheel is drawn in
+    shellselection.rs      asking the shell what is being dragged
   ui/
     animation.rs           the one animation model
     wheel.rs               the view model
     wheel.slint            the markup
+tests/
+  windows-integration.ps1  the tests with a real Explorer window
 ```
 
 The rule the layout follows: the controller never knows about Windows, the
 platform layer never knows about the wheel, and the drawing never decides
 anything. Everything the user does arrives as a typed event, and everything the
 application wants to do comes back as a typed effect.
+
+## The tests
+
+```sh
+cargo test
+```
+
+There is also a set of tests that needs a desktop: they open a real Explorer
+window, drag a real file with a real mouse and read what the program logged.
+
+```sh
+cargo build --release
+powershell -ExecutionPolicy Bypass -File tests\windows-integration.ps1
+```
+
+They move the mouse and press keys, so they must not be run while somebody
+else is using the machine.
 
 ## The documents
 

@@ -6,7 +6,7 @@
 
 use std::time::{Duration, Instant};
 
-use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0};
+use windows::Win32::Foundation::{CloseHandle, HANDLE, HWND, WAIT_OBJECT_0};
 use windows::Win32::System::Ole::{IDropTarget, OleInitialize, OleUninitialize};
 use windows::Win32::System::Threading::{
     CancelWaitableTimer, CreateWaitableTimerW, SetWaitableTimer,
@@ -23,10 +23,12 @@ use crate::platform::windows::explorer::{DragDetector, DragEvent};
 use crate::platform::windows::input::{self, Key, KeyTracker};
 use crate::platform::windows::monitors;
 use crate::platform::windows::overlay::{Overlay, OverlayEvent};
+use crate::platform::windows::shellselection;
 use crate::radial::actions::{ModifierMap, Modifiers, RadialMode, Segment};
 use crate::radial::controller::RadialController;
 use crate::radial::geometry::{Point, RadialGeometry, WheelPlacement};
 use crate::radial::state::{Effect, InteractionEvent, InteractionSource, InteractionState};
+use crate::session::DragSession;
 use crate::ui::animation::WheelAnimation;
 use crate::ui::wheel::{DISC_SIZE, ViewModel, WheelUi, build_view_model};
 
@@ -141,6 +143,13 @@ struct App {
     /// Keeps a second copy of the program from opening a second wheel.
     /// It is only held, never read: closing it gives the right back.
     _instance: Option<windows::Win32::Foundation::HANDLE>,
+    /// The files of the drag that is running, and where they came from.
+    session: DragSession,
+    /// The shell's object for the Explorer window the press was on.
+    ///
+    /// It is found while Explorer is idle, because the shell has to wait for
+    /// Explorer while a drag is going.
+    shell_window: Option<shellselection::Window>,
 }
 
 impl App {
@@ -204,6 +213,8 @@ impl App {
             placement: None,
             pending_drop_target: false,
             _instance: Some(instance),
+            session: DragSession::new(),
+            shell_window: None,
         })
     }
 
@@ -296,6 +307,10 @@ impl App {
                 // that is showing nothing cannot be found.
                 if self.controller.is_explorer_drag() {
                     self.pending_drop_target = true;
+                    // The selection may not have been complete when the drag
+                    // began, so the shell is asked once more now that the
+                    // wheel is opening.
+                    self.refresh_payload();
                 }
             }
             Effect::UpdateWheel => {
@@ -345,11 +360,14 @@ impl App {
             Level::Info,
             "action",
             &format!(
-                "placeholder: {} ({}) in the {} wheel on {} file(s), source {:?}. Nothing is executed in Milestone 1.",
+                "placeholder: {} ({}) in the {} wheel on {} file(s) from drag {} in the window {:?} ({}), source {:?}. Nothing is executed in Milestone 1.",
                 segment.label,
                 segment.id,
                 mode.name(),
                 files.len(),
+                self.session.id(),
+                self.session.source(),
+                self.session.origin(),
                 source
             ),
         );
@@ -473,16 +491,30 @@ impl App {
     fn handle_drop(&mut self) {
         let state = self.drop_state.clone();
 
-        // The file list of the drag.
+        // The drop target may also have been told what is being dragged. That
+        // answer is only a check: the list the shell gave is the one the
+        // wheel uses, so that the count cannot change halfway through.
         let paths = state.paths.borrow().clone();
         if !paths.is_empty() && paths != self.reported_paths {
             self.reported_paths = paths.clone();
-            diagnostics::log(
-                Level::Debug,
-                "drag",
-                &format!("the drag carries {} file(s)", paths.len()),
-            );
-            self.dispatch(InteractionEvent::DragPayloadResolved { paths });
+            if paths != self.session.paths() {
+                diagnostics::log(
+                    Level::Warn,
+                    "drag",
+                    &format!(
+                        "the drop target reports {} file(s) but the shell reported {} for drag {}",
+                        paths.len(),
+                        self.session.paths().len(),
+                        self.session.id()
+                    ),
+                );
+            } else {
+                diagnostics::log(
+                    Level::Debug,
+                    "drag",
+                    &format!("the drop target agrees: {} file(s)", paths.len()),
+                );
+            }
         }
 
         if !state.over.get() {
@@ -499,6 +531,91 @@ impl App {
                     self.dispatch(InteractionEvent::SegmentSelected { index });
                 }
             }
+        }
+    }
+
+    /// Opens the session for a drag.
+    ///
+    /// The session is opened when the button goes down on an Explorer window,
+    /// which is before there is a drag at all. The files of the drag before it
+    /// are dropped here, so that a gesture that never becomes a drag cannot
+    /// show the files of an earlier one.
+    fn begin_session(&mut self, session: u64, source: HWND) {
+        self.session.begin(session, source);
+    }
+
+    /// Asks the shell what the current drag is carrying.
+    ///
+    /// The answer comes from the shell's own view of the Explorer window the
+    /// drag started in. It is the only place the payload can be read from, and
+    /// it is the only list the wheel is allowed to use: a list that was read
+    /// for an earlier drag, or a list that was never read at all, is never
+    /// used.
+    ///
+    /// The answer is remembered for the session, so that the files can be read
+    /// again while the choice is being made, and so that a later answer for the
+    /// same session can be told apart from an answer for a different one.
+    fn resolve_payload(&mut self, session: u64, source: HWND) -> Vec<std::path::PathBuf> {
+        let resolution = match &self.shell_window {
+            Some(window) => window.selected_paths(),
+            None => shellselection::selected_paths(source),
+        };
+        let paths = resolution.paths().to_vec();
+        match resolution.reason() {
+            None => diagnostics::log(
+                Level::Info,
+                "drag",
+                &format!(
+                    "the shell resolved {} file(s) for drag {session}",
+                    paths.len()
+                ),
+            ),
+            Some(reason) => diagnostics::log(
+                Level::Warn,
+                "drag",
+                &format!("the shell could not resolve the files of drag {session}: {reason}"),
+            ),
+        }
+        // The list of this session is the only one that counts. An answer
+        // about another drag is refused, so the files of one drag are never
+        // the files of another.
+        self.session.resolve(session, resolution);
+        self.session.paths().to_vec()
+    }
+
+    /// Asks the shell once more whether the files of this drag have changed.
+    ///
+    /// This is done when the wheel opens, because the selection may not have
+    /// been complete when the drag began. The answer is only used when it
+    /// belongs to the same drag.
+    fn refresh_payload(&mut self) {
+        let source = self.drag.source();
+        if source.0.is_null() {
+            return;
+        }
+        let session = self.drag.session();
+        let resolution = match &self.shell_window {
+            Some(window) => window.selected_paths(),
+            None => shellselection::selected_paths(source),
+        };
+        if !resolution.is_resolved() {
+            // The shell could not answer this time. The list that was read
+            // before stays the list of this session; nothing is invented and
+            // nothing from another drag is used.
+            return;
+        }
+        let paths = resolution.paths().to_vec();
+        if paths != self.session.paths() {
+            diagnostics::log(
+                Level::Info,
+                "drag",
+                &format!(
+                    "the shell now reports {} file(s) for drag {session}",
+                    paths.len()
+                ),
+            );
+            self.session.resolve(session, resolution);
+            self.dispatch(InteractionEvent::DragPayloadResolved { paths });
         }
     }
 
@@ -550,14 +667,47 @@ impl App {
         let left_down = input::is_key_down(VK_LBUTTON);
         let was_armed = self.drag.is_armed();
         match self.drag.poll(cursor, left_down) {
-            DragEvent::Started { session, paths } => {
+            DragEvent::Pressed { session, source } => {
+                // The session for this gesture is opened here, before there is
+                // a drag at all, so that the files of the drag before it are
+                // dropped.
+                self.begin_session(session, source);
+                // The shell's object for the window is found now, while
+                // Explorer is still idle. While a drag is going, Explorer is
+                // busy and the shell has to wait for it, which would hold up
+                // the wheel.
+                self.shell_window = shellselection::Window::find(source);
+                diagnostics::log(
+                    Level::Debug,
+                    "drag",
+                    &format!(
+                        "drag {session} was pressed on the Explorer window {source:?} (the shell {} it)",
+                        if self.shell_window.is_some() {
+                            "knows"
+                        } else {
+                            "does not know"
+                        }
+                    ),
+                );
+            }
+            DragEvent::Started { session, source } => {
+                // The files that are being dragged are asked for from the
+                // shell, using the window the drag started in. The shell is
+                // the only place the payload can be read from.
+                let paths = self.resolve_payload(session, source);
                 diagnostics::log(
                     Level::Info,
                     "drag",
                     &format!(
-                        "drag {session} started at {cursor:?} with {} file(s), foreground window {:?}",
+                        "drag {session} started in the Explorer window {source:?} (the foreground window is {:?}): {} file(s), resolution {}, payload from {}",
+                        input::foreground_class(),
                         paths.len(),
-                        input::foreground_class()
+                        if self.session.is_resolved() {
+                            "resolved"
+                        } else {
+                            "unresolved"
+                        },
+                        self.session.origin(),
                     ),
                 );
                 // The drag is announced first, so that the controller is in the
@@ -605,20 +755,6 @@ impl App {
         }
         if !left_down {
             self.press_reported = false;
-        }
-
-        // The shell publishes the payload a moment after the drag begins.
-        if self.drag.is_armed() {
-            let paths = self.drag.paths();
-            if !paths.is_empty() && paths != self.controller.files() {
-                let paths = paths.to_vec();
-                diagnostics::log(
-                    Level::Debug,
-                    "drag",
-                    &format!("the drag payload resolved to {} file(s)", paths.len()),
-                );
-                self.dispatch(InteractionEvent::DragPayloadResolved { paths });
-            }
         }
 
         // While the wheel has not opened yet, its position follows the pointer.
@@ -931,6 +1067,11 @@ pub fn run(options: Options) -> Result<(), String> {
         app.open_development_wheel();
     }
 
+    // The shell's automation object is made and asked a question now, while
+    // nothing is happening: the shell takes its time the first time, and the
+    // wheel cannot wait for that while a drag is going.
+    let shell_warm_up = shellselection::warm_up();
+
     diagnostics::log(
         Level::Info,
         "start",
@@ -941,6 +1082,12 @@ pub fn run(options: Options) -> Result<(), String> {
             app.controller.modifier_map()
         ),
     );
+
+    // What the shell can be asked, so that a later failure to read the files
+    // can be told apart from the shell not knowing the window at all.
+    if diagnostics::enabled(Level::Debug) {
+        diagnostics::log(Level::Debug, "shell", &shell_warm_up);
+    }
 
     // The frame is driven by a waitable timer rather than by `WM_TIMER`.
     // A window that never comes to the front has its `WM_TIMER` messages
