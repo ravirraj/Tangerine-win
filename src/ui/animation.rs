@@ -74,11 +74,6 @@ impl WheelAnimation {
         self.appear_target == 0.0 && self.appear == 0.0
     }
 
-    /// Whether the wheel is on its way in or already there.
-    pub fn is_present(&self) -> bool {
-        self.appear_target > 0.0
-    }
-
     /// Points at a segment, or at nothing.
     pub fn set_highlight(&mut self, index: Option<usize>) {
         if index == self.emphasis_index {

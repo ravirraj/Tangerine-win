@@ -265,6 +265,20 @@ impl RadialController {
                 vec![Effect::None]
             }
             InteractionEvent::SegmentSelected { index } => self.select(index),
+            InteractionEvent::DragStarted { paths } => {
+                // A new drag after a drop that missed: the wheel is still up,
+                // and it follows the new drag. A second drag *during* a drag is
+                // ignored, so that one gesture never opens two wheels.
+                if self.interactive && self.source == InteractionSource::ExplorerDrag {
+                    self.interactive = false;
+                    self.state = InteractionState::CandidateDrag;
+                    self.files = paths;
+                    self.highlighted = None;
+                    self.segments = segments_for(self.mode);
+                    return vec![Effect::None];
+                }
+                vec![Effect::None]
+            }
             InteractionEvent::DragEnded => {
                 // The mouse came up. If it came up on a choice, that choice is
                 // taken; otherwise the wheel stays up and starts taking clicks.
@@ -305,7 +319,6 @@ impl RadialController {
                 self.interactive = false;
                 vec![Effect::HideWheel]
             }
-            _ => vec![Effect::None],
         }
     }
 
@@ -635,6 +648,72 @@ mod tests {
         let effects = c.handle(InteractionEvent::DragEnded);
         assert_eq!(c.state(), InteractionState::SelectionPending);
         assert!(matches!(effects[1], Effect::Run { .. }));
+    }
+
+    #[test]
+    fn the_pointer_is_remembered_before_the_wheel_opens() {
+        let mut c = controller();
+        c.handle(InteractionEvent::DragStarted { paths: paths() });
+        // The pointer is read before the modifier is acted on, so that the
+        // wheel opens around the pointer and not around where it was.
+        let where_the_pointer_is = Point::new(1234.0, 567.0);
+        c.handle(InteractionEvent::PointerMoved {
+            position: where_the_pointer_is,
+        });
+        assert_eq!(c.center(), Some(where_the_pointer_is));
+        c.handle(InteractionEvent::ModifiersChanged(Modifiers {
+            shift: true,
+            ..Modifiers::NONE
+        }));
+        assert_eq!(c.state(), InteractionState::WheelVisible);
+        assert_eq!(c.center(), Some(where_the_pointer_is));
+    }
+
+    #[test]
+    fn the_wheel_stays_where_it_opened() {
+        let mut c = controller();
+        open_wheel(&mut c);
+        let opened_at = c.center();
+        // The pointer moves on, but the wheel does not follow it: only the
+        // segment under the pointer changes.
+        c.handle(InteractionEvent::PointerMoved {
+            position: Point::new(9.0, 9.0),
+        });
+        assert_eq!(c.center(), opened_at);
+    }
+
+    #[test]
+    fn a_new_drag_after_a_drop_that_missed_opens_the_wheel_again() {
+        let mut c = controller();
+        open_wheel(&mut c);
+        // The drop misses every choice, so the wheel stays up and takes clicks.
+        c.handle(InteractionEvent::SegmentEntered(None));
+        c.handle(InteractionEvent::DragEnded);
+        assert_eq!(c.state(), InteractionState::WheelVisible);
+        assert!(c.is_interactive());
+
+        // A new drag follows the wheel.
+        c.handle(InteractionEvent::DragStarted { paths: paths() });
+        assert_eq!(c.state(), InteractionState::CandidateDrag);
+        c.handle(InteractionEvent::PointerMoved {
+            position: Point::new(700.0, 300.0),
+        });
+        c.handle(InteractionEvent::ModifiersChanged(Modifiers {
+            shift: true,
+            ..Modifiers::NONE
+        }));
+        assert_eq!(c.state(), InteractionState::WheelVisible);
+        assert_eq!(c.center(), Some(Point::new(700.0, 300.0)));
+    }
+
+    #[test]
+    fn a_second_drag_during_a_drag_does_not_open_a_second_wheel() {
+        let mut c = controller();
+        open_wheel(&mut c);
+        // The wheel is up and belongs to a drag that is still running.
+        let effects = c.handle(InteractionEvent::DragStarted { paths: paths() });
+        assert_eq!(c.state(), InteractionState::WheelVisible);
+        assert_eq!(effects, vec![Effect::None]);
     }
 
     #[test]

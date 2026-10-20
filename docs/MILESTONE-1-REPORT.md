@@ -37,6 +37,79 @@ is made.
 
 ---
 
+## 1a. The wheel was in the wrong place, and it flickered
+
+This was reported after the first Milestone 1 build: the wheel appeared in the
+top left corner of the screen whatever the pointer was doing, a second wheel
+appeared near the pointer, and the wheel flickered so fast that it could not
+be caught in a screenshot.
+
+### The root cause
+
+`UpdateLayeredWindow` was called with a **destination device context** and a
+destination point of `(0, 0)`.
+
+When a destination context is given, that point is not a hint: it is where the
+window is **moved to**. A point of zero is the top left corner of the screen.
+So every frame did this:
+
+1. `place` moved the window to the pointer.
+2. `present` moved it back to the corner of the screen.
+3. The next frame's `place` moved it to the pointer again.
+
+At 62 frames a second the window therefore oscillated between the pointer and
+the corner of the screen. That is all three symptoms at once: the wheel in the
+corner, the wheel on the pointer, and the flickering.
+
+Two smaller faults were found and fixed at the same time:
+
+- The overlay window was made at `(0, 0)` with a size of 16 by 16. A layered
+  window that is given pixels by `UpdateLayeredWindow` is **resized to fit
+  them and made visible**, so a window that was never placed would put a
+  whole wheel in the corner. The window is now made off the screen at
+  `(-32000, -32000)`, at the right size, and it is placed before the first
+  pixel is drawn. `present` refuses to draw into a window that has not been
+  placed.
+- The centre of the wheel was taken from the pointer *before* the drag was
+  announced, so when the modifier was already held when the drag began, the
+  controller opened the wheel before it had been told where the pointer was.
+  The pointer is now read after the drag is announced, so the wheel always
+  opens around the pointer.
+
+### The other things that were tightened
+
+- **One program, one wheel.** A second copy of the program now says so and
+  stops, rather than putting a second wheel on the screen.
+- **The window is placed once.** It is only moved when the place really
+  changes, and the monitor is not asked about on every frame.
+- **Showing and hiding happens once.** The overlay knows whether it is on the
+  screen, and the wheel is not hidden and shown again while it is fading.
+- **The drop target is registered once.** Registering twice would fail and
+  leave the window with no drop target at all.
+- **Every drag is a session.** A session has a number, it is opened by a press
+  on an Explorer window, and it is closed by the button coming up. A new
+  session can only start after the button has been seen up, so a button that
+  is reported as up for a single frame can no longer end one drag and start
+  another. That was the cause of the repeated "the drag ended" messages.
+- **A press that is not on an Explorer window is refused**, and the log says
+  which window it was on.
+- **The scale of the monitor is read properly** and the program asks Windows
+  to be per monitor aware, so the wheel is not stretched on a screen that is
+  set to anything but 100 %.
+
+### The checks
+
+| Check | Result |
+| --- | --- |
+| The pointer at four places on the screen | The wheel is placed exactly on the pointer at each of them |
+| Shift held for five seconds | The overlay is shown once and hidden never; the drag ends once |
+| The same drag three times over | Three sessions, three endings, the wheel opened three times, one window |
+| The pointer moved around the wheel | Five different segments lit up, one after the other |
+| Escape | `WheelVisible → Cancelling → Idle`, and the overlay is hidden |
+| A second copy of the program | It says another copy is running and stops |
+
+---
+
 ## 2. Files created or modified
 
 Nothing existed before this milestone except `reference/Open-Tangerine-main.zip`.

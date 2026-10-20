@@ -9,12 +9,14 @@
 //! `WS_EX_NOACTIVATE` keeps the focus where it was and `WS_EX_TRANSPARENT`
 //! makes the window click-through.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
 use std::fmt;
 use std::rc::Rc;
 
-use windows::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, POINT, SIZE, WPARAM};
+use windows::Win32::Foundation::{
+    COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM,
+};
 use windows::Win32::Graphics::Gdi::{
     AC_SRC_ALPHA, AC_SRC_OVER, BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION, CreateCompatibleDC,
     CreateDIBSection, DIB_RGB_COLORS, DeleteDC, DeleteObject, HDC, HGDIOBJ, SelectObject,
@@ -23,8 +25,8 @@ use windows::Win32::Media::{timeBeginPeriod, timeEndPeriod};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Ole::{IDropTarget, RegisterDragDrop, RevokeDragDrop};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, GWL_EXSTYLE, GWLP_USERDATA, GetWindowLongPtrW, HWND_TOPMOST,
-    IsWindowVisible, RegisterClassW, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_SHOWWINDOW,
+    CreateWindowExW, DefWindowProcW, GWL_EXSTYLE, GWLP_USERDATA, GetWindowLongPtrW, GetWindowRect,
+    HWND_TOPMOST, IsWindowVisible, RegisterClassW, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE,
     SetWindowLongPtrW, SetWindowPos, ShowWindow, ULW_ALPHA, UpdateLayeredWindow, WM_ERASEBKGND,
     WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEWHEEL, WM_NCHITTEST, WNDCLASSW, WS_EX_LAYERED,
     WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT, WS_POPUP,
@@ -47,6 +49,8 @@ pub enum OverlayEvent {
 pub enum OverlayError {
     Win32(windows::core::Error),
     BadPixels,
+    /// The window has not been placed yet, so there is nowhere to draw.
+    NotPlaced,
 }
 
 impl fmt::Display for OverlayError {
@@ -54,6 +58,9 @@ impl fmt::Display for OverlayError {
         match self {
             OverlayError::Win32(error) => write!(f, "win32 error: {error}"),
             OverlayError::BadPixels => write!(f, "the pixel buffer does not match the window"),
+            OverlayError::NotPlaced => {
+                write!(f, "the overlay has not been placed on the screen yet")
+            }
         }
     }
 }
@@ -72,6 +79,12 @@ struct OverlayState {
 }
 
 const CLASS_NAME: windows::core::PCWSTR = w!("OpenTangerineOverlayWindow");
+
+/// Where the window is made, before it has been placed.
+///
+/// Far enough away that no screen shows it.
+const OFF_SCREEN_X: i32 = -32_000;
+const OFF_SCREEN_Y: i32 = -32_000;
 
 /// Registers the overlay window class, once per process.
 fn register_class() -> windows::core::Result<()> {
@@ -156,9 +169,14 @@ fn push_input(hwnd: HWND, input: OverlayEvent) {
 pub struct Overlay {
     hwnd: HWND,
     state: Rc<OverlayState>,
-    screen_dc: HDC,
     memory_dc: HDC,
     dib: Option<DibSurface>,
+    /// Whether the window has been placed at least once.
+    placed: Cell<bool>,
+    /// Whether the window is currently a drop target.
+    drop_target_registered: Cell<bool>,
+    /// Whether the application believes the window is on screen.
+    visible: Cell<bool>,
 }
 
 /// A 32-bit premultiplied BGRA surface the pixels are drawn into.
@@ -171,8 +189,13 @@ struct DibSurface {
 }
 
 impl Overlay {
-    /// Creates the overlay. It starts hidden.
-    pub fn new() -> windows::core::Result<Self> {
+    /// Creates the overlay. It starts hidden, and off the screen.
+    ///
+    /// The window is made at the size it will be drawn at. That matters:
+    /// `UpdateLayeredWindow` resizes a layered window to the size it is given
+    /// and makes it visible, so a window that was never placed would put the
+    /// wheel in the top left corner of the screen.
+    pub fn new(width: u32, height: u32) -> windows::core::Result<Self> {
         register_class()?;
         // SAFETY: the module handle is only read.
         let module = unsafe { GetModuleHandleW(None) }.unwrap_or_default();
@@ -183,10 +206,12 @@ impl Overlay {
                 CLASS_NAME,
                 w!("Open Tangerine"),
                 WS_POPUP,
-                0,
-                0,
-                16,
-                16,
+                // Far away from any screen, so the window can never be seen
+                // before it has been placed.
+                OFF_SCREEN_X,
+                OFF_SCREEN_Y,
+                width.max(1) as i32,
+                height.max(1) as i32,
                 None,
                 None,
                 Some(HINSTANCE(module.0)),
@@ -204,16 +229,16 @@ impl Overlay {
         }
 
         // SAFETY: a memory device context for the source bitmap.
-        let screen_dc = unsafe { CreateCompatibleDC(None) };
-        // SAFETY: a memory device context for the source bitmap.
         let memory_dc = unsafe { CreateCompatibleDC(None) };
 
         Ok(Self {
             hwnd,
             state,
-            screen_dc,
             memory_dc,
             dib: None,
+            placed: Cell::new(false),
+            drop_target_registered: Cell::new(false),
+            visible: Cell::new(false),
         })
     }
 
@@ -221,7 +246,20 @@ impl Overlay {
         self.hwnd
     }
 
-    /// Moves the window without showing it.
+    /// Where the window actually is, in physical screen pixels.
+    pub fn window_rect(&self) -> (i32, i32, i32, i32) {
+        let mut rect = RECT::default();
+        // SAFETY: the handle is ours and the rectangle is writable.
+        unsafe {
+            let _ = GetWindowRect(self.hwnd, &mut rect);
+        }
+        (rect.left, rect.top, rect.right, rect.bottom)
+    }
+
+    /// Moves the window to where the wheel belongs.
+    ///
+    /// The window is placed before it is ever drawn, so the wheel can never
+    /// appear in the wrong place.
     pub fn place(&self, x: i32, y: i32, width: u32, height: u32) {
         // SAFETY: the window handle is ours.
         unsafe {
@@ -232,25 +270,49 @@ impl Overlay {
                 y,
                 width as i32,
                 height as i32,
-                SWP_NOACTIVATE | SWP_SHOWWINDOW,
+                // The window is moved without being shown: it is shown once
+                // there is something to show.
+                SWP_NOACTIVATE,
             );
         }
+        self.placed.set(true);
     }
 
     /// Shows the window without giving it the focus.
+    ///
+    /// Showing a window that is already showing does nothing, so this is safe
+    /// to call on every frame.
     pub fn show(&self) {
+        if self.visible.get() {
+            return;
+        }
+        self.visible.set(true);
         // SAFETY: the window handle is ours.
         unsafe {
             let _ = ShowWindow(self.hwnd, SW_SHOWNOACTIVATE);
         }
+        crate::diagnostics::log(
+            crate::diagnostics::Level::Info,
+            "overlay",
+            &format!("the overlay was shown at {:?}", self.window_rect()),
+        );
     }
 
     /// Hides the window.
     pub fn hide(&self) {
+        if !self.visible.get() {
+            return;
+        }
+        self.visible.set(false);
         // SAFETY: the window handle is ours.
         unsafe {
             let _ = ShowWindow(self.hwnd, SW_HIDE);
         }
+        crate::diagnostics::log(
+            crate::diagnostics::Level::Info,
+            "overlay",
+            "the overlay was hidden",
+        );
     }
 
     /// Whether the window is on screen.
@@ -305,16 +367,38 @@ impl Overlay {
     /// This is how the file list of a drag is found: Explorer's drag keeps its
     /// payload to itself, and only a drop target is told what it carries.
     /// The registration is undone again as soon as the interaction is over.
+    ///
+    /// Calling this again while the window is already a drop target does
+    /// nothing: registering twice would fail and leave the window without a
+    /// drop target at all.
     pub fn register_drop_target(&self, target: &IDropTarget) -> Result<(), OverlayError> {
+        if self.drop_target_registered.get() {
+            return Ok(());
+        }
         // SAFETY: the window is ours and the target outlives the registration.
         unsafe { RegisterDragDrop(self.hwnd, target) }?;
+        self.drop_target_registered.set(true);
+        crate::diagnostics::log(
+            crate::diagnostics::Level::Info,
+            "overlay",
+            "the overlay is now a drop target",
+        );
         Ok(())
     }
 
     /// Stops being a drop target.
     pub fn revoke_drop_target(&self) {
+        if !self.drop_target_registered.get() {
+            return;
+        }
+        self.drop_target_registered.set(false);
         // SAFETY: the window is ours.
         let _ = unsafe { RevokeDragDrop(self.hwnd) };
+        crate::diagnostics::log(
+            crate::diagnostics::Level::Info,
+            "overlay",
+            "the overlay is no longer a drop target",
+        );
     }
 
     /// Puts the pixels on the screen.
@@ -327,6 +411,11 @@ impl Overlay {
         }
         if pixels.len() < (width as usize) * (height as usize) {
             return Err(OverlayError::BadPixels);
+        }
+        if !self.placed.get() {
+            // Drawing into a window that has never been placed would put the
+            // wheel in the top left corner of the screen.
+            return Err(OverlayError::NotPlaced);
         }
         self.ensure_surface(width, height)?;
         let surface = self.dib.as_mut().expect("surface was just created");
@@ -344,7 +433,6 @@ impl Overlay {
             cx: width as i32,
             cy: height as i32,
         };
-        let destination = POINT { x: 0, y: 0 };
         let source = POINT { x: 0, y: 0 };
         let blend = BLENDFUNCTION {
             BlendOp: AC_SRC_OVER as u8,
@@ -354,11 +442,16 @@ impl Overlay {
         };
         // SAFETY: the source device context holds the selected bitmap and the
         // window is a layered window of exactly this size.
+        //
+        // The destination device context is left out on purpose. When it is
+        // given, the point below is the place the window is moved to, and a
+        // point of zero means the top left corner of the screen. Without it
+        // the window keeps the place `place` gave it.
         unsafe {
             UpdateLayeredWindow(
                 self.hwnd,
-                Some(self.screen_dc),
-                Some(&destination),
+                None,
+                None,
                 Some(&size),
                 Some(self.memory_dc),
                 Some(&source),
@@ -436,7 +529,6 @@ impl Drop for Overlay {
         // SAFETY: both device contexts were created by us.
         unsafe {
             let _ = DeleteDC(self.memory_dc);
-            let _ = DeleteDC(self.screen_dc);
         }
     }
 }

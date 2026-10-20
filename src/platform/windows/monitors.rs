@@ -8,7 +8,7 @@ use windows::Win32::Graphics::Gdi::{
     GetMonitorInfoW, HMONITOR, MONITOR_DEFAULTTONEAREST, MONITOR_FROM_FLAGS, MONITORINFO,
     MonitorFromPoint,
 };
-use windows::Win32::UI::HiDpi::GetDpiForWindow;
+use windows::Win32::UI::HiDpi::{GetDpiForMonitor, GetDpiForWindow, MDT_EFFECTIVE_DPI};
 use windows::Win32::UI::WindowsAndMessaging::{
     GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
 };
@@ -36,23 +36,48 @@ impl MonitorInfo {
 
 /// The monitor a screen point sits on.
 pub fn monitor_for_point(x: i32, y: i32) -> Option<MonitorInfo> {
-    let point = POINT { x, y };
-    // SAFETY: the call only reads the point.
-    let handle: HMONITOR =
-        unsafe { MonitorFromPoint(point, MONITOR_FROM_FLAGS(MONITOR_DEFAULTTONEAREST.0)) };
-    if handle.0.is_null() {
-        return None;
-    }
+    let handle = monitor_handle_at(x, y)?;
     let mut info = MONITORINFO {
         cbSize: std::mem::size_of::<MONITORINFO>() as u32,
         ..Default::default()
     };
     // SAFETY: `info` is a correctly sized MONITORINFO.
     if unsafe { GetMonitorInfoW(handle, &mut info) }.as_bool() {
-        Some(MonitorInfo::from_rect(info.rcMonitor, info.rcWork, 96))
+        Some(MonitorInfo::from_rect(
+            info.rcMonitor,
+            info.rcWork,
+            dpi_for_monitor(handle),
+        ))
     } else {
         None
     }
+}
+
+/// The handle of the monitor a screen point sits on.
+fn monitor_handle_at(x: i32, y: i32) -> Option<HMONITOR> {
+    let point = POINT { x, y };
+    // SAFETY: the call only reads the point.
+    let handle: HMONITOR =
+        unsafe { MonitorFromPoint(point, MONITOR_FROM_FLAGS(MONITOR_DEFAULTTONEAREST.0)) };
+    if handle.0.is_null() {
+        None
+    } else {
+        Some(handle)
+    }
+}
+
+/// The scale factor of a monitor, as a percentage.
+fn dpi_for_monitor(handle: HMONITOR) -> u32 {
+    let mut x: u32 = 0;
+    let mut y: u32 = 0;
+    // SAFETY: the handle is a live monitor and the two numbers are writable.
+    let result = unsafe { GetDpiForMonitor(handle, MDT_EFFECTIVE_DPI, &mut x, &mut y) };
+    if result.is_err() || x == 0 { 96 } else { x }
+}
+
+/// The scale factor of the monitor a screen point sits on, as a percentage.
+pub fn dpi_for_point(x: i32, y: i32) -> u32 {
+    monitor_handle_at(x, y).map(dpi_for_monitor).unwrap_or(96)
 }
 
 /// The DPI of a window, as a percentage.

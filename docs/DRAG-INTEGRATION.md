@@ -104,7 +104,8 @@ leak and no input for anyone else to swallow.
    `GetAsyncKeyState`. When the button goes down, the window under the
    pointer is found with `WindowFromPoint` and its root is asked for its class
    name. Only `CabinetWClass` and `ExploreWClass` — Explorer's file lists —
-   are accepted. A press anywhere else is not a candidate.
+   are accepted. A press anywhere else is not a candidate, and the log says
+   which window it was on.
 2. **The movement.** The pointer has to travel at least 8 pixels from the
    press. A click does not move that far, so a click is never a drag.
 3. **The modifier.** The modifier keys are read with `GetAsyncKeyState` and
@@ -113,6 +114,66 @@ leak and no input for anyone else to swallow.
    list arrives with the `DragEnter` callback.
 5. **The choice.** The drop arrives in the `Drop` callback, and the segment
    under the pointer is taken.
+
+### Every drag is a session
+
+A drag is a **session** with a number, and the number is in the log:
+
+```
+[drag] drag 1 started at Point { x: 207.0, y: 177.0 } with 0 file(s), foreground window Some("CabinetWClass")
+[drag] drag 1 ended
+```
+
+A session is opened by a press on an Explorer window and closed by the button
+coming up, and it can only be opened again after the button has been seen up in
+between. That latch is what stops one gesture from being counted as several:
+without it, a button that is reported as up for a single frame ends the drag
+and starts a new one, and the wheel opens and closes again and again.
+
+A session that has ended cannot bring the wheel back. A **new** session can:
+if a drop missed every choice and the wheel is still up, the next drag takes
+the wheel with it:
+
+```
+[state] WheelVisible -> CandidateDrag (event)
+[state] CandidateDrag -> WheelVisible (event)
+```
+
+## Where the wheel is put
+
+The wheel is placed **before** it is ever drawn, and it is never moved unless
+the place really changes.
+
+Two things had to be got right, and the first one was a real bug:
+
+- **`UpdateLayeredWindow` must not be given a destination device context.**
+  When it is, the point that goes with it is the place the window is moved
+  to, and a point of zero means the top left corner of the screen. The wheel
+  was therefore yanked from the pointer to the corner of the screen on every
+  frame, and `place` moved it back on the next one. The wheel flickered
+  between the two places at 60 frames a second, which is what the bug looked
+  like: one wheel in the corner, one on the pointer, and no way to catch
+  either. With no destination context the window keeps the place it was given.
+- **The window is made off the screen**, at `(-32000, -32000)`, and it is
+  placed before the first pixel is drawn. A window that has never been placed
+  would be drawn in the corner.
+
+The pointer is read with `GetCursorPos`, which is in **physical** screen
+pixels, which is what `SetWindowPos` wants. The wheel is drawn at the scale of
+the monitor it is on, and the program asks Windows to be per monitor aware so
+that the wheel is not stretched on a screen that is set to anything but
+100 %.
+
+The wheel is kept on the monitor the pointer is on, and it is clamped so that
+all of it fits. A pointer in the corner of the screen therefore puts the wheel
+against the corner, and not half off the screen:
+
+```
+pointer (400, 300) -> the wheel is placed at (210, 110)
+pointer (1200, 700) -> the wheel is placed at (1010, 510)
+pointer (960, 540) -> the wheel is placed at (770, 350)
+pointer (100, 100) -> the wheel is placed at (0, 0)
+```
 
 ## The drag is not cancelled
 

@@ -126,10 +126,28 @@ struct App {
     frame_time: std::time::Duration,
     /// Whether OLE was started on this thread.
     ole: windows::core::Result<()>,
+    /// Whether the wheel is on the screen.
+    wheel_open: bool,
+    /// Whether the placement of the wheel has been logged already.
+    placement_logged: bool,
+    /// Where the wheel was put the last time, so that it is only moved when it
+    /// really has to be.
+    placed_centre: Option<Point>,
+    /// Keeps a second copy of the program from opening a second wheel.
+    /// It is only held, never read: closing it gives the right back.
+    _instance: Option<windows::Win32::Foundation::HANDLE>,
 }
 
 impl App {
     fn new(options: Options) -> Result<Self, String> {
+        // Only one wheel at a time. A second copy of the program would put a
+        // second wheel on the screen, in a different place, and the two would
+        // fight over the screen.
+        let instance = claim_single_instance()
+            .ok_or_else(|| "another copy of Open Tangerine is already running".to_string())?;
+        // The wheel is drawn at the scale of the monitor it is on, so the
+        // process has to know about the scale of each monitor.
+        set_dpi_awareness();
         // OLE has to be available on this thread before the drag payload can
         // be read from the OLE clipboard.
         // SAFETY: the call only prepares the thread for OLE.
@@ -137,10 +155,14 @@ impl App {
         if ole.is_err() {
             diagnostics::error("ole", "OLE could not be started on this thread");
         }
-        let overlay = Overlay::new().map_err(|error| error.to_string())?;
+        // The scale of the display the pointer is on decides how big the
+        // wheel is, and that has to be known before the window is made.
+        let cursor = input::cursor_position().unwrap_or(Point::new(960.0, 540.0));
+        let scale = detect_scale(cursor);
+        let disc = (DISC_SIZE * scale).round().max(64.0) as u32;
+        let overlay = Overlay::new(disc, disc).map_err(|error| error.to_string())?;
         let drop_state = std::rc::Rc::new(DropState::default());
         let drop_target = make_drop_target(drop_state.clone());
-        let scale = detect_scale(&overlay);
         let ui = WheelUi::new(scale).map_err(|error| error.to_string())?;
         let mut controller = RadialController::new();
         controller.set_modifier_map(options.modifier_map);
@@ -171,6 +193,10 @@ impl App {
             frames: 0,
             frame_time: std::time::Duration::ZERO,
             ole,
+            wheel_open: false,
+            placement_logged: false,
+            placed_centre: None,
+            _instance: Some(instance),
         })
     }
 
@@ -191,12 +217,53 @@ impl App {
         match effect {
             Effect::None => {}
             Effect::ShowWheel => {
+                // The pointer is read at the moment the wheel is asked for, so
+                // that the wheel opens around the pointer and not around
+                // wherever it was a moment ago.
+                let cursor = self.capture_cursor();
+                let centre = self.controller.center().or(cursor);
+                diagnostics::log(
+                    Level::Info,
+                    "wheel",
+                    &format!(
+                        "the wheel is opening in the {} mode with {} segment(s) on {} file(s), pointer {cursor:?}, centre {centre:?}, drag {}",
+                        self.controller.mode().name(),
+                        self.controller.segments().len(),
+                        self.controller.files().len(),
+                        self.drag.session()
+                    ),
+                );
+                if self.wheel_open {
+                    // The wheel is already up, because a new drag has
+                    // followed a drop that missed. It moves to the new pointer
+                    // and takes the drop over again, but it does not start
+                    // its entrance again, which would make it jump.
+                    // The wheel always takes the mouse. While a drag is running
+                    // the drag owns it anyway, and the wheel has to be
+                    // clickable once the drag is over.
+                    self.overlay.set_mouse_through(false);
+                    if self.controller.is_explorer_drag()
+                        && let Err(error) = self.overlay.register_drop_target(&self.drop_target)
+                    {
+                        diagnostics::error(
+                            "drag",
+                            &format!("the wheel could not become a drop target: {error}"),
+                        );
+                    }
+                    return;
+                }
+                self.wheel_open = true;
+                diagnostics::log(
+                    Level::Info,
+                    "overlay",
+                    &format!(
+                        "the overlay is on the screen: {}, placed: {}",
+                        self.overlay.is_visible(),
+                        self.overlay.window_rect() != (0, 0, 0, 0)
+                    ),
+                );
                 self.animation.show();
                 self.animation.set_highlight(self.controller.highlighted());
-                // While a drag is running the wheel becomes a drop target.
-                // That is the only way to learn what the drag is carrying,
-                // and it is also how the drop is taken over instead of
-                // landing in the folder underneath.
                 // The wheel always takes the mouse. While a drag is running the
                 // drag owns it anyway, and the wheel has to be clickable once
                 // the drag is over.
@@ -212,6 +279,10 @@ impl App {
                         Err(error) => diagnostics::error("input", &error),
                     }
                 }
+                // While a drag is running the wheel becomes a drop target.
+                // That is the only way to learn what the drag is carrying,
+                // and it is also how the drop is taken over instead of
+                // landing in the folder underneath.
                 if self.controller.is_explorer_drag()
                     && let Err(error) = self.overlay.register_drop_target(&self.drop_target)
                 {
@@ -220,21 +291,17 @@ impl App {
                         &format!("the wheel could not become a drop target: {error}"),
                     );
                 }
-                diagnostics::log(
-                    Level::Info,
-                    "wheel",
-                    &format!(
-                        "the wheel is opening in the {} mode with {} segment(s) on {} file(s)",
-                        self.controller.mode().name(),
-                        self.controller.segments().len(),
-                        self.controller.files().len()
-                    ),
-                );
             }
             Effect::UpdateWheel => {
                 self.animation.set_highlight(self.controller.highlighted());
             }
             Effect::HideWheel => {
+                // The wheel is going away. Everything that belongs to it is
+                // undone once, here, and not again on every frame.
+                if !self.wheel_open {
+                    return;
+                }
+                self.wheel_open = false;
                 self.animation.hide();
                 // The wheel is no longer a drop target, so a drag that is still
                 // going is left to the program underneath.
@@ -471,25 +538,43 @@ impl App {
         let left_down = input::is_key_down(VK_LBUTTON);
         let was_armed = self.drag.is_armed();
         match self.drag.poll(cursor, left_down) {
-            DragEvent::Started { paths } => {
+            DragEvent::Started { session, paths } => {
                 diagnostics::log(
                     Level::Info,
                     "drag",
                     &format!(
-                        "Explorer drag started with {} file(s), foreground window {:?}",
+                        "drag {session} started at {cursor:?} with {} file(s), foreground window {:?}",
                         paths.len(),
                         input::foreground_class()
                     ),
                 );
+                // The drag is announced first, so that the controller is in the
+                // right state, and the pointer is read straight afterwards, so
+                // that the wheel opens around the pointer and not around
+                // wherever it was when the drag began.
                 self.dispatch(InteractionEvent::DragStarted { paths });
+                self.dispatch(InteractionEvent::PointerMoved { position: cursor });
                 // The modifier may already have been held when the drag began.
                 let modifiers = input::modifiers();
                 self.last_modifiers = modifiers;
                 self.dispatch(InteractionEvent::ModifiersChanged(modifiers));
             }
-            DragEvent::Ended => {
-                diagnostics::log(Level::Info, "drag", "the drag ended");
+            DragEvent::Ended { session } => {
+                diagnostics::log(Level::Info, "drag", &format!("drag {session} ended"));
                 self.dispatch(InteractionEvent::DragEnded);
+            }
+            DragEvent::Rejected { reason } => {
+                if !was_armed && left_down && !self.press_reported {
+                    self.press_reported = true;
+                    diagnostics::log(
+                        Level::Debug,
+                        "drag",
+                        &format!(
+                            "the press at {cursor:?} was not a file drag: {reason} (the window under it is {:?})",
+                            crate::platform::windows::explorer::window_class_at_point(cursor)
+                        ),
+                    );
+                }
             }
             DragEvent::None => {}
         }
@@ -500,16 +585,9 @@ impl App {
             diagnostics::log(
                 Level::Debug,
                 "drag",
-                &format!("the press started on an Explorer window at {cursor:?}"),
-            );
-        } else if !was_armed && left_down && !self.press_reported {
-            self.press_reported = true;
-            diagnostics::log(
-                Level::Debug,
-                "drag",
                 &format!(
-                    "the press at {cursor:?} was on {:?}, not on an Explorer window",
-                    crate::platform::windows::explorer::window_class_at_point(cursor)
+                    "drag {} started on an Explorer window at {cursor:?}",
+                    self.drag.session()
                 ),
             );
         }
@@ -556,7 +634,20 @@ impl App {
                 ),
             );
         }
+        // The pointer is read before the modifier is acted on, so that the
+        // wheel opens exactly where the pointer is at that moment.
+        self.capture_cursor();
         self.dispatch(InteractionEvent::ModifiersChanged(modifiers));
+    }
+
+    /// Reads the pointer and tells the controller where it is.
+    ///
+    /// The coordinates come from `GetCursorPos`, so they are in physical screen
+    /// pixels, which is what the window placement wants.
+    fn capture_cursor(&mut self) -> Option<Point> {
+        let cursor = input::cursor_position()?;
+        self.dispatch(InteractionEvent::PointerMoved { position: cursor });
+        Some(cursor)
     }
 
     /// Handles what the overlay window reports.
@@ -645,7 +736,11 @@ impl App {
             self.ui.apply(&model);
         }
 
-        if self.animation.is_present() || self.animation.appear() > 0.0 {
+        // The wheel is on the screen while it is up, and while it is fading
+        // away. It is placed before it is drawn, so it can never appear in
+        // the wrong place, and it is shown and hidden exactly once each time.
+        let on_screen = self.animation.appear() > 0.0;
+        if on_screen {
             self.layout();
             let drawn = self.ui.render();
             if drawn {
@@ -664,20 +759,17 @@ impl App {
                         Level::Info,
                         "wheel",
                         &format!(
-                            "the wheel was on screen {:.1} ms after the gesture",
-                            opened.elapsed().as_secs_f64() * 1000.0
+                            "the wheel was on screen {:.1} ms after the gesture, at {:?}",
+                            opened.elapsed().as_secs_f64() * 1000.0,
+                            self.overlay.window_rect()
                         ),
                     );
                 }
             }
-            if !self.overlay.is_visible() {
-                self.overlay.show();
-            }
+            self.overlay.show();
         } else {
-            if self.overlay.is_visible() {
-                self.overlay.hide();
-                self.ui.request_redraw();
-            }
+            self.overlay.hide();
+            self.ui.request_redraw();
             // The wheel has finished leaving.
             if self.animation.is_gone() && self.controller.state() == InteractionState::Cancelling {
                 self.dispatch(InteractionEvent::WheelDismissed);
@@ -687,31 +779,106 @@ impl App {
     }
 
     /// Puts the wheel on screen around the cursor, inside the monitor.
+    /// Puts the wheel on screen around the pointer, inside the monitor.
+    ///
+    /// The wheel is always placed, even when the controller has no centre yet:
+    /// a window that is never placed stays in the corner of the screen, and
+    /// `UpdateLayeredWindow` would draw the wheel there.
     fn layout(&mut self) {
-        let Some(center) = self.controller.center() else {
+        // The wheel is always placed, even when the controller has no centre yet:
+        // a window that is never placed stays in the corner of the screen, and
+        // `UpdateLayeredWindow` would draw the wheel there.
+        let centre = self
+            .controller
+            .center()
+            .or_else(input::cursor_position)
+            .unwrap_or(Point::new(0.0, 0.0));
+
+        // The wheel does not move once it has opened, so the work of placing it
+        // is only done when the place really changes.
+        if self.placed_centre == Some(centre) {
             return;
-        };
+        }
+        self.placed_centre = Some(centre);
+
         let disc = DISC_SIZE * self.scale;
         let radius = disc / 2.0;
-        let bounds = monitors::monitor_for_point(center.x as i32, center.y as i32)
+        let monitor = monitors::monitor_for_point(centre.x as i32, centre.y as i32);
+        let bounds = monitor
             .map(|monitor| monitor.bounds)
             .unwrap_or_else(monitors::virtual_bounds);
-        let clamped = clamp_center(center, radius, bounds);
+        let clamped = clamp_center(centre, radius, bounds);
         let x = (clamped.x - radius).round() as i32;
         let y = (clamped.y - radius).round() as i32;
         self.overlay_origin = (x, y);
         self.overlay
             .place(x, y, disc.round() as u32, disc.round() as u32);
+
+        if !self.placement_logged {
+            self.placement_logged = true;
+            diagnostics::log(
+                Level::Info,
+                "overlay",
+                &format!(
+                    "the wheel is placed at ({x}, {y}), {} by {} pixels, centre {centre:?}, monitor {bounds:?}, monitor dpi {}, window dpi {}, window {:?}",
+                    disc.round(),
+                    disc.round(),
+                    monitor.map(|monitor| monitor.dpi).unwrap_or(96),
+                    monitors::dpi_for_window(self.overlay.hwnd()),
+                    self.overlay.window_rect()
+                ),
+            );
+        }
     }
 }
 
 /// The scale factor of the display the pointer is on.
-fn detect_scale(overlay: &Overlay) -> f32 {
-    let cursor = input::cursor_position().unwrap_or(Point::new(960.0, 540.0));
-    let dpi = monitors::dpi_for_window(overlay.hwnd());
-    let dpi = if dpi > 0 { dpi } else { 96 };
-    let _ = cursor;
+fn detect_scale(cursor: Point) -> f32 {
+    let dpi = monitors::dpi_for_point(cursor.x as i32, cursor.y as i32);
     (dpi as f32 / 96.0).clamp(1.0, 4.0)
+}
+
+/// Tells Windows that the program knows about the scale of every monitor.
+///
+/// Without this, Windows would stretch the wheel for a monitor that is set to
+/// anything but 100 %.
+fn set_dpi_awareness() {
+    use windows::Win32::UI::HiDpi::{
+        DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext,
+    };
+    // SAFETY: the call only sets the awareness of this process.
+    let result =
+        unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
+    if result.is_err() {
+        diagnostics::log(
+            Level::Debug,
+            "dpi",
+            "the program could not ask for per monitor scaling",
+        );
+    }
+}
+
+/// Claims the right to be the only copy of the program.
+///
+/// The handle is held for as long as the program runs, and closing it gives
+/// the right back.
+fn claim_single_instance() -> Option<windows::Win32::Foundation::HANDLE> {
+    use windows::Win32::Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, GetLastError};
+    use windows::Win32::System::Threading::CreateMutexW;
+    // SAFETY: the name is a static wide string.
+    let handle =
+        unsafe { CreateMutexW(None, true, windows::core::w!("Local\\OpenTangerineWheel")) }.ok()?;
+    // SAFETY: the call only reads the last error.
+    let error = unsafe { GetLastError() };
+    if error == ERROR_ALREADY_EXISTS {
+        // Another copy of the program is already running.
+        // SAFETY: the handle is ours.
+        unsafe {
+            let _ = CloseHandle(handle);
+        }
+        return None;
+    }
+    Some(handle)
 }
 
 /// Starts the application and runs it until it is asked to stop.

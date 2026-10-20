@@ -233,9 +233,51 @@ pub enum DragEvent {
     None,
     /// A drag started. The file list may still be empty: the shell publishes
     /// the payload a moment after the drag begins.
-    Started { paths: Vec<PathBuf> },
-    /// The drag ended.
-    Ended,
+    Started {
+        /// Which drag this is. The number goes up for every new drag.
+        session: u64,
+        paths: Vec<PathBuf>,
+    },
+    /// The drag ended. This is said once for every drag, and never again.
+    Ended {
+        /// Which drag ended.
+        session: u64,
+    },
+    /// A press that is not a file drag, and why.
+    Rejected { reason: &'static str },
+}
+
+/// Remembers whether the button has been let go since the last drag.
+///
+/// A drag can only begin after the button has been seen up, so that one
+/// gesture is never counted as several. Without this, a button that is
+/// reported as up for a single frame would end the drag and start a new one,
+/// and the wheel would open and close again and again.
+#[derive(Debug)]
+struct ButtonLatch {
+    released: bool,
+}
+
+impl Default for ButtonLatch {
+    fn default() -> Self {
+        // The button is up before the first press, so the first press is
+        // allowed.
+        Self { released: true }
+    }
+}
+
+impl ButtonLatch {
+    /// The button went down. Returns whether a new gesture may begin.
+    fn press(&mut self) -> bool {
+        let allowed = self.released;
+        self.released = false;
+        allowed
+    }
+
+    /// The button came up.
+    fn release(&mut self) {
+        self.released = true;
+    }
 }
 
 /// Watches for an Explorer drag.
@@ -243,9 +285,19 @@ pub enum DragEvent {
 /// The detector only ever looks at the pointer, the button and the window
 /// under the pointer. It does not install a hook and it does not change any
 /// input.
+///
+/// Every drag is a **session** with its own number. A session is opened by a
+/// press on an Explorer window and closed by the button coming up, and it can
+/// only be opened again after the button has been seen up in between.
 pub struct DragDetector {
+    /// The number of the drag that is running, or of the last one.
+    session: u64,
+    /// Whether a drag is being watched.
     armed: bool,
+    /// Whether the drag has already been reported as started.
     reported: bool,
+    /// Whether the button has been seen up since the last drag.
+    latch: ButtonLatch,
     origin: Option<Point>,
     press_sequence: u32,
     paths: Vec<PathBuf>,
@@ -262,8 +314,10 @@ impl Default for DragDetector {
 impl DragDetector {
     pub fn new() -> Self {
         Self {
+            session: 0,
             armed: false,
             reported: false,
+            latch: ButtonLatch::default(),
             origin: None,
             press_sequence: 0,
             paths: Vec::new(),
@@ -276,6 +330,11 @@ impl DragDetector {
         self.armed
     }
 
+    /// The number of the drag that is running, or of the last one.
+    pub fn session(&self) -> u64 {
+        self.session
+    }
+
     /// The file list of the drag in progress.
     pub fn paths(&self) -> &[PathBuf] {
         &self.paths
@@ -286,24 +345,35 @@ impl DragDetector {
     /// `left_down` says whether the primary button is held.
     pub fn poll(&mut self, cursor: Point, left_down: bool) -> DragEvent {
         if !left_down {
-            let was_armed = self.armed;
+            // The button is up. A drag that was running ends here, and only
+            // here.
+            self.latch.release();
+            if !self.armed {
+                return DragEvent::None;
+            }
             self.armed = false;
             self.reported = false;
             self.origin = None;
             self.paths.clear();
-            return if was_armed {
-                DragEvent::Ended
-            } else {
-                DragEvent::None
+            return DragEvent::Ended {
+                session: self.session,
             };
         }
 
         if !self.armed {
+            if !self.latch.press() {
+                // The button was never seen up, so this is still the old
+                // gesture and not a new one.
+                return DragEvent::None;
+            }
             // The button has just gone down. Only a press that starts on an
             // Explorer window can become a file drag.
             if explorer_window_at_point(cursor).is_none() {
-                return DragEvent::None;
+                return DragEvent::Rejected {
+                    reason: "the press was not on an Explorer window",
+                };
             }
+            self.session += 1;
             self.armed = true;
             self.reported = false;
             self.origin = Some(cursor);
@@ -334,6 +404,7 @@ impl DragDetector {
             }
             self.reported = true;
             return DragEvent::Started {
+                session: self.session,
                 paths: self.paths.clone(),
             };
         }
@@ -361,6 +432,7 @@ mod tests {
         let detector = DragDetector::new();
         assert!(!detector.is_armed());
         assert!(detector.paths().is_empty());
+        assert_eq!(detector.session(), 0);
     }
 
     #[test]
@@ -371,6 +443,39 @@ mod tests {
             assert_eq!(event, DragEvent::None);
         }
         assert!(!detector.is_armed());
+    }
+
+    #[test]
+    fn a_press_that_is_not_on_an_explorer_window_is_rejected() {
+        let mut detector = DragDetector::new();
+        // A point that is on no screen at all.
+        let event = detector.poll(Point::new(-10_000.0, -10_000.0), true);
+        assert!(matches!(event, DragEvent::Rejected { .. }));
+        assert!(!detector.is_armed());
+        assert_eq!(detector.session(), 0);
+    }
+
+    #[test]
+    fn the_latch_allows_one_press_at_a_time() {
+        let mut latch = ButtonLatch::default();
+        // The button was up before the first press, so it is allowed.
+        assert!(latch.press());
+        // The button is still down, so a second press is not a new gesture.
+        assert!(!latch.press());
+        latch.release();
+        assert!(latch.press());
+    }
+
+    #[test]
+    fn a_drag_cannot_start_again_before_the_button_is_up() {
+        let mut detector = DragDetector::new();
+        // The button goes up and down again, but the press never lands on an
+        // Explorer window, so no session is ever opened.
+        for _ in 0..5 {
+            detector.poll(Point::new(-10_000.0, -10_000.0), true);
+            detector.poll(Point::new(-10_000.0, -10_000.0), false);
+        }
+        assert_eq!(detector.session(), 0);
     }
 
     #[test]
