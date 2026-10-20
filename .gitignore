@@ -1,1 +1,32 @@
-/target
+# Build output
+/target/
+**/*.rs.bk
+
+# Cargo
+# Cargo.lock is committed on purpose: this is a binary application, so the
+# exact versions of the dependencies are part of the build.
+
+# Editors and IDEs
+/.vscode/
+/.idea/
+/*.iml
+*.swp
+*.swo
+*~
+.#*
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# Logs and scratch files
+*.log
+*.tmp
+*.bak
+/out/
+
+# The reference sources under reference/ are kept in the repository on
+# purpose: the port is written against them, and the report refers to them.

@@ -1,0 +1,12 @@
+# Keep the line endings the same everywhere, so that the diffs stay readable
+# on Windows and on the machines the build runs on.
+* text=auto eol=lf
+
+*.rs text
+*.slint text
+*.toml text
+*.md text
+*.ps1 text eol=crlf
+
+# The reference archive is binary.
+*.zip binary
