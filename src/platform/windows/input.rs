@@ -12,8 +12,9 @@ use std::cell::RefCell;
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetAsyncKeyState, VIRTUAL_KEY, VK_CONTROL, VK_DOWN, VK_ESCAPE, VK_LEFT, VK_LWIN, VK_MENU,
-    VK_RETURN, VK_RIGHT, VK_RWIN, VK_SHIFT, VK_UP,
+    GetAsyncKeyState, VIRTUAL_KEY, VK_CONTROL, VK_DOWN, VK_ESCAPE, VK_LCONTROL, VK_LEFT, VK_LMENU,
+    VK_LSHIFT, VK_LWIN, VK_MENU, VK_RCONTROL, VK_RETURN, VK_RIGHT, VK_RMENU, VK_RSHIFT, VK_RWIN,
+    VK_SHIFT, VK_UP,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     GetClassNameW, GetCursorPos, GetForegroundWindow, HC_ACTION, HHOOK, MSLLHOOKSTRUCT,
@@ -52,11 +53,15 @@ pub fn is_key_down(key: VIRTUAL_KEY) -> bool {
 }
 
 /// The modifier keys that are held right now.
+///
+/// The left and the right key are asked for separately, as well as the
+/// general one. A key that is injected, or a keyboard that only reports the
+/// general key, would otherwise be missed.
 pub fn modifiers() -> Modifiers {
     Modifiers {
-        shift: is_key_down(VK_SHIFT),
-        ctrl: is_key_down(VK_CONTROL),
-        alt: is_key_down(VK_MENU),
+        shift: is_key_down(VK_SHIFT) || is_key_down(VK_LSHIFT) || is_key_down(VK_RSHIFT),
+        ctrl: is_key_down(VK_CONTROL) || is_key_down(VK_LCONTROL) || is_key_down(VK_RCONTROL),
+        alt: is_key_down(VK_MENU) || is_key_down(VK_LMENU) || is_key_down(VK_RMENU),
     }
 }
 

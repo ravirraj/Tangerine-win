@@ -8,7 +8,7 @@
 use std::path::PathBuf;
 
 use super::actions::{ModifierMap, RadialMode, Segment, segments_for};
-use super::geometry::{Point, RadialGeometry};
+use super::geometry::Point;
 use super::state::{Effect, InteractionEvent, InteractionSource, InteractionState};
 
 /// The controller's view of the world.#[derive(Clone, Debug)]
@@ -95,11 +95,6 @@ impl RadialController {
     /// Whether this is a real Explorer drag. The development wheel never is.
     pub fn is_explorer_drag(&self) -> bool {
         self.source == InteractionSource::ExplorerDrag
-    }
-
-    /// The geometry the current wheel is drawn with.
-    pub fn geometry(&self) -> RadialGeometry {
-        RadialGeometry::new(self.segments.len())
     }
 
     // -------------------------------------------------------------- commands
@@ -250,10 +245,21 @@ impl RadialController {
                 let before = self.highlighted;
                 self.highlighted = index.filter(|i| *i < self.segments.len());
                 if before != self.highlighted {
+                    // The log says what changed and what the drawing will do
+                    // about it, so that a choice that does not show up can be
+                    // traced.
+                    let name = self
+                        .segments
+                        .get(self.highlighted.unwrap_or(usize::MAX))
+                        .map(|segment| segment.label.clone())
+                        .unwrap_or_else(|| "the hub".to_string());
                     crate::diagnostics::log(
                         crate::diagnostics::Level::Info,
                         "wheel",
-                        &format!("the pointer is over segment {:?}", self.highlighted),
+                        &format!(
+                            "the pointer is over {name} (segment {:?}), the wheel will light it up",
+                            self.highlighted
+                        ),
                     );
                 }
                 vec![Effect::None]

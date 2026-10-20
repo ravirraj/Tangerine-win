@@ -91,6 +91,32 @@ The rules the machine keeps:
   documented step where the shell's payload arrives.
 - Every path back to `Idle` clears the file list, the highlight and the centre.
 
+## How a segment is chosen
+
+The segment under the pointer is chosen with one test, and the drawing and
+the test use the **same numbers**: the same centre, the same radii, the same
+number of segments and the same gap.
+
+The centre is the place the wheel is actually drawn, which is not always the
+place the pointer was when the wheel opened: a pointer near the edge of the
+screen pushes the wheel back onto the screen, and the test follows the wheel
+there, not the pointer.
+
+The test has a little patience, so that the choice does not flicker:
+
+- The gap between two segments is four degrees wide and belongs to the
+  segment on its clockwise side. A pointer resting on the line keeps the
+  choice it already had.
+- The edge of the hub and the edge of the rim have a dead zone, as wide as
+  the gap is at the inner edge. A pointer resting on one of those lines
+  keeps its choice.
+- The patience never keeps a segment the pointer has clearly left. A pointer
+  that goes well into the hub, or well past the rim, gives the choice up.
+
+The lit segment is drawn with a brighter fill and a two pixel orange
+border, and it is lifted four pixels out of the wheel. The picture and the
+name are drawn **over** the lit segment, so that they stay crisp.
+
 ## The keys
 
 | Key | What it does |

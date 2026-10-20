@@ -127,15 +127,16 @@ pub struct ViewOptions {
 
 /// Builds the view model from the controller's state.
 ///
-/// `scale` is how many device pixels there are per logical pixel, `appear` is
-/// how far the entrance animation has got and `emphasis` and `fading` drive
-/// the segment under the pointer.
+/// `geometry` is the shape of the wheel in physical pixels, the very same one
+/// the pointer is tested against. The entrance animation grows the wheel from
+/// its centre, and that is the only thing that changes the shape.
 pub fn build_view_model(
     segments: &[Segment],
     mode: RadialMode,
     highlighted: Option<usize>,
     file_count: usize,
     development: bool,
+    geometry: RadialGeometry,
     options: ViewOptions,
 ) -> ViewModel {
     let scale = options.scale;
@@ -144,9 +145,9 @@ pub fn build_view_model(
     let fading = options.fading;
     let disc_size = DISC_SIZE * scale;
 
-    let mut geometry = RadialGeometry::new(segments.len());
-    geometry.inner_radius *= scale * appear;
-    geometry.outer_radius *= scale * appear;
+    let mut geometry = geometry;
+    geometry.inner_radius *= appear;
+    geometry.outer_radius *= appear;
 
     let centre = Point::new(disc_size / 2.0, disc_size / 2.0);
     let mut data = Vec::with_capacity(segments.len());

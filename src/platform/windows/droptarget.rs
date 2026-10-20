@@ -31,7 +31,11 @@ pub struct DropState {
     pub over: Cell<bool>,
     /// Whether the drag was dropped on the window.
     pub dropped: Cell<bool>,
-    /// Where the pointer is, in the coordinates of the overlay.
+    /// Where the pointer is, in **screen** pixels.
+    ///
+    /// The points that the drag hands over are in screen coordinates, the
+    /// same coordinates the pointer is read in, so both can be used without
+    /// being converted.
     pub point: Cell<(i32, i32)>,
 }
 
@@ -39,6 +43,16 @@ impl DropState {
     /// Takes the "a drag was dropped" flag, so that it is only seen once.
     pub fn take_drop(&self) -> bool {
         self.dropped.replace(false)
+    }
+
+    /// Where the pointer is, in screen pixels.
+    pub fn screen_point(&self) -> Option<crate::radial::geometry::Point> {
+        let (x, y) = self.point.get();
+        if x == 0 && y == 0 {
+            None
+        } else {
+            Some(crate::radial::geometry::Point::new(x as f32, y as f32))
+        }
     }
 }
 
@@ -56,6 +70,11 @@ impl IDropTarget_Impl for DropTargetImpl_Impl {
         point: &POINTL,
         effect: *mut DROPEFFECT,
     ) -> windows::core::Result<()> {
+        crate::diagnostics::log(
+            crate::diagnostics::Level::Debug,
+            "drag",
+            &format!("the drag entered the wheel at ({}, {})", point.x, point.y),
+        );
         *self.state.paths.borrow_mut() = match data.as_ref() {
             Some(object) => read_file_paths(object),
             None => Vec::new(),

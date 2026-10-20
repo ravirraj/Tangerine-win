@@ -113,6 +113,94 @@ impl RadialGeometry {
         angle
     }
 
+    /// The same wheel, but drawn at the scale of the display.
+    pub fn scaled(&self, scale: f32) -> RadialGeometry {
+        let mut copy = *self;
+        copy.inner_radius *= scale;
+        copy.outer_radius *= scale;
+        copy
+    }
+
+    /// Works out where the wheel goes for a pointer, and how big it is.
+    ///
+    /// `radius` is half the size of the whole wheel, in physical pixels. The
+    /// wheel is kept on the screen, so a pointer near an edge puts the wheel
+    /// against the edge rather than half off it.
+    pub fn placement(
+        &self,
+        pointer: Point,
+        radius: f32,
+        bounds: (i32, i32, i32, i32),
+    ) -> WheelPlacement {
+        WheelPlacement {
+            centre: clamp_center(pointer, radius, bounds),
+            geometry: *self,
+        }
+    }
+
+    /// The hit test, with a little patience.
+    ///
+    /// The gap between two segments belongs to the one on its clockwise side,
+    /// so a pointer resting on the line between two of them would make the
+    /// choice jump from one to the other. The choice the pointer already had is
+    /// therefore kept while the pointer is still inside the gap.
+    ///
+    /// The same goes for the edge of the hub and the edge of the rim: a
+    /// pointer resting on one of those lines would make the choice come and go.
+    /// The dead zone is as wide as the gap is at the inner edge, so it is the
+    /// same size everywhere.
+    ///
+    /// The patience never keeps a segment the pointer has clearly left: once
+    /// the pointer is further than the dead zone from the line, the plain hit
+    /// test wins.
+    pub fn hit_test_steady(&self, offset: Point, current: Option<usize>) -> Option<usize> {
+        let raw = self.hit_test(offset);
+        match (current, raw) {
+            (None, raw) => raw,
+            (Some(current), Some(raw)) => {
+                if current == raw {
+                    return Some(raw);
+                }
+                // The pointer is on the line between the two segments. The
+                // line is the one they share.
+                let slice = self.slice_degrees();
+                let boundary = if raw > current {
+                    (current + 1) as f32 * slice
+                } else {
+                    current as f32 * slice
+                };
+                let mut away = (self.angle_of(offset) - boundary).abs();
+                if away > 180.0 {
+                    away = 360.0 - away;
+                }
+                if away <= self.gap_degrees / 2.0 {
+                    Some(current)
+                } else {
+                    Some(raw)
+                }
+            }
+            (Some(current), None) => {
+                // The pointer is on the edge of the hub or of the rim.
+                let distance = offset.length();
+                if distance >= self.inner_radius - self.dead_zone()
+                    && distance <= self.outer_radius + self.dead_zone()
+                {
+                    Some(current)
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
+    /// How wide the dead zone at the edge of the hub and of the rim is.
+    ///
+    /// It is the gap, measured at the inner edge, so that it is the same size
+    /// as the gap between two segments.
+    pub fn dead_zone(&self) -> f32 {
+        self.gap_degrees.to_radians() * self.inner_radius
+    }
+
     /// Which segment a point falls in.
     ///
     /// `None` means the point is on the hub, outside the wheel, or the wheel has
@@ -276,6 +364,29 @@ fn push_arc_reverse(path: &mut String, radius: f32, to: Point) {
     path.push_str(&number(to.x));
     path.push(' ');
     path.push_str(&number(to.y));
+}
+
+/// Where the wheel is on the screen and how big it is.
+///
+/// Both are in **physical** screen pixels, which is what the window placement
+/// and the pointer both use. The drawing and the hit testing have to use these
+/// very numbers: if the hit test uses a different centre or different radii
+/// from the drawing, the wheel lights up in the wrong place.
+#[derive(Clone, Copy, Debug)]
+pub struct WheelPlacement {
+    /// The centre of the wheel, in physical screen pixels.
+    pub centre: Point,
+    /// The shape of the wheel, in physical screen pixels.
+    pub geometry: RadialGeometry,
+}
+
+impl WheelPlacement {
+    /// The segment a screen point is over, with the patience of
+    /// [`RadialGeometry::hit_test_steady`].
+    pub fn segment_at(&self, screen: Point, current: Option<usize>) -> Option<usize> {
+        let offset = Point::new(screen.x - self.centre.x, screen.y - self.centre.y);
+        self.geometry.hit_test_steady(offset, current)
+    }
 }
 
 /// Keeps the wheel fully on screen when it is centred on the cursor.
@@ -477,6 +588,121 @@ mod tests {
             }
         }
         points
+    }
+
+    #[test]
+    fn a_scaled_wheel_keeps_its_shape() {
+        let g = geometry(8);
+        let scaled = g.scaled(1.5);
+        assert_eq!(scaled.count, 8);
+        assert_eq!(scaled.inner_radius, g.inner_radius * 1.5);
+        assert_eq!(scaled.outer_radius, g.outer_radius * 1.5);
+        assert_eq!(scaled.slice_degrees(), g.slice_degrees());
+    }
+
+    #[test]
+    fn the_placement_keeps_the_wheel_on_the_screen() {
+        let g = geometry(8);
+        let bounds = (0, 0, 1920, 1080);
+        // A pointer in the corner: the wheel is pushed back onto the screen.
+        let placement = g.placement(Point::new(10.0, 10.0), 190.0, bounds);
+        assert_eq!(placement.centre, Point::new(190.0, 190.0));
+        // A pointer in the middle: the wheel is left where it is.
+        let placement = g.placement(Point::new(960.0, 540.0), 190.0, bounds);
+        assert_eq!(placement.centre, Point::new(960.0, 540.0));
+    }
+
+    #[test]
+    fn the_placement_keeps_the_geometry_it_was_given() {
+        let g = geometry(8).scaled(1.5);
+        let placement = g.placement(Point::new(960.0, 540.0), 285.0, (0, 0, 1920, 1080));
+        assert_eq!(placement.geometry.outer_radius, g.outer_radius);
+        assert_eq!(placement.geometry.inner_radius, g.inner_radius);
+    }
+
+    #[test]
+    fn the_patience_keeps_the_choice_at_a_line() {
+        let g = geometry(8);
+        // The line between the first and the second segment is at 45 degrees.
+        let just_past = at(45.5, 100.0);
+        let raw = g.hit_test(just_past);
+        assert_eq!(raw, Some(1));
+        // The pointer was on the first segment, so it stays there while it is
+        // still inside the gap.
+        assert_eq!(g.hit_test_steady(just_past, Some(0)), Some(0));
+        // Once the pointer has clearly moved on, the choice follows it.
+        assert_eq!(g.hit_test_steady(at(60.0, 100.0), Some(0)), Some(1));
+    }
+
+    #[test]
+    fn the_patience_does_not_hold_a_segment_the_pointer_has_left() {
+        let g = geometry(8);
+        // The pointer is well past the first segment, on the one before it.
+        let index = g.hit_test_steady(at(350.0, 100.0), Some(0));
+        assert_eq!(index, Some(7));
+    }
+
+    #[test]
+    fn the_patience_says_nothing_when_there_is_no_choice() {
+        let g = geometry(8);
+        // On the hub.
+        assert_eq!(g.hit_test_steady(Point::new(0.0, 0.0), Some(3)), None);
+        // Outside the wheel.
+        assert_eq!(g.hit_test_steady(at(0.0, 400.0), Some(3)), None);
+        // There was no choice to begin with.
+        assert_eq!(g.hit_test_steady(at(45.5, 100.0), None), Some(1));
+    }
+
+    #[test]
+    fn the_patience_covers_the_gap_between_two_segments() {
+        let g = geometry(8);
+        // The gap is four degrees wide, so the patience is two degrees.
+        assert_eq!(g.gap_degrees / 2.0, 2.0);
+        // A pointer right on the line stays where it was.
+        assert_eq!(g.hit_test_steady(at(45.0, 100.0), Some(0)), Some(0));
+        assert_eq!(g.hit_test_steady(at(45.0, 100.0), Some(1)), Some(1));
+    }
+
+    #[test]
+    fn the_patience_covers_the_edge_of_the_hub() {
+        let g = geometry(8);
+        // Just inside the hub: the choice stays.
+        let just_inside = Point::new(0.0, -(g.inner_radius - 1.0));
+        assert_eq!(g.hit_test(just_inside), None);
+        assert_eq!(g.hit_test_steady(just_inside, Some(3)), Some(3));
+        // Well inside the hub: the choice is given up.
+        let well_inside = Point::new(0.0, -(g.inner_radius - 20.0));
+        assert_eq!(g.hit_test_steady(well_inside, Some(3)), None);
+    }
+
+    #[test]
+    fn the_patience_covers_the_edge_of_the_rim() {
+        let g = geometry(8);
+        // Just past the rim: the choice stays.
+        let just_outside = Point::new(0.0, -(g.outer_radius + 1.0));
+        assert_eq!(g.hit_test(just_outside), None);
+        assert_eq!(g.hit_test_steady(just_outside, Some(3)), Some(3));
+        // Well past the rim: the choice is given up.
+        let well_outside = Point::new(0.0, -(g.outer_radius + 20.0));
+        assert_eq!(g.hit_test_steady(well_outside, Some(3)), None);
+    }
+
+    #[test]
+    fn the_dead_zone_is_the_gap_at_the_inner_edge() {
+        let g = geometry(8);
+        let expected = g.gap_degrees.to_radians() * g.inner_radius;
+        assert!((g.dead_zone() - expected).abs() < 0.001);
+    }
+
+    #[test]
+    fn the_placement_finds_the_segment_under_a_point() {
+        let g = geometry(8);
+        let placement = g.placement(Point::new(960.0, 540.0), 190.0, (0, 0, 1920, 1080));
+        // Straight up from the centre of the wheel.
+        let index = placement.segment_at(Point::new(960.0, 440.0), None);
+        assert_eq!(index, Some(0));
+        // On the hub.
+        assert_eq!(placement.segment_at(Point::new(960.0, 540.0), None), None);
     }
 
     #[test]

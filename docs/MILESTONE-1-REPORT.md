@@ -110,6 +110,86 @@ Two smaller faults were found and fixed at the same time:
 
 ---
 
+## 1b. The wheel lit up the wrong segment, and the choice flickered
+
+The pointer was reported to move between the segments and back to nothing:
+`Some(0) -> Some(1) -> None`. The wheel was interactive, but the segment
+under the pointer could not be seen.
+
+### The root causes
+
+There were four of them, and they added up.
+
+**1. The drawing and the hit test used different centres.** The wheel is
+*drawn* at the centre the pointer was clamped to, so that it stays on the
+screen. The hit test used the pointer's **raw** position. Near the edge of
+the screen the two are not the same place, so the wheel lit up a segment that
+was not under the pointer — and the lit segment moved as the pointer moved.
+
+**2. The drawing and the hit test used different radii.** The drawing scales
+the wheel by the scale of the display; the hit test used the unscaled radii.
+On a screen set to anything but 100 % every hit test was wrong.
+
+**3. Two things decided which segment was chosen.** The pointer decided, and
+the drag that might be passing over the wheel also decided — with a different
+point, in a different set of numbers, and with the drag's point treated as
+though it were in the window's own coordinates when it is in screen
+coordinates. The two took turns, which is the `Some(n) -> None -> Some(n)`
+pattern in the log.
+
+**4. The choice had no patience.** The gap between two segments belongs to
+the one on its clockwise side, so a pointer resting on the line between two
+of them made the choice jump from one to the other. The same was true of the
+edge of the hub and the edge of the rim.
+
+### What was changed
+
+- **One placement for both.** `WheelPlacement` holds the centre and the
+  shape of the wheel in physical pixels. The drawing, the pointer test and
+  the click test all use it, so they cannot disagree.
+- **One source for the pointer.** The pointer is the truth. The drag is only
+  asked when it is over the wheel, and its point is used as the screen
+  coordinate it is, with no conversion.
+- **A little patience.** The choice the pointer already had is kept while
+  the pointer is inside the gap between two segments, and inside a dead zone
+  at the edge of the hub and at the edge of the rim. The dead zone is the
+  gap measured at the inner edge, so it is the same size everywhere. The
+  patience never keeps a segment the pointer has clearly left, and a pointer
+  that goes well into the hub still gives the choice up.
+- **The highlight is unmistakable**, and it no longer covers the picture or
+  the name. The lit segment is drawn with a brighter fill and a two pixel
+  orange border, and the picture and the name are drawn **over** it, so they
+  stay crisp and readable.
+- **The log says what changed**, and only when it changed: the name of the
+  segment, its number, and that the wheel will light it up.
+
+### A bug that was found on the way
+
+The modifier keys were read with the *general* `VK_SHIFT`, `VK_CONTROL` and
+`VK_MENU`. A key that is injected, or a keyboard that only reports the
+general key, was missed — and the wheel then opened only sometimes, which
+looked like a fault in the drag detection. The left and the right keys are
+now asked for as well.
+
+### The checks
+
+| Check | Result |
+| --- | --- |
+| The pointer at the four sides of the wheel | The right segment is lit at each of them |
+| The wheel pushed against the edge of the screen | The segment under the pointer is lit, not another one |
+| The pointer creeping across the line between two segments | **One** change, not five |
+| The pointer creeping across the edge of the hub | **One** change, not five |
+| The pointer creeping across the edge of the rim | **One** change, not five |
+| The pointer going from a wedge into the hub | The choice is given up |
+| The pointer walking around the ring | Five segments lit in turn, in order |
+| A drag in Explorer, the pointer on a wedge | The wedge is lit and the drop chooses it |
+| Escape | `WheelVisible → Cancelling → Idle` |
+
+The frame rate is unchanged: 62.7 frames a second, 3.59 ms of work a frame
+with the wheel on the screen.
+
+---
+
 ## 2. Files created or modified
 
 Nothing existed before this milestone except `reference/Open-Tangerine-main.zip`.

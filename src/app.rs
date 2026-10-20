@@ -25,7 +25,7 @@ use crate::platform::windows::monitors;
 use crate::platform::windows::overlay::{Overlay, OverlayEvent};
 use crate::radial::actions::{ModifierMap, Modifiers, RadialMode, Segment};
 use crate::radial::controller::RadialController;
-use crate::radial::geometry::{Point, clamp_center};
+use crate::radial::geometry::{Point, RadialGeometry, WheelPlacement};
 use crate::radial::state::{Effect, InteractionEvent, InteractionSource, InteractionState};
 use crate::ui::animation::WheelAnimation;
 use crate::ui::wheel::{DISC_SIZE, ViewModel, WheelUi, build_view_model};
@@ -133,6 +133,11 @@ struct App {
     /// Where the wheel was put the last time, so that it is only moved when it
     /// really has to be.
     placed_centre: Option<Point>,
+    /// Where the wheel is, and how big it is. The drawing and the pointer
+    /// test both use this.
+    placement: Option<WheelPlacement>,
+    /// Whether the wheel still has to become a drop target.
+    pending_drop_target: bool,
     /// Keeps a second copy of the program from opening a second wheel.
     /// It is only held, never read: closing it gives the right back.
     _instance: Option<windows::Win32::Foundation::HANDLE>,
@@ -196,6 +201,8 @@ impl App {
             wheel_open: false,
             placement_logged: false,
             placed_centre: None,
+            placement: None,
+            pending_drop_target: false,
             _instance: Some(instance),
         })
     }
@@ -283,13 +290,12 @@ impl App {
                 // That is the only way to learn what the drag is carrying,
                 // and it is also how the drop is taken over instead of
                 // landing in the folder underneath.
-                if self.controller.is_explorer_drag()
-                    && let Err(error) = self.overlay.register_drop_target(&self.drop_target)
-                {
-                    diagnostics::error(
-                        "drag",
-                        &format!("the wheel could not become a drop target: {error}"),
-                    );
+                //
+                // The registration waits until the wheel has been drawn: the
+                // drag looks for the window under the pointer, and a window
+                // that is showing nothing cannot be found.
+                if self.controller.is_explorer_drag() {
+                    self.pending_drop_target = true;
                 }
             }
             Effect::UpdateWheel => {
@@ -376,17 +382,15 @@ impl App {
 
     /// Works out which segment the pointer is over and tells the controller.
     ///
-    /// While a drag is over the wheel, the drag itself says where the
-    /// pointer is, and that answer is used instead.
+    /// The pointer is the only thing that says where the pointer is. The drag
+    /// that may be passing over the wheel is not asked: it would answer with a
+    /// different point, in a different set of numbers, and the two would take
+    /// turns deciding which segment is chosen.
     fn handle_hover(&mut self) {
         if self.controller.state() != InteractionState::WheelVisible {
             return;
         }
-        if self.drop_state.over.get() {
-            return;
-        }
-        let (Some(cursor), Some(center)) = (input::cursor_position(), self.controller.center())
-        else {
+        let Some(cursor) = self.hover_point() else {
             return;
         };
         if self.keyboard_owns_highlight {
@@ -398,11 +402,28 @@ impl App {
             self.keyboard_owns_highlight = false;
         }
         self.cursor_when_the_keyboard_took_over = cursor;
-        let offset = Point::new(cursor.x - center.x, cursor.y - center.y);
-        let index = self.controller.geometry().hit_test(offset);
+
+        self.ensure_placement();
+        let index = self.segment_at(cursor);
         if index != self.controller.highlighted() {
             self.dispatch(InteractionEvent::SegmentEntered(index));
         }
+    }
+
+    /// Where the pointer is, in screen pixels.
+    ///
+    /// The pointer is the truth. The one exception is a drag that is over the
+    /// wheel: the drag owns the pointer while it runs and may move it about,
+    /// so the place the drag reports is preferred. Both answers are in screen
+    /// pixels and both go through the same test, so the two can never
+    /// disagree about where the wheel is.
+    fn hover_point(&self) -> Option<Point> {
+        if self.drop_state.over.get()
+            && let Some(point) = self.drop_state.screen_point()
+        {
+            return Some(point);
+        }
+        input::cursor_position()
     }
 
     /// One frame.
@@ -468,32 +489,23 @@ impl App {
             return;
         }
 
-        // The pointer, as the drag sees it.
-        let index = self.segment_at(state.point.get());
-        if index != self.controller.highlighted() {
-            self.dispatch(InteractionEvent::SegmentEntered(index));
-        }
-
         if state.take_drop() {
             diagnostics::log(Level::Info, "drag", "the drag was dropped on the wheel");
-            if self.controller.state() == InteractionState::WheelVisible
-                && let Some(index) = index
-            {
-                self.dispatch(InteractionEvent::SegmentEntered(Some(index)));
-                self.dispatch(InteractionEvent::SegmentSelected { index });
+            if self.controller.state() == InteractionState::WheelVisible {
+                // The drag says where the drop landed.
+                let index = self.hover_point().and_then(|point| self.segment_at(point));
+                if let Some(index) = index {
+                    self.dispatch(InteractionEvent::SegmentEntered(Some(index)));
+                    self.dispatch(InteractionEvent::SegmentSelected { index });
+                }
             }
         }
     }
 
     /// The segment a point of the overlay is over.
-    fn segment_at(&self, point: (i32, i32)) -> Option<usize> {
-        let center = self.controller.center()?;
-        let screen = Point::new(
-            self.overlay_origin.0 as f32 + point.0 as f32,
-            self.overlay_origin.1 as f32 + point.1 as f32,
-        );
-        let offset = Point::new(screen.x - center.x, screen.y - center.y);
-        self.controller.geometry().hit_test(offset)
+    fn segment_at(&self, screen: Point) -> Option<usize> {
+        self.placement?
+            .segment_at(screen, self.controller.highlighted())
     }
 
     fn handle_keys(&mut self) {
@@ -673,15 +685,12 @@ impl App {
         {
             return;
         }
-        let Some(center) = self.controller.center() else {
-            return;
-        };
+        self.ensure_placement();
         let screen = Point::new(
             x + self.overlay_origin.0 as f32,
             y + self.overlay_origin.1 as f32,
         );
-        let offset = Point::new(screen.x - center.x, screen.y - center.y);
-        match self.controller.geometry().hit_test(offset) {
+        match self.segment_at(screen) {
             Some(index) => self.dispatch(InteractionEvent::SegmentSelected { index }),
             // A click on the hub or on a gap cancels, the same way Escape does.
             None => self.dispatch(InteractionEvent::EscapePressed),
@@ -710,12 +719,20 @@ impl App {
 
         let visible = self.controller.state() == InteractionState::WheelVisible;
         if visible {
+            self.ensure_placement();
+            let geometry = self
+                .placement
+                .map(|placement| placement.geometry)
+                .unwrap_or_else(|| {
+                    RadialGeometry::new(self.controller.segments().len()).scaled(self.scale)
+                });
             let model = build_view_model(
                 self.controller.segments(),
                 self.controller.mode(),
                 self.controller.highlighted(),
                 self.controller.files().len(),
                 self.controller.source() == InteractionSource::Development,
+                geometry,
                 crate::ui::wheel::ViewOptions {
                     scale: self.scale,
                     appear: self.animation.appear(),
@@ -741,7 +758,7 @@ impl App {
         // the wrong place, and it is shown and hidden exactly once each time.
         let on_screen = self.animation.appear() > 0.0;
         if on_screen {
-            self.layout();
+            self.ensure_placement();
             let drawn = self.ui.render();
             if drawn {
                 if let Err(error) =
@@ -752,21 +769,34 @@ impl App {
                     self.dispatch(InteractionEvent::Failed {
                         reason: "the overlay could not be drawn".to_string(),
                     });
-                } else if let Some(opened) = self.opened_at.take() {
-                    // How long it took from the gesture to the wheel being on
-                    // the screen.
-                    diagnostics::log(
-                        Level::Info,
-                        "wheel",
-                        &format!(
-                            "the wheel was on screen {:.1} ms after the gesture, at {:?}",
-                            opened.elapsed().as_secs_f64() * 1000.0,
-                            self.overlay.window_rect()
-                        ),
-                    );
+                } else {
+                    // The wheel is on the screen with something in it, and the
+                    // window is showing, so the drag can find it now.
+                    self.overlay.show();
+                    if self.pending_drop_target {
+                        self.pending_drop_target = false;
+                        if let Err(error) = self.overlay.register_drop_target(&self.drop_target) {
+                            diagnostics::error(
+                                "drag",
+                                &format!("the wheel could not become a drop target: {error}"),
+                            );
+                        }
+                    }
+                    if let Some(opened) = self.opened_at.take() {
+                        // How long it took from the gesture to the wheel being
+                        // on the screen.
+                        diagnostics::log(
+                            Level::Info,
+                            "wheel",
+                            &format!(
+                                "the wheel was on screen {:.1} ms after the gesture, at {:?}",
+                                opened.elapsed().as_secs_f64() * 1000.0,
+                                self.overlay.window_rect()
+                            ),
+                        );
+                    }
                 }
             }
-            self.overlay.show();
         } else {
             self.overlay.hide();
             self.ui.request_redraw();
@@ -784,10 +814,16 @@ impl App {
     /// The wheel is always placed, even when the controller has no centre yet:
     /// a window that is never placed stays in the corner of the screen, and
     /// `UpdateLayeredWindow` would draw the wheel there.
-    fn layout(&mut self) {
-        // The wheel is always placed, even when the controller has no centre yet:
-        // a window that is never placed stays in the corner of the screen, and
-        // `UpdateLayeredWindow` would draw the wheel there.
+    /// Works out where the wheel is, and puts it there.
+    ///
+    /// The wheel is always placed, even when the controller has no centre yet:
+    /// a window that is never placed stays in the corner of the screen, and
+    /// `UpdateLayeredWindow` would draw the wheel there.
+    ///
+    /// The placement holds the centre and the shape of the wheel in physical
+    /// pixels. The drawing and the pointer test both use it, so that the wheel
+    /// lights up under the pointer and not somewhere else.
+    fn ensure_placement(&mut self) {
         let centre = self
             .controller
             .center()
@@ -796,7 +832,7 @@ impl App {
 
         // The wheel does not move once it has opened, so the work of placing it
         // is only done when the place really changes.
-        if self.placed_centre == Some(centre) {
+        if self.placed_centre == Some(centre) && self.placement.is_some() {
             return;
         }
         self.placed_centre = Some(centre);
@@ -807,12 +843,16 @@ impl App {
         let bounds = monitor
             .map(|monitor| monitor.bounds)
             .unwrap_or_else(monitors::virtual_bounds);
-        let clamped = clamp_center(centre, radius, bounds);
-        let x = (clamped.x - radius).round() as i32;
-        let y = (clamped.y - radius).round() as i32;
+        // The shape of the wheel, at the scale of the display. The very same
+        // shape is used to test the pointer against.
+        let geometry = RadialGeometry::new(self.controller.segments().len()).scaled(self.scale);
+        let placement = geometry.placement(centre, radius, bounds);
+        let x = (placement.centre.x - radius).round() as i32;
+        let y = (placement.centre.y - radius).round() as i32;
         self.overlay_origin = (x, y);
         self.overlay
             .place(x, y, disc.round() as u32, disc.round() as u32);
+        self.placement = Some(placement);
 
         if !self.placement_logged {
             self.placement_logged = true;
@@ -820,9 +860,10 @@ impl App {
                 Level::Info,
                 "overlay",
                 &format!(
-                    "the wheel is placed at ({x}, {y}), {} by {} pixels, centre {centre:?}, monitor {bounds:?}, monitor dpi {}, window dpi {}, window {:?}",
+                    "the wheel is placed at ({x}, {y}), {} by {} pixels, centre {:?}, monitor {bounds:?}, monitor dpi {}, window dpi {}, window {:?}",
                     disc.round(),
                     disc.round(),
+                    placement.centre,
                     monitor.map(|monitor| monitor.dpi).unwrap_or(96),
                     monitors::dpi_for_window(self.overlay.hwnd()),
                     self.overlay.window_rect()

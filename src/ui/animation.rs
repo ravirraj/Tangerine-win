@@ -85,6 +85,11 @@ impl WheelAnimation {
         }
         self.emphasis_index = index;
         self.emphasis = 0.0;
+        crate::diagnostics::log(
+            crate::diagnostics::Level::Debug,
+            "wheel",
+            &format!("the drawing will now light up segment {index:?}"),
+        );
     }
 
     pub fn appear(&self) -> f32 {

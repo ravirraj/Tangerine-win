@@ -67,6 +67,40 @@ export component Wheel inherits Window {
             height: root.disc-size * 1px;
         }
 
+        // The segment under the pointer, lifting to meet it.
+        Path {
+            commands: root.emphasis-path;
+            viewbox-x: -root.disc-size / 2;
+            viewbox-y: -root.disc-size / 2;
+            viewbox-width: root.disc-size;
+            viewbox-height: root.disc-size;
+            fill: #ff8a3d4d;
+            stroke: #ff8a3d;
+            stroke-width: 2px;
+            opacity: root.emphasis;
+            x: 0px;
+            y: 0px;
+            width: root.disc-size * 1px;
+            height: root.disc-size * 1px;
+        }
+
+        // The segment that is losing the pointer.
+        Path {
+            commands: root.fading-path;
+            viewbox-x: -root.disc-size / 2;
+            viewbox-y: -root.disc-size / 2;
+            viewbox-width: root.disc-size;
+            viewbox-height: root.disc-size;
+            fill: #ff8a3d1f;
+            stroke: #ff8a3d80;
+            stroke-width: 1px;
+            opacity: root.fading;
+            x: 0px;
+            y: 0px;
+            width: root.disc-size * 1px;
+            height: root.disc-size * 1px;
+        }
+
         // The picture of each choice.
         for seg in root.segments : Path {
             commands: seg.icon;
@@ -95,40 +129,6 @@ export component Wheel inherits Window {
             y: seg.label-y - 9px;
             width: seg.label-width;
             height: 18px;
-        }
-
-        // The segment under the pointer, lifting to meet it.
-        Path {
-            commands: root.emphasis-path;
-            viewbox-x: -root.disc-size / 2;
-            viewbox-y: -root.disc-size / 2;
-            viewbox-width: root.disc-size;
-            viewbox-height: root.disc-size;
-            fill: #ff8a3d26;
-            stroke: #ff8a3d;
-            stroke-width: 1.5px;
-            opacity: root.emphasis;
-            x: 0px;
-            y: 0px;
-            width: root.disc-size * 1px;
-            height: root.disc-size * 1px;
-        }
-
-        // The segment that is losing the pointer.
-        Path {
-            commands: root.fading-path;
-            viewbox-x: -root.disc-size / 2;
-            viewbox-y: -root.disc-size / 2;
-            viewbox-width: root.disc-size;
-            viewbox-height: root.disc-size;
-            fill: #ff8a3d1a;
-            stroke: #ff8a3d66;
-            stroke-width: 1px;
-            opacity: root.fading;
-            x: 0px;
-            y: 0px;
-            width: root.disc-size * 1px;
-            height: root.disc-size * 1px;
         }
 
         // The hub in the middle.
