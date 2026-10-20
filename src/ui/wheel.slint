@@ -1,0 +1,208 @@
+// The radial wheel.
+//
+// Every position, size and colour is worked out in Rust and handed over here
+// as plain values. The software renderer that draws the overlay does not
+// support element transforms, so the entrance animation scales the geometry
+// itself instead of scaling an element.
+
+export struct SegmentData {
+    // The outline of the segment, in disc coordinates.
+    path: string,
+    fill: color,
+    stroke: color,
+    // The name of the choice.
+    label: string,
+    label-color: color,
+    label-size: length,
+    label-x: length,
+    label-y: length,
+    label-width: length,
+    // The picture of the choice, drawn in a 24 by 24 box.
+    icon: string,
+    icon-color: color,
+    icon-x: length,
+    icon-y: length,
+    icon-size: length,
+}
+
+export component Wheel inherits Window {
+    in property <[SegmentData]> segments;
+    // The heading in the hub. It is not called `title`, because the window
+    // already has one of those.
+    in property <string> heading: "";
+    in property <string> subtitle: "";
+    in property <string> badge: "";
+    in property <int> mode-index: 0;
+    in property <float> appear: 1;
+    in property <float> disc-size: 380;
+    in property <float> hub-size: 128;
+    in property <length> heading-size: 12px;
+    in property <length> subtitle-size: 10px;
+    // The segment that is being pointed at, and the one that is on its way out.
+    in property <string> emphasis-path: "";
+    in property <float> emphasis: 0;
+    in property <string> fading-path: "";
+    in property <float> fading: 0;
+
+    background: #00000000;
+
+    Rectangle {
+        width: root.disc-size * 1px;
+        height: root.disc-size * 1px;
+        opacity: root.appear;
+
+        // The segments themselves.
+        for seg in root.segments : Path {
+            commands: seg.path;
+            viewbox-x: -root.disc-size / 2;
+            viewbox-y: -root.disc-size / 2;
+            viewbox-width: root.disc-size;
+            viewbox-height: root.disc-size;
+            fill: seg.fill;
+            stroke: seg.stroke;
+            stroke-width: 1px;
+            x: 0px;
+            y: 0px;
+            width: root.disc-size * 1px;
+            height: root.disc-size * 1px;
+        }
+
+        // The picture of each choice.
+        for seg in root.segments : Path {
+            commands: seg.icon;
+            viewbox-width: 24;
+            viewbox-height: 24;
+            fill: transparent;
+            stroke: seg.icon-color;
+            stroke-width: 1.8px;
+            stroke-line-cap: round;
+            stroke-line-join: round;
+            x: seg.icon-x;
+            y: seg.icon-y;
+            width: seg.icon-size;
+            height: seg.icon-size;
+        }
+
+        // The name of each choice.
+        for seg in root.segments : Text {
+            text: seg.label;
+            color: seg.label-color;
+            font-size: seg.label-size;
+            font-weight: 700;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            x: seg.label-x - seg.label-width / 2;
+            y: seg.label-y - 9px;
+            width: seg.label-width;
+            height: 18px;
+        }
+
+        // The segment under the pointer, lifting to meet it.
+        Path {
+            commands: root.emphasis-path;
+            viewbox-x: -root.disc-size / 2;
+            viewbox-y: -root.disc-size / 2;
+            viewbox-width: root.disc-size;
+            viewbox-height: root.disc-size;
+            fill: #ff8a3d26;
+            stroke: #ff8a3d;
+            stroke-width: 1.5px;
+            opacity: root.emphasis;
+            x: 0px;
+            y: 0px;
+            width: root.disc-size * 1px;
+            height: root.disc-size * 1px;
+        }
+
+        // The segment that is losing the pointer.
+        Path {
+            commands: root.fading-path;
+            viewbox-x: -root.disc-size / 2;
+            viewbox-y: -root.disc-size / 2;
+            viewbox-width: root.disc-size;
+            viewbox-height: root.disc-size;
+            fill: #ff8a3d1a;
+            stroke: #ff8a3d66;
+            stroke-width: 1px;
+            opacity: root.fading;
+            x: 0px;
+            y: 0px;
+            width: root.disc-size * 1px;
+            height: root.disc-size * 1px;
+        }
+
+        // The hub in the middle.
+        Rectangle {
+            x: (root.disc-size - root.hub-size) / 2 * 1px;
+            y: (root.disc-size - root.hub-size) / 2 * 1px;
+            width: root.hub-size * 1px;
+            height: root.hub-size * 1px;
+            border-radius: root.hub-size / 2 * 1px;
+            background: #131317f2;
+            border-width: 1px;
+            border-color: #2e2e36;
+
+            Text {
+                text: root.heading;
+                color: #f2f2f5;
+                font-size: root.heading-size;
+                font-weight: 700;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                x: 0px;
+                y: root.hub-size / 2 * 1px - 27px;
+                width: root.hub-size * 1px;
+                height: 18px;
+            }
+
+            Text {
+                text: root.subtitle;
+                color: #8a8a95;
+                font-size: root.subtitle-size;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                x: 0px;
+                y: root.hub-size / 2 * 1px - 8px;
+                width: root.hub-size * 1px;
+                height: 16px;
+            }
+
+            // Which of the three wheels is showing.
+            for i in [0, 1, 2] : Rectangle {
+                x: (root.hub-size / 2 - 24 + i * 16 + (i == root.mode-index ? 0 : 5)) * 1px;
+                y: (root.hub-size / 2 + 20) * 1px;
+                width: i == root.mode-index ? 16px : 6px;
+                height: 5px;
+                border-radius: 3px;
+                background: i == root.mode-index ? #ff8a3d : #ffffff2e;
+            }
+        }
+
+        // The development marker, so a test wheel is never mistaken for a real
+        // one.
+        Rectangle {
+            visible: root.badge != "";
+            x: (root.disc-size / 2 - 65) * 1px;
+            y: 8px;
+            width: 130px;
+            height: 20px;
+            border-radius: 10px;
+            background: #ff8a3d1f;
+            border-width: 1px;
+            border-color: #ff8a3d59;
+
+            Text {
+                text: root.badge;
+                color: #ffb27a;
+                font-size: 9px;
+                font-weight: 700;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                x: 0px;
+                y: 0px;
+                width: 130px;
+                height: 20px;
+            }
+        }
+    }
+}

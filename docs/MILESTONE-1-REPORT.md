@@ -1,0 +1,416 @@
+# Milestone 1 report
+
+Open Tangerine for Windows, Milestone 1: the radial wheel, the interaction
+and the Windows drag integration.
+
+Everything in this report was measured on the machine the work was done on
+(Windows 11, 1920×1080, 100 % scaling, one monitor). Where something was not
+measured, it says so.
+
+---
+
+## 1. What was built
+
+A native Windows program, in Rust, with no browser in it. It waits in the
+background, notices a file drag coming out of Explorer, and puts a radial
+wheel around the pointer when the user holds `Shift` down while dragging.
+
+The whole gesture works end to end:
+
+```
+[drag] the press started on an Explorer window at Point { x: 199.0, y: 171.0 }
+[drag] Explorer drag started with 0 file(s), foreground window Some("CabinetWClass")
+[state] Idle -> CandidateDrag (event)
+[state] CandidateDrag -> WheelVisible (event)
+[wheel] the wheel is opening in the convert mode with 8 segment(s) on 0 file(s)
+[wheel] the wheel was on screen 36.5 ms after the gesture
+[drag] the drag carries 1 file(s)
+[wheel] the pointer is over segment Some(2)
+[drag] the drag ended
+[state] WheelVisible -> SelectionPending (event)
+[action] placeholder: WebP (convert.webp) in the convert wheel on 1 file(s), source ExplorerDrag.
+```
+
+The actions themselves are placeholders. Milestone 1 does not convert,
+compress, rename or zip anything, and says so in the log every time a choice
+is made.
+
+---
+
+## 2. Files created or modified
+
+Nothing existed before this milestone except `reference/Open-Tangerine-main.zip`.
+Everything below is new.
+
+| File | Lines | What it is |
+| --- | --- | --- |
+| `Cargo.toml` | 28 | The manifest and the three dependencies |
+| `build.rs` | 6 | Compiles the Slint markup |
+| `src/main.rs` | 30 | The entry point and the command line |
+| `src/app.rs` | 781 | The loop, the wiring, the diagnostics |
+| `src/diagnostics.rs` | 162 | The timestamped log |
+| `src/radial/mod.rs` | 6 | |
+| `src/radial/actions.rs` | 321 | The three wheels and the modifier mapping |
+| `src/radial/controller.rs` | 614 | The interaction state machine |
+| `src/radial/geometry.rs` | 443 | The shape of the wheel and the hit testing |
+| `src/radial/icons.rs` | 88 | The little pictures |
+| `src/radial/state.rs` | 100 | The states, the events and the effects |
+| `src/platform/mod.rs` | 5 | |
+| `src/platform/windows/mod.rs` | 6 | |
+| `src/platform/windows/droptarget.rs` | 213 | Being the target of a drag |
+| `src/platform/windows/explorer.rs` | 354 | Recognising an Explorer drag |
+| `src/platform/windows/input.rs` | 191 | The pointer, the keys, the scroll wheel |
+| `src/platform/windows/monitors.rs` | 88 | Where the screens are |
+| `src/platform/windows/overlay.rs` | 407 | The transparent window the wheel is drawn in |
+| `src/ui/mod.rs` | 3 | |
+| `src/ui/animation.rs` | 204 | The one animation model |
+| `src/ui/wheel.rs` | 296 | The view model |
+| `src/ui/wheel.slint` | 193 | The markup |
+| `README.md` | 75 | |
+| `docs/INTERACTION.md` | 119 | |
+| `docs/DRAG-INTEGRATION.md` | 140 | |
+| `docs/MILESTONE-1-REPORT.md` | | This file |
+
+4 330 lines of Rust, of which about 1 300 are tests.
+
+---
+
+## 3. Architecture and dependency decisions
+
+### The framework: Slint, but not the way Slint usually draws
+
+The brief asks for Slint, and Slint 1.18.1 was used. The interesting part is
+**how** it draws.
+
+Slint's own Windows backend does not give a per-pixel transparent window.
+The source says so plainly: `wants_transparent` is only computed for macOS,
+and on Windows the surface is configured with `CompositeAlphaMode::Opaque`.
+There is no supported way to get a see-through window out of it.
+
+So the window is a plain Win32 layered window
+(`WS_EX_LAYERED`, `UpdateLayeredWindow`), and **Slint's software renderer
+draws into a buffer of ours** (`MinimalSoftwareWindow` plus a custom
+`TargetPixel` that writes 32-bit premultiplied BGRA, which is the order
+`UpdateLayeredWindow` wants). The result is a real, per-pixel transparent
+overlay that floats over everything, with no browser and no GPU needed.
+
+The cost of that choice is that Slint's element transforms are not available:
+the software renderer's `scale` and `rotate` are no-ops. The arrival animation
+therefore scales the **geometry** — the radii, the corner radius, the label
+sizes and the icon sizes all grow together — rather than scaling an element.
+It is also one animation model instead of several, so nothing fights over the
+same value.
+
+The rest of Slint is used as intended: the markup, the text layout, the
+system fonts, the properties and the bindings.
+
+### The dependencies
+
+| Crate | Why |
+| --- | --- |
+| `slint` 1.18 | The wheel's markup, its text and its layout |
+| `slint-build` 1.18 | Compiles the markup at build time (build dependency) |
+| `windows` 0.62 | The overlay window, the drop target, the clipboard, the pointer, the keys |
+| `windows-core` 0.62 | The `#[implement]` macro for the COM drop target needs it in scope |
+
+Four crates, and `windows-core` is the same crate `windows` already uses, so
+nothing extra is compiled.
+
+### The shape of the program
+
+```
+main.rs ─▶ app.rs ─┬─▶ radial/controller.rs   (the rules; no Windows, no drawing)
+                    ├─▶ platform/windows/      (the world; no wheel, no rules)
+                    └─▶ ui/                    (the drawing; decides nothing)
+```
+
+The controller is handed typed events and returns typed effects. It never
+knows what a window is; the platform layer never knows what a segment is; the
+drawing never decides anything. That is what makes the interaction testable
+without a mouse and a screen.
+
+---
+
+## 4. The commands that were run
+
+All of them were run on the machine described above.
+
+| Command | Result |
+| --- | --- |
+| `cargo fmt --check` | **Passed**, no differences |
+| `cargo check` | **Passed**, no warnings |
+| `cargo clippy` | **Passed**, no warnings |
+| `cargo test` | **Passed**, 65 tests, 0 failed |
+| `cargo build --release` | **Passed**, 7.4 MB, 16 s from cold |
+| `cargo tree --depth 1` | 3 dependencies, 1 build dependency |
+
+Nothing was skipped to make them pass. Two build errors and a set of API
+mismatches with `windows` 0.62 came up along the way and were fixed rather
+than worked around.
+
+---
+
+## 5. The tests
+
+65 tests, all passing, all automatic.
+
+### The state machine (22 tests)
+
+| What is checked | Where |
+| --- | --- |
+| Idle → CandidateDrag | `controller.rs` |
+| CandidateDrag → WheelVisible | `controller.rs` |
+| The wheel stays up when the modifier is let go | `controller.rs` |
+| The mode changes when the modifier changes | `controller.rs` |
+| A valid choice runs the action | `controller.rs` |
+| An invalid choice runs nothing | `controller.rs` |
+| Escape cancels and returns to Idle | `controller.rs` |
+| Five interactions in a row | `controller.rs` |
+| A second drag does not open a second wheel | `controller.rs` |
+| A failure cleans up | `controller.rs` |
+| The file set does not change under the user | `controller.rs` |
+| The development wheel is never an Explorer drag | `controller.rs` |
+| The wheel's placement on the screen | `geometry.rs` |
+| The animation never overshoots | `animation.rs` |
+
+### The geometry (17 tests)
+
+| What is checked | Where |
+| --- | --- |
+| The four cardinal directions | `geometry.rs` |
+| The eight diagonal directions | `geometry.rs` |
+| A boundary belongs to the clockwise side | `geometry.rs` |
+| The hub is never a segment | `geometry.rs` |
+| The rim is never a segment | `geometry.rs` |
+| A wheel with no segments never hits | `geometry.rs` |
+| Coordinates that are not numbers do not panic | `geometry.rs` |
+| The gap between two segments | `geometry.rs` |
+| The labels sit between the hub and the rim | `geometry.rs` |
+| The outline is a closed shape and every segment has its own | `geometry.rs` |
+| The outline stays between the hub and the rim | `geometry.rs` |
+| The wheel is kept on the screen | `geometry.rs` |
+| A screen smaller than the wheel does not break the maths | `geometry.rs` |
+
+### The rest
+
+The platform layer has tests that do not touch the screen: the drag detector
+ignores movement while the button is up, reading the clipboard never panics,
+the monitor lookup works, the modifier reading is consistent.
+
+---
+
+## 6. The manual tests
+
+These were run by driving the program with synthetic input on the same
+machine, and by looking at the screen.
+
+| # | Test | Result |
+| --- | --- | --- |
+| 1 | The program starts and stays running | **Passed** |
+| 2 | The development wheel opens and is marked `DEVELOPMENT MODE` | **Passed** |
+| 3 | The wheel has eight segments, a hub and three mode dots | **Passed** |
+| 4 | The wheel is see-through; the program behind it shows through | **Passed** |
+| 5 | The wheel arrives with a fade and a growth | **Passed** |
+| 6 | The pointer lights a segment and lifts it | **Passed** |
+| 7 | Every segment can be pointed at | **Passed** |
+| 8 | Scrolling moves Convert → Tools → File actions and back | **Passed** |
+| 9 | The tools and file actions wheels have their own segments | **Passed** |
+| 10 | The hub shows the name and the explanation of the choice | **Passed** |
+| 11 | The arrow keys move the choice, and the pointer does not steal it back | **Passed** |
+| 12 | The up and down arrows move between the wheels | **Passed** |
+| 13 | Escape closes the wheel and the program goes back to waiting | **Passed** |
+| 14 | The wheel can be opened again straight away | **Passed** |
+| 15 | An Explorer file drag is recognised | **Passed** |
+| 16 | `Shift` during the drag opens the wheel | **Passed** |
+| 17 | The drag is not cancelled by the wheel appearing | **Passed** |
+| 18 | The files being dragged are found, and they are the right ones | **Passed** |
+| 19 | The drop chooses the segment under the pointer | **Passed** |
+| 20 | The wheel does not open for ordinary mouse movement | **Passed** |
+| 21 | The wheel does not open while typing | **Passed** |
+| 22 | The program cleans up and exits | **Passed** |
+
+**Not tested, because the machine has one monitor and one scale setting:**
+
+- A second monitor. The code asks Windows for the monitor a point is on and
+  clamps the wheel to that monitor's bounds, and the work was written with
+  that in mind, but it has not been run on two screens.
+- A display scale other than 100 %. The wheel is drawn at the display's own
+  scale, and the scaling code reads the DPI of the window, but it has not been
+  run at 125 % or 150 %.
+- A drag that is dropped on the hub or in a gap. The behaviour is defined
+  (the wheel keeps the drop and the files are not moved) but it has not been
+  watched by hand.
+
+---
+
+## 7. What was measured
+
+### Responsiveness
+
+| What | Measured |
+| --- | --- |
+| Time to the first frame after the program starts | **4.7 ms** to 11.4 ms |
+| From the gesture to the wheel on the screen | **36.5 ms** (an Explorer drag), **47.0 ms** (the development wheel, whose first frame also loads the fonts) |
+| Frames a second with the wheel on the screen | **62.7** |
+| Frames a second while waiting | **62.6** |
+| Work a frame with the wheel on the screen | **4.48 ms** on average |
+| Work a frame while waiting | **0.03 ms** on average |
+
+The target was under 50 ms between a verified gesture and the wheel being
+visible. The measured figure is **36.5 ms**.
+
+The 62.7 frames a second is the real number, not an estimate. It is worth
+saying how it was got: the first attempt used `WM_TIMER`, and the wheel only
+managed 40 frames a second, because Windows throttles the timer of a window
+that never comes to the front. The program now waits on a **waitable timer**
+instead, and the frame rate is 62.7.
+
+### Memory and the background
+
+| What | Measured |
+| --- | --- |
+| Working set, wheel on the screen | **14.9 MB** |
+| Private memory | **4.6 MB** |
+| Handles | **135** |
+| Threads | **4** |
+| Work a frame while waiting | **0.03 ms** |
+
+The process accounting on this machine reports 0 ms of processor time for the
+program even while it is running, so the idle load is given as the work a
+frame does rather than as a share of a core: at 62.6 frames a second that is
+0.03 ms × 62.6, about **0.2 %** of one core.
+
+### The frame rate against the animation
+
+The arrival is 180 ms long, so at 62.7 frames a second it is drawn in
+**11 frames**. The dismissal is 130 ms, so **8 frames**. Neither is a number
+that has been counted by eye; both follow from the measured frame rate.
+
+---
+
+## 8. What works, and how it was checked
+
+- **The wheel is a real, see-through, always-on-top window** with no browser
+  and no web view. Checked by looking at it over another program.
+- **The state machine is explicit** and every transition is a typed event and
+  a typed effect. 22 tests cover it.
+- **The hit testing is exact**: the cardinal and the diagonal directions, the
+  hub, the rim and the boundaries between two segments are all tested.
+- **The keyboard works**: the arrows move the choice, Enter takes it, Escape
+  cancels, and the pointer does not take the choice back until it moves.
+- **The scroll wheel moves between the three wheels**, in both directions.
+- **The three wheels are separate from the drawing**, so a later milestone can
+  fill them in without touching the renderer.
+- **The development wheel is clearly a test**: it is marked on screen, it is
+  marked in the log, and the controller can never report it as an Explorer
+  drag.
+- **An Explorer drag is found, the files in it are found, the drop is taken
+  over, and the drag is not cancelled.** Checked end to end.
+- **The program is a good citizen**: no global keyboard or mouse hook except
+  one narrow one for the scroll wheel, no input is swallowed, Explorer is
+  never touched outside a drag, and the hook and the window are cleaned up
+  when the program ends.
+
+---
+
+## 9. What is not done, and what is risky
+
+### Not done
+
+- **The actions are placeholders.** Nothing is converted, compressed, renamed
+  or zipped. That was the brief for this milestone.
+- **The wheel only opens for Explorer.** A drag from a browser or an editor
+  is not recognised. The check is for the `CabinetWClass` window, which is
+  Explorer's file list.
+- **There is no tray icon.** The program runs in the background but has no
+  icon to click, and no way to be quit by hand. `Ctrl+Alt+Q` and the
+  `--exit-after` option are what exist for now.
+- **There is no settings, no output folder and no login item.**
+- **There is no "the files are being converted" progress.** The macOS product
+  shows the work in a notch; there is nothing of that here yet.
+- **There is no help file, no right-click entry in Explorer and no shell
+  extension.**
+
+### Risks
+
+1. **The payload of a drag is only visible to a drop target.** This is the
+   biggest one. The application takes the drop over, so a drop on the hub or
+   in a gap between the segments is taken by the application and the files do
+   not move. The macOS product has the same trade, but it is worth knowing
+   about before this is given to anyone else. The smallest thing that would
+   take the risk away: when the drop lands on the hub or in a gap, hand the
+   drop back to the program underneath instead of taking it.
+
+2. **The file list arrives about 40 ms after the wheel opens.** The wheel
+   briefly shows no file count. It can be hidden by waiting for the payload
+   before the wheel appears, at the price of a later wheel.
+
+3. **Only one drag at a time.** A second drag during an interaction is
+   ignored. That is deliberate, but it is a limitation.
+
+4. **The scroll wheel needs a low level hook.** The overlay never takes the
+   focus, so the scroll messages never reach it. The hook is installed only
+   while the wheel is on screen, only looks at the scroll, and never stops a
+   message — but it is still a global hook, and it is the one thing in the
+   program that a security tool might ask about.
+
+5. **The software renderer is slower than the GPU one.** At 4.48 ms a frame
+   for a 380 pixel wheel it is comfortable, but a much larger wheel, or a much
+   slower machine, would feel it. Moving to the GPU renderer would mean
+   giving up the per-pixel transparency, or finding a different way to get it.
+
+6. **The wheel is not yet on a second monitor or at another scale.** The code
+   is written for it and the maths is tested, but it has not been seen.
+
+7. **The synthetic input used for the tests is not a human hand.** The drag
+   was driven with `mouse_event` and `SetCursorPos`. The behaviour was
+   confirmed on a real Explorer window with a real ghost image, but nobody has
+   yet held a mouse and dragged a file while holding `Shift`.
+
+---
+
+## 10. The next milestone
+
+**Milestone 2: the first action that really works, and the shell integration.**
+
+The order that is suggested:
+
+1. **Make one action real** — `Copy path` is the smallest one that touches
+   nothing on disk, and it proves the whole chain: the files are found, the
+   choice reaches the action, the action does something. Then `Reveal in
+   Explorer`, which opens the folder of the file that was dragged.
+2. **Put the wheel in Explorer's right-click menu**, through the shell's
+   "Services" mechanism, so the wheel can be opened on a selection without a
+   drag. This is the Windows answer to the macOS product's Finder Services
+   entry, and it is the way to reach the wheel without a gesture at all.
+3. **Fix the drop on the hub**, so that a drop that is not on a choice goes
+   back to the program underneath instead of being taken.
+4. **Add a tray icon**, so the program can be found, quit and configured.
+5. **Then the conversion engine**, with the first real format route (image to
+   image) behind it, and the progress shown where the macOS product shows it.
+
+The one thing that should not be started before the second and third points
+are done is the conversion engine itself: without the shell integration and
+without the drop being safe, a wrong choice could still move or lose files,
+and that is the one failure the macOS product has had to be careful about
+too.
+
+---
+
+## 11. A note on the reference
+
+The macOS product in `reference/Open-Tangerine-main.zip` was read before any
+of this was written. `NativeApp/Sources/Radial/DragMonitor.swift`,
+`RadialController.swift`, `RadialView.swift`, `RadialMode.swift` and
+`FinderSelection.swift` were read in full, together with the parts of the
+README that describe the drag, the wheels, the keyboard, the cancellation and
+what happens to the output.
+
+None of it was ported directly. The macOS product reads the drag from the
+pasteboard, watches the global mouse events and puts the wheel in a
+non-activating panel that takes the drop. The Windows product cannot do the
+first of those at all, and the last one is a very different API. What was
+kept is the **shape** of the interaction: the wheel around the pointer, the
+modifier that opens it, the segment that lifts, the scroll that moves between
+the three wheels, the keyboard, the escape, and the rule that a drop that is
+not on a choice leaves the wheel up.

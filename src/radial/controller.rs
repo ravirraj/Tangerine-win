@@ -1,0 +1,675 @@
+//! The interaction controller.
+//!
+//! The controller owns the wheel's state and decides when to show, update,
+//! select, cancel or close it. It never touches the platform: everything
+//! arrives as a typed [`InteractionEvent`] and everything leaves as a typed
+//! [`Effect`].
+
+use std::path::PathBuf;
+
+use super::actions::{ModifierMap, RadialMode, Segment, segments_for};
+use super::geometry::{Point, RadialGeometry};
+use super::state::{Effect, InteractionEvent, InteractionSource, InteractionState};
+
+/// The controller's view of the world.#[derive(Clone, Debug)]
+pub struct RadialController {
+    state: InteractionState,
+    source: InteractionSource,
+    mode: RadialMode,
+    files: Vec<PathBuf>,
+    segments: Vec<Segment>,
+    highlighted: Option<usize>,
+    center: Option<Point>,
+    /// Whether the wheel takes clicks of its own. True for the development
+    /// wheel and after a drag ended without a choice being made.
+    interactive: bool,
+    /// The mapping from modifier keys to wheels.
+    modifiers: ModifierMap,
+}
+
+impl Default for RadialController {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl RadialController {
+    pub fn new() -> Self {
+        Self {
+            state: InteractionState::Idle,
+            source: InteractionSource::Development,
+            mode: RadialMode::Convert,
+            files: Vec::new(),
+            segments: Vec::new(),
+            highlighted: None,
+            center: None,
+            interactive: false,
+            modifiers: ModifierMap::DEFAULT,
+        }
+    }
+
+    // ----------------------------------------------------------------- state
+
+    pub fn state(&self) -> InteractionState {
+        self.state
+    }
+
+    pub fn source(&self) -> InteractionSource {
+        self.source
+    }
+
+    pub fn mode(&self) -> RadialMode {
+        self.mode
+    }
+
+    pub fn files(&self) -> &[PathBuf] {
+        &self.files
+    }
+
+    pub fn segments(&self) -> &[Segment] {
+        &self.segments
+    }
+
+    pub fn highlighted(&self) -> Option<usize> {
+        self.highlighted
+    }
+
+    pub fn center(&self) -> Option<Point> {
+        self.center
+    }
+
+    /// Whether the wheel should react to the mouse as a normal window.
+    pub fn is_interactive(&self) -> bool {
+        self.interactive
+    }
+
+    /// The mapping from modifier keys to wheels.
+    pub fn modifier_map(&self) -> ModifierMap {
+        self.modifiers
+    }
+
+    /// Changes the mapping from modifier keys to wheels.
+    pub fn set_modifier_map(&mut self, map: ModifierMap) {
+        self.modifiers = map;
+    }
+    /// Whether this is a real Explorer drag. The development wheel never is.
+    pub fn is_explorer_drag(&self) -> bool {
+        self.source == InteractionSource::ExplorerDrag
+    }
+
+    /// The geometry the current wheel is drawn with.
+    pub fn geometry(&self) -> RadialGeometry {
+        RadialGeometry::new(self.segments.len())
+    }
+
+    // -------------------------------------------------------------- commands
+
+    /// Opens the wheel for the development shortcut.
+    ///
+    /// This is deliberately its own entry point: it never touches the file
+    /// list, it is never reported as an Explorer drag, and the caller is
+    /// expected to label it as a test.
+    pub fn open_development_wheel(&mut self, center: Point) -> Vec<Effect> {
+        if self.state != InteractionState::Idle {
+            return vec![Effect::None];
+        }
+        self.source = InteractionSource::Development;
+        self.mode = RadialMode::Convert;
+        self.files.clear();
+        self.segments = segments_for(self.mode);
+        self.highlighted = None;
+        self.center = Some(center);
+        self.interactive = true;
+        self.state = InteractionState::WheelVisible;
+        vec![Effect::ShowWheel]
+    }
+
+    /// Called when the chosen action actually starts running.
+    pub fn mark_executing(&mut self) {
+        if self.state == InteractionState::SelectionPending {
+            self.state = InteractionState::Executing;
+        }
+    }
+
+    /// Called when the chosen action has finished, successfully or not.
+    pub fn finish_execution(&mut self) {
+        self.reset();
+    }
+
+    fn reset(&mut self) {
+        self.state = InteractionState::Idle;
+        self.source = InteractionSource::Development;
+        self.files.clear();
+        self.segments.clear();
+        self.highlighted = None;
+        self.center = None;
+        self.interactive = false;
+    }
+
+    // ---------------------------------------------------------------- events
+
+    /// Feeds an event to the machine and returns what should happen next.
+    pub fn handle(&mut self, event: InteractionEvent) -> Vec<Effect> {
+        match self.state {
+            InteractionState::Idle => self.handle_idle(event),
+            InteractionState::CandidateDrag => self.handle_candidate(event),
+            InteractionState::WheelVisible => self.handle_visible(event),
+            InteractionState::SelectionPending | InteractionState::Executing => {
+                self.handle_busy(event)
+            }
+            InteractionState::Cancelling => self.handle_cancelling(event),
+        }
+    }
+
+    fn handle_idle(&mut self, event: InteractionEvent) -> Vec<Effect> {
+        match event {
+            InteractionEvent::DragStarted { paths } => {
+                self.source = InteractionSource::ExplorerDrag;
+                self.files = paths;
+                self.mode = RadialMode::Convert;
+                self.segments = segments_for(self.mode);
+                self.highlighted = None;
+                self.interactive = false;
+                self.state = InteractionState::CandidateDrag;
+                vec![Effect::None]
+            }
+            InteractionEvent::PointerMoved { position } => {
+                self.center = Some(position);
+                vec![Effect::None]
+            }
+            InteractionEvent::Failed { .. } => vec![Effect::None],
+            _ => vec![Effect::None],
+        }
+    }
+
+    fn handle_candidate(&mut self, event: InteractionEvent) -> Vec<Effect> {
+        match event {
+            InteractionEvent::PointerMoved { position } => {
+                // The wheel opens where the cursor is, so keep the last position.
+                self.center = Some(position);
+                vec![Effect::None]
+            }
+            InteractionEvent::ModifiersChanged(modifiers) => {
+                match self.modifiers.mode_for(modifiers) {
+                    Some(mode) => {
+                        self.mode = mode;
+                        self.segments = segments_for(mode);
+                        self.highlighted = None;
+                        self.state = InteractionState::WheelVisible;
+                        vec![Effect::ShowWheel]
+                    }
+                    // The drag carries on without the wheel: the user may
+                    // still press the modifier a moment later.
+                    None => vec![Effect::None],
+                }
+            }
+            InteractionEvent::DragEnded => {
+                self.reset();
+                vec![Effect::None]
+            }
+            InteractionEvent::DragPayloadResolved { paths } => {
+                // The shell publishes the payload a moment after the drag has
+                // begun. This is the one documented way the file set may change
+                // during an interaction.
+                if !paths.is_empty() {
+                    self.files = paths;
+                }
+                vec![Effect::None]
+            }
+            InteractionEvent::Failed { .. } => {
+                self.state = InteractionState::Cancelling;
+                vec![Effect::None]
+            }
+            _ => vec![Effect::None],
+        }
+    }
+
+    fn handle_visible(&mut self, event: InteractionEvent) -> Vec<Effect> {
+        match event {
+            InteractionEvent::ModifiersChanged(modifiers) => {
+                // Letting go of the modifier leaves the wheel up: the drag is
+                // still going and the user may still choose.
+                let Some(wanted) = self.modifiers.mode_for(modifiers) else {
+                    return vec![Effect::None];
+                };
+                if wanted == self.mode {
+                    return vec![Effect::None];
+                }
+                self.mode = wanted;
+                self.segments = segments_for(wanted);
+                self.highlighted = None;
+                vec![Effect::UpdateWheel]
+            }
+            InteractionEvent::PointerMoved { position } => {
+                // The wheel stays where it opened; only the pointer moves, and
+                // the platform tells us which segment it is over.
+                let _ = position;
+                vec![Effect::None]
+            }
+            InteractionEvent::SegmentEntered(index) => {
+                let before = self.highlighted;
+                self.highlighted = index.filter(|i| *i < self.segments.len());
+                if before != self.highlighted {
+                    crate::diagnostics::log(
+                        crate::diagnostics::Level::Info,
+                        "wheel",
+                        &format!("the pointer is over segment {:?}", self.highlighted),
+                    );
+                }
+                vec![Effect::None]
+            }
+            InteractionEvent::DragPayloadResolved { paths } => {
+                if !paths.is_empty() {
+                    self.files = paths;
+                }
+                vec![Effect::None]
+            }
+            InteractionEvent::SegmentSelected { index } => self.select(index),
+            InteractionEvent::DragEnded => {
+                // The mouse came up. If it came up on a choice, that choice is
+                // taken; otherwise the wheel stays up and starts taking clicks.
+                match self.highlighted {
+                    Some(index) if index < self.segments.len() => self.select(index),
+                    _ => {
+                        self.interactive = true;
+                        vec![Effect::UpdateWheel]
+                    }
+                }
+            }
+            InteractionEvent::ModeStepped(delta) => {
+                self.mode = self.mode.stepped(delta);
+                self.segments = segments_for(self.mode);
+                self.highlighted = None;
+                crate::diagnostics::log(
+                    crate::diagnostics::Level::Info,
+                    "wheel",
+                    &format!("the wheel is now the {} wheel", self.mode.name()),
+                );
+                vec![Effect::UpdateWheel]
+            }
+            InteractionEvent::ArrowPressed { clockwise } => {
+                self.step_highlight(if clockwise { 1 } else { -1 });
+                vec![Effect::None]
+            }
+            InteractionEvent::ActivatePressed => match self.highlighted {
+                Some(index) if index < self.segments.len() => self.select(index),
+                _ => vec![Effect::None],
+            },
+            InteractionEvent::EscapePressed | InteractionEvent::WheelDismissed => {
+                self.state = InteractionState::Cancelling;
+                self.interactive = false;
+                vec![Effect::HideWheel]
+            }
+            InteractionEvent::Failed { .. } => {
+                self.state = InteractionState::Cancelling;
+                self.interactive = false;
+                vec![Effect::HideWheel]
+            }
+            _ => vec![Effect::None],
+        }
+    }
+
+    fn handle_busy(&mut self, event: InteractionEvent) -> Vec<Effect> {
+        match event {
+            InteractionEvent::EscapePressed | InteractionEvent::WheelDismissed => {
+                self.state = InteractionState::Cancelling;
+                vec![Effect::HideWheel]
+            }
+            InteractionEvent::Failed { .. } => {
+                self.state = InteractionState::Cancelling;
+                vec![Effect::HideWheel]
+            }
+            // A new drag while an action runs must not open a second wheel.
+            _ => vec![Effect::None],
+        }
+    }
+
+    fn handle_cancelling(&mut self, event: InteractionEvent) -> Vec<Effect> {
+        match event {
+            InteractionEvent::WheelDismissed => {
+                self.reset();
+                vec![Effect::None]
+            }
+            _ => vec![Effect::None],
+        }
+    }
+
+    // --------------------------------------------------------------- helpers
+
+    fn step_highlight(&mut self, delta: i32) {
+        if self.segments.is_empty() {
+            return;
+        }
+        let count = self.segments.len() as i32;
+        let current = self.highlighted.map(|i| i as i32).unwrap_or(-1);
+        let next = (current + delta).rem_euclid(count);
+        self.highlighted = Some(next as usize);
+    }
+
+    fn select(&mut self, index: usize) -> Vec<Effect> {
+        if index >= self.segments.len() {
+            // An invalid choice must not run anything, but it must not wedge
+            // the interaction either: the wheel stays up.
+            return vec![Effect::None];
+        }
+        let segment = self.segments[index].clone();
+        let files = self.files.clone();
+        let source = self.source;
+        let mode = self.mode;
+        self.state = InteractionState::SelectionPending;
+        self.interactive = false;
+        vec![
+            Effect::HideWheel,
+            Effect::Run {
+                source,
+                segment,
+                mode,
+                files,
+            },
+        ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::radial::actions::{ModifierMap, Modifiers};
+
+    fn controller() -> RadialController {
+        RadialController::new()
+    }
+
+    fn paths() -> Vec<PathBuf> {
+        vec![PathBuf::from("C:\\Users\\test\\photo.heic")]
+    }
+
+    fn open_wheel(c: &mut RadialController) -> Vec<Effect> {
+        c.handle(InteractionEvent::DragStarted { paths: paths() });
+        c.handle(InteractionEvent::PointerMoved {
+            position: Point::new(500.0, 400.0),
+        });
+        c.handle(InteractionEvent::ModifiersChanged(Modifiers {
+            shift: true,
+            ..Modifiers::NONE
+        }))
+    }
+
+    #[test]
+    fn idle_to_candidate_drag() {
+        let mut c = controller();
+        assert_eq!(c.state(), InteractionState::Idle);
+        let effects = c.handle(InteractionEvent::DragStarted { paths: paths() });
+        assert_eq!(c.state(), InteractionState::CandidateDrag);
+        assert_eq!(effects, vec![Effect::None]);
+        assert_eq!(c.files().len(), 1);
+    }
+
+    #[test]
+    fn candidate_drag_to_visible_wheel() {
+        let mut c = controller();
+        open_wheel(&mut c);
+        assert_eq!(c.state(), InteractionState::WheelVisible);
+        assert_eq!(c.mode(), RadialMode::Convert);
+        assert_eq!(c.segments().len(), 8);
+    }
+
+    #[test]
+    fn an_unrelated_mouse_move_does_not_open_the_wheel() {
+        let mut c = controller();
+        let effects = c.handle(InteractionEvent::PointerMoved {
+            position: Point::new(10.0, 10.0),
+        });
+        assert_eq!(c.state(), InteractionState::Idle);
+        assert_eq!(effects, vec![Effect::None]);
+    }
+
+    #[test]
+    fn holding_shift_without_a_drag_does_nothing() {
+        let mut c = controller();
+        let effects = c.handle(InteractionEvent::ModifiersChanged(Modifiers {
+            shift: true,
+            ..Modifiers::NONE
+        }));
+        assert_eq!(c.state(), InteractionState::Idle);
+        assert_eq!(effects, vec![Effect::None]);
+    }
+
+    #[test]
+    fn releasing_the_modifier_before_the_wheel_opened_keeps_the_candidate() {
+        let mut c = controller();
+        c.handle(InteractionEvent::DragStarted { paths: paths() });
+        c.handle(InteractionEvent::ModifiersChanged(Modifiers::NONE));
+        assert_eq!(c.state(), InteractionState::CandidateDrag);
+    }
+
+    #[test]
+    fn releasing_the_modifier_keeps_the_wheel_up() {
+        let mut c = controller();
+        open_wheel(&mut c);
+        let effects = c.handle(InteractionEvent::ModifiersChanged(Modifiers::NONE));
+        assert_eq!(c.state(), InteractionState::WheelVisible);
+        assert_eq!(effects, vec![Effect::None]);
+    }
+
+    #[test]
+    fn another_modifier_changes_the_mode() {
+        let mut c = controller();
+        c.set_modifier_map(ModifierMap::MACOS);
+        open_wheel(&mut c);
+        let effects = c.handle(InteractionEvent::ModifiersChanged(Modifiers {
+            ctrl: true,
+            ..Modifiers::NONE
+        }));
+        assert_eq!(c.state(), InteractionState::WheelVisible);
+        assert_eq!(c.mode(), RadialMode::Tools);
+        assert_eq!(c.segments().len(), 5);
+        assert_eq!(effects, vec![Effect::UpdateWheel]);
+    }
+
+    #[test]
+    fn the_default_mapping_ignores_the_modifiers_explorer_uses() {
+        let mut c = controller();
+        open_wheel(&mut c);
+        // Control is "copy" inside Explorer, so it must not open the tools
+        // wheel and it must not close the convert wheel either.
+        let effects = c.handle(InteractionEvent::ModifiersChanged(Modifiers {
+            ctrl: true,
+            ..Modifiers::NONE
+        }));
+        assert_eq!(c.mode(), RadialMode::Convert);
+        assert_eq!(effects, vec![Effect::None]);
+    }
+
+    #[test]
+    fn scrolling_steps_through_the_modes() {
+        let mut c = controller();
+        open_wheel(&mut c);
+        c.handle(InteractionEvent::ModeStepped(1));
+        assert_eq!(c.mode(), RadialMode::Tools);
+        c.handle(InteractionEvent::ModeStepped(1));
+        assert_eq!(c.mode(), RadialMode::Actions);
+        c.handle(InteractionEvent::ModeStepped(1));
+        assert_eq!(c.mode(), RadialMode::Convert);
+        c.handle(InteractionEvent::ModeStepped(-1));
+        assert_eq!(c.mode(), RadialMode::Actions);
+    }
+
+    #[test]
+    fn a_valid_selection_runs_the_action() {
+        let mut c = controller();
+        open_wheel(&mut c);
+        let effects = c.handle(InteractionEvent::SegmentSelected { index: 0 });
+        assert_eq!(c.state(), InteractionState::SelectionPending);
+        assert_eq!(effects.len(), 2);
+        assert_eq!(effects[0], Effect::HideWheel);
+        match &effects[1] {
+            Effect::Run {
+                source,
+                segment,
+                mode,
+                files,
+            } => {
+                assert_eq!(*source, InteractionSource::ExplorerDrag);
+                assert_eq!(segment.id, "convert.png");
+                assert_eq!(*mode, RadialMode::Convert);
+                assert_eq!(files.len(), 1);
+            }
+            other => panic!("expected a run effect, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_invalid_selection_runs_nothing() {
+        let mut c = controller();
+        open_wheel(&mut c);
+        let effects = c.handle(InteractionEvent::SegmentSelected { index: 99 });
+        assert_eq!(c.state(), InteractionState::WheelVisible);
+        assert_eq!(effects, vec![Effect::None]);
+    }
+
+    #[test]
+    fn escape_cancels_and_returns_to_idle() {
+        let mut c = controller();
+        open_wheel(&mut c);
+        let effects = c.handle(InteractionEvent::EscapePressed);
+        assert_eq!(c.state(), InteractionState::Cancelling);
+        assert_eq!(effects, vec![Effect::HideWheel]);
+        c.handle(InteractionEvent::WheelDismissed);
+        assert_eq!(c.state(), InteractionState::Idle);
+        assert!(c.files().is_empty());
+        assert!(c.segments().is_empty());
+    }
+
+    #[test]
+    fn repeated_interactions_work() {
+        let mut c = controller();
+        for _ in 0..5 {
+            open_wheel(&mut c);
+            assert_eq!(c.state(), InteractionState::WheelVisible);
+            c.handle(InteractionEvent::EscapePressed);
+            c.handle(InteractionEvent::WheelDismissed);
+            assert_eq!(c.state(), InteractionState::Idle);
+        }
+    }
+
+    #[test]
+    fn a_second_drag_does_not_open_a_second_wheel() {
+        let mut c = controller();
+        open_wheel(&mut c);
+        let effects = c.handle(InteractionEvent::DragStarted { paths: paths() });
+        assert_eq!(c.state(), InteractionState::WheelVisible);
+        assert_eq!(effects, vec![Effect::None]);
+    }
+
+    #[test]
+    fn a_failure_cleans_up() {
+        let mut c = controller();
+        open_wheel(&mut c);
+        let effects = c.handle(InteractionEvent::Failed {
+            reason: "boom".into(),
+        });
+        assert_eq!(c.state(), InteractionState::Cancelling);
+        assert_eq!(effects, vec![Effect::HideWheel]);
+        c.handle(InteractionEvent::WheelDismissed);
+        assert_eq!(c.state(), InteractionState::Idle);
+    }
+
+    #[test]
+    fn the_development_wheel_is_not_an_explorer_drag() {
+        let mut c = controller();
+        let effects = c.open_development_wheel(Point::new(100.0, 100.0));
+        assert_eq!(c.state(), InteractionState::WheelVisible);
+        assert_eq!(c.source(), InteractionSource::Development);
+        assert!(!c.is_explorer_drag());
+        assert!(c.files().is_empty());
+        assert!(c.is_interactive());
+        assert_eq!(effects, vec![Effect::ShowWheel]);
+    }
+
+    #[test]
+    fn the_development_wheel_cannot_be_opened_twice() {
+        let mut c = controller();
+        c.open_development_wheel(Point::new(100.0, 100.0));
+        let effects = c.open_development_wheel(Point::new(100.0, 100.0));
+        assert_eq!(effects, vec![Effect::None]);
+    }
+
+    #[test]
+    fn arrow_keys_move_the_highlight() {
+        let mut c = controller();
+        open_wheel(&mut c);
+        c.handle(InteractionEvent::ArrowPressed { clockwise: true });
+        assert_eq!(c.highlighted(), Some(0));
+        c.handle(InteractionEvent::ArrowPressed { clockwise: true });
+        assert_eq!(c.highlighted(), Some(1));
+        c.handle(InteractionEvent::ArrowPressed { clockwise: false });
+        assert_eq!(c.highlighted(), Some(0));
+    }
+
+    #[test]
+    fn enter_picks_the_highlighted_segment() {
+        let mut c = controller();
+        open_wheel(&mut c);
+        c.handle(InteractionEvent::ArrowPressed { clockwise: true });
+        let effects = c.handle(InteractionEvent::ActivatePressed);
+        assert_eq!(c.state(), InteractionState::SelectionPending);
+        assert_eq!(effects.len(), 2);
+    }
+
+    #[test]
+    fn a_drop_that_misses_keeps_the_wheel_up_and_makes_it_clickable() {
+        let mut c = controller();
+        open_wheel(&mut c);
+        c.handle(InteractionEvent::SegmentEntered(None));
+        let effects = c.handle(InteractionEvent::DragEnded);
+        assert_eq!(c.state(), InteractionState::WheelVisible);
+        assert!(c.is_interactive());
+        assert_eq!(effects, vec![Effect::UpdateWheel]);
+    }
+
+    #[test]
+    fn a_drop_on_a_segment_takes_it() {
+        let mut c = controller();
+        open_wheel(&mut c);
+        c.handle(InteractionEvent::SegmentEntered(Some(3)));
+        let effects = c.handle(InteractionEvent::DragEnded);
+        assert_eq!(c.state(), InteractionState::SelectionPending);
+        assert!(matches!(effects[1], Effect::Run { .. }));
+    }
+
+    #[test]
+    fn the_file_set_stays_stable_during_an_interaction() {
+        let mut c = controller();
+        open_wheel(&mut c);
+        c.handle(InteractionEvent::PointerMoved {
+            position: Point::new(1.0, 1.0),
+        });
+        assert_eq!(c.files().len(), 1);
+    }
+
+    #[test]
+    fn the_platform_says_which_segment_the_pointer_is_over() {
+        let mut c = controller();
+        open_wheel(&mut c);
+        c.handle(InteractionEvent::SegmentEntered(Some(4)));
+        assert_eq!(c.highlighted(), Some(4));
+        c.handle(InteractionEvent::SegmentEntered(None));
+        assert_eq!(c.highlighted(), None);
+    }
+
+    #[test]
+    fn a_segment_outside_the_wheel_is_not_highlighted() {
+        let mut c = controller();
+        open_wheel(&mut c);
+        c.handle(InteractionEvent::SegmentEntered(Some(99)));
+        assert_eq!(c.highlighted(), None);
+    }
+
+    #[test]
+    fn the_payload_can_be_resolved_after_the_drag_started() {
+        let mut c = controller();
+        c.handle(InteractionEvent::DragStarted { paths: Vec::new() });
+        c.handle(InteractionEvent::DragPayloadResolved { paths: paths() });
+        assert_eq!(c.files().len(), 1);
+    }
+}
