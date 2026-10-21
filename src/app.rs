@@ -718,7 +718,28 @@ impl App {
         let paths = state.paths.borrow().clone();
         if !paths.is_empty() && paths != self.reported_paths {
             self.reported_paths = paths.clone();
-            if paths != self.session.paths() {
+            if !self.session.is_resolved() {
+                // The shell could not say what is being dragged, which is the
+                // case for a drag that started on the desktop. The drop target
+                // is told what the drag carries, and its answer is the one the
+                // wheel uses.
+                let session = self.session.id();
+                if self
+                    .session
+                    .resolve_from_drop_target(session, paths.clone())
+                {
+                    diagnostics::log(
+                        Level::Info,
+                        "drag",
+                        &format!(
+                            "the drop target reports {} file(s) for drag {session}",
+                            paths.len()
+                        ),
+                    );
+                    self.dispatch(InteractionEvent::DragPayloadResolved { paths });
+                    self.refresh_selection();
+                }
+            } else if paths != self.session.paths() {
                 diagnostics::log(
                     Level::Warn,
                     "drag",
@@ -1032,7 +1053,7 @@ impl App {
                     Level::Debug,
                     "drag",
                     &format!(
-                        "drag {session} was pressed on the Explorer window {source:?} (the shell {} it)",
+                        "drag {session} was pressed on the window {source:?} (the shell {} it)",
                         if self.shell_window.is_some() {
                             "knows"
                         } else {
@@ -1050,7 +1071,7 @@ impl App {
                     Level::Info,
                     "drag",
                     &format!(
-                        "drag {session} started in the Explorer window {source:?} (the foreground window is {:?}): {} file(s), resolution {}, payload from {}",
+                        "drag {session} started in the window {source:?} (the foreground window is {:?}): {} file(s), resolution {}, payload from {}",
                         input::foreground_class(),
                         paths.len(),
                         if self.session.is_resolved() {
@@ -1091,6 +1112,15 @@ impl App {
                     self.dispatch(InteractionEvent::DragEnded);
                 }
             }
+            DragEvent::Empty { session } => {
+                // The pointer moved, but nothing was picked up: a drag of the
+                // empty desktop. There is nothing to open the wheel for.
+                diagnostics::log(
+                    Level::Debug,
+                    "drag",
+                    &format!("drag {session} carries no file, so it is not a file drag"),
+                );
+            }
             DragEvent::Rejected { reason } => {
                 if !was_armed && left_down && !self.press_reported {
                     self.press_reported = true;
@@ -1114,7 +1144,7 @@ impl App {
                 Level::Debug,
                 "drag",
                 &format!(
-                    "drag {} started on an Explorer window at {cursor:?}",
+                    "drag {} started on a window that holds files at {cursor:?}",
                     self.drag.session()
                 ),
             );

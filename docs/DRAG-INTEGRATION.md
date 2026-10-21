@@ -178,9 +178,9 @@ leak and no input for anyone else to swallow.
 1. **The press.** The pointer is read with `GetCursorPos` and the button with
    `GetAsyncKeyState`. When the button goes down, the window under the
    pointer is found with `WindowFromPoint` and its root is asked for its class
-   name. Only `CabinetWClass` and `ExploreWClass` — Explorer's file lists —
-   are accepted. A press anywhere else is not a candidate, and the log says
-   which window it was on.
+   name. `CabinetWClass` and `ExploreWClass` — Explorer's file lists — and
+   `Progman` and `WorkerW` — the desktop — are accepted. A press anywhere
+   else is not a candidate, and the log says which window it was on.
 2. **The movement.** The pointer has to travel at least 8 pixels from the
    press. A click does not move that far, so a click is never a drag.
 3. **The modifier.** The modifier keys are read with `GetAsyncKeyState` and
@@ -190,6 +190,44 @@ leak and no input for anyone else to swallow.
    and the selection is read when the drag has begun.
 5. **The choice.** The drop arrives in the `Drop` callback, and the segment
    under the point of the drop is taken.
+
+## The desktop is a source of its own
+
+The desktop holds files, and a drag of one of its icons is a drag of a file.
+It is not an Explorer window, though: it is a shell window of its own
+(`Progman` or `WorkerW`), and its icons live in a list of their own inside it
+(`SHELLDLL_DefView` holding a `SysListView32`).
+
+That list covers the whole screen, so the window under the pointer cannot tell
+an icon from the wallpaper around it. Measured on this machine, the list
+answers **no** question about its items: `LVM_HITTEST` returns the first item
+with no flags whatever the point is, `LVM_GETITEMRECT` and
+`LVM_GETITEMPOSITION` return nothing, and `LVM_GETITEMTEXT` returns an empty
+string. Only the number of items and the selection can be asked for.
+
+The selection is the answer that works, and it was measured how it behaves:
+
+- The shell selects the icon that is pressed, **as soon as it has seen the
+  press**, and it keeps that selection for as long as the drag runs.
+- The shell clears the selection when the **empty** desktop is pressed, but
+  only once the pointer has moved.
+
+Two things follow from that. The answer is worth asking only after the
+pointer has moved, and it has to be asked **twice**: the shell makes its
+selection after the press has been noticed, so the first answer can still be
+the answer of the gesture before — and the gesture before may well have had an
+icon selected. The second answer is the one that is trusted.
+
+The files themselves are a different matter. The shell's list of windows holds
+Explorer's windows and nothing else — the desktop is not in it — so the
+desktop's selection cannot be read as a list of paths. What the drag carries
+is therefore taken from the **drop target**, which is told the drag's payload
+directly. That is the same answer the drop target gives for Explorer's drags,
+and the two are compared, as they always were.
+
+The cost is that the number of files on the wheel is right from the start for
+an Explorer drag, but arrives a moment later for a desktop drag: the drop
+target only answers once the drag is over the wheel.
 
 ### The release, and the place of the wheel
 
@@ -338,13 +376,15 @@ on screen.
 
 ## Limits that are still there
 
-- **A source that is not Explorer is not recognised.** Only Explorer's file
-  lists are looked at. Another program that drags files (a browser, an
-  editor) will not open the wheel.
+- **A source that is not Explorer and not the desktop is not recognised.**
+  Explorer's file lists and the desktop's icons are looked at. Another
+  program that drags files (a browser, an editor) will not open the wheel.
 - **The files are known when the wheel opens.** They are read from the shell
   before the wheel is put on the screen, so the number of files on the wheel
   is right from the start. The read takes about 50 ms while Explorer is in
-  its drag loop, which is the one price of this way of reading them.
+  its drag loop, which is the one price of this way of reading them. A drag
+  from the desktop is the exception: the shell does not know the desktop, so
+  the number of files arrives from the drop target a moment later.
 - **A drop on the hub or a gap is taken by the application**, and the files
   are not moved by Explorer.
 - **The list of files is what the drag carries**, so it is the selection the

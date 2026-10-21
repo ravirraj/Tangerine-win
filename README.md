@@ -41,7 +41,8 @@ is quiet enough to leave running in the background.
 
 ## Using it
 
-1. Select one or more files in Explorer and start dragging them.
+1. Select one or more files in Explorer and start dragging them. A file on
+   the desktop can be dragged too.
 2. Hold **Shift** while you drag. The wheel opens around the pointer.
 3. Move onto a choice. The segment under the pointer lifts and lights up.
 4. Let go of the mouse over the choice. The action is chosen.
@@ -71,7 +72,7 @@ src/
     state.rs               the states and the events
   platform/windows/
     droptarget.rs          being the target of a drag
-    explorer.rs            recognising an Explorer drag
+    explorer.rs            recognising an Explorer or desktop drag
     input.rs               the pointer, the keys, the scroll wheel
     monitors.rs            where the screens are
     overlay.rs             the transparent window the wheel is drawn in
@@ -81,7 +82,8 @@ src/
     wheel.rs               the view model
     wheel.slint            the markup
 tests/
-  windows-integration.ps1  the tests with a real Explorer window
+  windows-integration.ps1  the tests with a real Explorer window and the
+                           real desktop
 ```
 
 The rule the layout follows: the controller never knows about Windows, the

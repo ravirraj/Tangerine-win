@@ -146,6 +146,24 @@ impl DragSession {
         }
         true
     }
+
+    /// Records what the drop target said about the files of this session.
+    ///
+    /// The drop target is the answer for a drag the shell cannot answer for.
+    /// A drag that started on the desktop is such a drag: the shell knows
+    /// nothing about the desktop's selection, but the drop target is told
+    /// what the drag carries.
+    ///
+    /// The answer has to be about this session, like every other answer.
+    pub fn resolve_from_drop_target(&mut self, id: u64, paths: Vec<PathBuf>) -> bool {
+        if id != self.id {
+            return false;
+        }
+        self.paths = paths;
+        self.resolved = true;
+        self.origin = "the drop target";
+        true
+    }
 }
 
 #[cfg(test)]
@@ -259,5 +277,37 @@ mod tests {
         assert_eq!(resolution.paths().len(), 1);
         assert!(resolution.is_resolved());
         assert_eq!(resolution.reason(), None);
+    }
+
+    #[test]
+    fn the_drop_target_can_answer_for_a_drag_the_shell_could_not() {
+        let mut session = DragSession::new();
+        session.begin(1, HWND(std::ptr::null_mut()));
+        // The shell knows nothing about the desktop, so it cannot answer.
+        session.resolve(
+            1,
+            Resolution::Unresolved("the shell does not know the desktop"),
+        );
+        assert!(!session.is_resolved());
+        assert!(session.paths().is_empty());
+
+        // The drop target knows what the drag carries, and its answer is
+        // used.
+        let applied = session.resolve_from_drop_target(1, vec![a_path("one.txt")]);
+        assert!(applied);
+        assert!(session.is_resolved());
+        assert_eq!(session.paths().len(), 1);
+        assert_eq!(session.paths()[0], a_path("one.txt"));
+        assert_eq!(session.origin(), "the drop target");
+    }
+
+    #[test]
+    fn the_drop_target_cannot_answer_for_another_drag() {
+        let mut session = DragSession::new();
+        session.begin(2, HWND(std::ptr::null_mut()));
+        let applied = session.resolve_from_drop_target(1, vec![a_path("old.txt")]);
+        assert!(!applied);
+        assert!(session.paths().is_empty());
+        assert!(!session.is_resolved());
     }
 }

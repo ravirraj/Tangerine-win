@@ -30,7 +30,7 @@ use windows::Win32::System::Variant::{
 use windows::Win32::UI::Shell::IShellDispatch;
 use windows::core::{BSTR, GUID, HRESULT, Interface, PCWSTR};
 
-use crate::platform::windows::explorer::is_explorer_window;
+use crate::platform::windows::explorer::{is_desktop_window, is_explorer_window};
 use crate::session::Resolution;
 
 /// The language the shell's names are asked for in.
@@ -95,6 +95,12 @@ pub fn selected_paths(window: HWND) -> Resolution {
     let started = std::time::Instant::now();
     let resolution = match Window::find(window) {
         Some(found) => found.selected_paths(),
+        // The shell's list of windows holds Explorer's windows and nothing
+        // else. The desktop is not in it, so a drag that started on the
+        // desktop is answered by the drop target instead.
+        None if is_desktop_window(window) => {
+            Resolution::Unresolved("the shell does not know the desktop")
+        }
         None => Resolution::Unresolved("the shell does not know that window"),
     };
     crate::diagnostics::log(

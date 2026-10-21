@@ -30,6 +30,11 @@ public static class Native {
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    // The title is a real null, and not an empty string: a window that has a
+    // title of its own is only found when the title is a null.
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string cls, IntPtr title);
+    [DllImport("user32.dll")] public static extern bool ScreenToClient(IntPtr hWnd, ref POINT lpPoint);
+    [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
     [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X; public int Y; }
     public const uint LEFTDOWN = 0x02, LEFTUP = 0x04, KEYUP = 0x02, MOVE = 0x01, ABSOLUTE = 0x8000;
 }
@@ -377,7 +382,7 @@ function Case-OneFile {
     Stop-App $process
 
     $log = Get-AppLog
-    $start = $log | Select-String -Pattern "drag \d+ started in the Explorer window" | Select-Object -First 1
+    $start = $log | Select-String -Pattern "drag \d+ started in the window" | Select-Object -First 1
     $action = $log | Select-String -Pattern "placeholder:" | Select-Object -First 1
     $agrees = $log | Select-String -Pattern "the drop target agrees" | Select-Object -First 1
     $mismatch = $log | Select-String -Pattern "the drop target reports" | Select-Object -First 1
@@ -454,7 +459,7 @@ function Case-MultipleFiles {
     Stop-App $process
 
     $log = Get-AppLog
-    $start = $log | Select-String -Pattern "drag \d+ started in the Explorer window" | Select-Object -First 1
+    $start = $log | Select-String -Pattern "drag \d+ started in the window" | Select-Object -First 1
     $selection = $log | Select-String -Pattern "the selection holds" | Select-Object -First 1
     if ($start) { Say ("the log says: " + $start.Line) } else { Say "FAIL: the log does not say that a drag started" }
     if ($selection) { Say ("the log says: " + $selection.Line) }
@@ -526,7 +531,7 @@ function Case-Consecutive {
     Stop-App $process
 
     $log = Get-AppLog
-    $starts = @($log | Select-String -Pattern "drag \d+ started in the Explorer window")
+    $starts = @($log | Select-String -Pattern "drag \d+ started in the window")
     $selections = @($log | Select-String -Pattern "the selection holds")
     $action = $log | Select-String -Pattern "placeholder:" | Select-Object -First 1
     foreach ($line in $starts) { Say ("the log says: " + $line.Line) }
@@ -595,7 +600,7 @@ function Case-Cancelled {
     Stop-App $process
 
     $log = Get-AppLog
-    $start = $log | Select-String -Pattern "drag \d+ started in the Explorer window" | Select-Object -First 1
+    $start = $log | Select-String -Pattern "drag \d+ started in the window" | Select-Object -First 1
     $action = $log | Select-String -Pattern "placeholder:" | Select-Object -First 1
     if ($start) { Say ("the log says: " + $start.Line) } else { Say "FAIL: the log does not say that a drag started" }
     if ($action) { Say ("FAIL: something was run: " + $action.Line) } else { Say "PASS: nothing was run" }
@@ -648,7 +653,7 @@ function Case-Unselected {
     Stop-App $process
 
     $log = Get-AppLog
-    $start = $log | Select-String -Pattern "drag \d+ started in the Explorer window" | Select-Object -First 1
+    $start = $log | Select-String -Pattern "drag \d+ started in the window" | Select-Object -First 1
     $selection = $log | Select-String -Pattern "the selection holds" | Select-Object -First 1
     $action = $log | Select-String -Pattern "placeholder:" | Select-Object -First 1
     $mismatch = $log | Select-String -Pattern "the drop target reports" | Select-Object -First 1
@@ -875,26 +880,145 @@ function Case-DropOnHub {
     if ($action) { Say ("FAIL: something was run: " + $action.Line) } else { Say "PASS: nothing was run" }
 }
 
-function Case-Unsupported {
-    $script:CaseName = "unsupported"
+function Get-DesktopIconList {
+    # The list the desktop's icons are in.
+    #
+    # The desktop is a shell window of its own, and its icons live in a list
+    # view inside it. The application looks for the list in the same way.
+    $desktop = [System.Windows.Automation.AutomationElement]::RootElement
+    $condition = New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::ClassNameProperty, "Progman")
+    $windows = $desktop.FindAll([System.Windows.Automation.TreeScope]::Children, $condition)
+    foreach ($w in $windows) {
+        $hwnd = [IntPtr]$w.Current.NativeWindowHandle
+        $view = [Native]::FindWindowEx($hwnd, [IntPtr]::Zero, "SHELLDLL_DefView", [IntPtr]::Zero)
+        if ($view -ne [IntPtr]::Zero) {
+            $list = [Native]::FindWindowEx($view, [IntPtr]::Zero, "SysListView32", [IntPtr]::Zero)
+            if ($list -ne [IntPtr]::Zero) { return $list }
+        }
+    }
+    return [IntPtr]::Zero
+}
+
+function Get-DesktopSelection {
+    # The index of the first selected icon on the desktop, or -1 when nothing
+    # is selected.
+    #
+    # This is how the application tells an icon from the empty desktop: the
+    # shell selects the icon that is pressed, and it clears the selection when
+    # the empty desktop is pressed.
+    param($list)
+    # The search starts before the first item, so that the first selected
+    # item is found whatever it is.
+    return [Native]::SendMessage($list, 0x100C, [IntPtr](-1), [IntPtr]2).ToInt32()
+}
+
+function Minimize-OtherWindows {
+    # The desktop has to be visible for a drag to start on it.
+    #
+    # Every window that is not one of the shell's own is put out of the way,
+    # so that the icons can be reached.
+    $shell = @("Progman", "WorkerW", "Shell_TrayWnd", "CabinetWClass", "ExploreWClass")
+    $root = [System.Windows.Automation.AutomationElement]::RootElement
+    $windows = $root.FindAll([System.Windows.Automation.TreeScope]::Children,
+        [System.Windows.Automation.Condition]::TrueCondition)
+    foreach ($w in $windows) {
+        if ($shell -notcontains $w.Current.ClassName) {
+            [void][Native]::ShowWindow([IntPtr]$w.Current.NativeWindowHandle, 6)
+        }
+    }
+    Start-Sleep -Milliseconds 600
+}
+
+function Find-DesktopIcon {
+    # Finds a point on one of the desktop's icons.
+    #
+    # The icons are in a grid in the top left corner of the desktop. A point
+    # is tried by clicking it: a click on an icon selects it, and a click on
+    # the empty desktop does not, so the selection says which it was.
+    param($list)
+    for ($row = 0; $row -lt 5; $row++) {
+        for ($column = 0; $column -lt 4; $column++) {
+            $x = 30 + $column * 80
+            $y = 30 + $row * 85
+            [void][Native]::SetCursorPos($x, $y)
+            Start-Sleep -Milliseconds 250
+            [Native]::mouse_event([Native]::LEFTDOWN, 0, 0, 0, [UIntPtr]::Zero)
+            Start-Sleep -Milliseconds 120
+            [Native]::mouse_event([Native]::LEFTUP, 0, 0, 0, [UIntPtr]::Zero)
+            Start-Sleep -Milliseconds 350
+            if ((Get-DesktopSelection $list) -ge 0) {
+                return @{ X = $x; Y = $y }
+            }
+        }
+    }
+    return $null
+}
+
+function Find-EmptyDesktop {
+    # Finds a point on the desktop that is not on an icon.
+    #
+    # The click clears the selection, so a point is empty when the selection
+    # is empty after it has been clicked.
+    param($list)
+    for ($row = 0; $row -lt 5; $row++) {
+        for ($column = 0; $column -lt 4; $column++) {
+            $x = 1400 + $column * 90
+            $y = 200 + $row * 90
+            [void][Native]::SetCursorPos($x, $y)
+            Start-Sleep -Milliseconds 250
+            [Native]::mouse_event([Native]::LEFTDOWN, 0, 0, 0, [UIntPtr]::Zero)
+            Start-Sleep -Milliseconds 120
+            [Native]::mouse_event([Native]::LEFTUP, 0, 0, 0, [UIntPtr]::Zero)
+            Start-Sleep -Milliseconds 350
+            if ((Get-DesktopSelection $list) -lt 0) { return @{ X = $x; Y = $y } }
+        }
+    }
+    return $null
+}
+
+function Case-DesktopDrag {
+    $script:CaseName = "desktop"
     Say ""
-    Say "=== case 5: a drag that does not come from Explorer ==="
-    # Every Explorer window is closed, so that the point the drag starts at
-    # really is on the desktop and not on a file list.
+    Say "=== case 5: a drag that starts on the desktop ==="
+    # The desktop is a source of files in its own right. A drag that starts
+    # on one of its icons must open the wheel, and an ordinary click on the
+    # empty desktop must not.
     Get-Process explorer -ErrorAction SilentlyContinue | ForEach-Object { $_.CloseMainWindow() | Out-Null }
     Start-Sleep -Seconds 3
 
-    $process = Start-App 18
-    Minimize-Terminal
+    # The desktop has to be visible, or the icons cannot be reached.
+    Minimize-OtherWindows
 
-    # The desktop is a shell window, but not a file list, so a press on it
-    # must never open the wheel.
-    [void][Native]::SetCursorPos(40, 40)
+    # A file whose name comes before every other one, so that it is the first
+    # icon of the desktop.
+    $file = Join-Path ([Environment]::GetFolderPath("Desktop")) "0000-desktop-drag-test.txt"
+    Set-Content $file "hello"
+    Start-Sleep -Seconds 4
+
+    $list = Get-DesktopIconList
+    if ($list -eq [IntPtr]::Zero) { Say "FAIL: the desktop's list of icons was not found"; return }
+
+    $empty = Find-EmptyDesktop $list
+    if (-not $empty) { Say "FAIL: no empty place was found on the desktop"; return }
+    Say ("an empty place on the desktop is at ({0}, {1})" -f $empty.X, $empty.Y)
+
+    $icon = Find-DesktopIcon $list
+    if (-not $icon) { Say "FAIL: no icon was found on the desktop"; return }
+    Say ("an icon of the desktop is at ({0}, {1})" -f $icon.X, $icon.Y)
+
+    $process = Start-App 40
+    Minimize-Terminal
+    Start-Sleep -Milliseconds 600
+
+    # First the empty desktop: a click and a drag there is not a drag of a
+    # file, so the wheel must not open.
+    [void][Native]::SetCursorPos($empty.X, $empty.Y)
     Start-Sleep -Milliseconds 500
     [Native]::mouse_event([Native]::LEFTDOWN, 0, 0, 0, [UIntPtr]::Zero)
     Start-Sleep -Milliseconds 300
     for ($i = 1; $i -le 12; $i++) {
-        [void][Native]::SetCursorPos((40 + $i * 10), (40 + $i * 8))
+        [void][Native]::SetCursorPos(($empty.X + $i * 10), ($empty.Y + $i * 8))
         Start-Sleep -Milliseconds 45
     }
     [Native]::keybd_event(0x10, 0, 0, [UIntPtr]::Zero)
@@ -902,13 +1026,42 @@ function Case-Unsupported {
     [Native]::keybd_event(0x10, 0, [Native]::KEYUP, [UIntPtr]::Zero)
     [Native]::mouse_event([Native]::LEFTUP, 0, 0, 0, [UIntPtr]::Zero)
     Start-Sleep -Seconds 2
+
+    $log = Get-AppLog
+    $rejected = $log | Select-String -Pattern "carries no file" | Select-Object -First 1
+    $started = $log | Select-String -Pattern "drag \d+ started in the" | Select-Object -First 1
+    $opened = $log | Select-String -Pattern "the wheel is opening" | Select-Object -First 1
+    if ($rejected) { Say ("the log says: " + $rejected.Line) } else { Say "FAIL: the drag of the empty desktop was not refused" }
+    if ($started) { Say ("FAIL: a drag was started anyway: " + $started.Line) } else { Say "PASS: no drag was started" }
+    if ($opened) { Say ("FAIL: the wheel opened anyway: " + $opened.Line) } else { Say "PASS: the wheel did not open" }
+
+    # And now the icon: a drag of a file on the desktop must open the wheel.
+    $before = @(Get-AppLog).Count
+    Invoke-Gesture $icon.X $icon.Y $true $false 120 60
+    Start-Sleep -Seconds 2
     Stop-App $process
 
     $log = Get-AppLog
-    $rejected = $log | Select-String -Pattern "was not a file drag" | Select-Object -First 1
-    $started = $log | Select-String -Pattern "drag \d+ started in the Explorer window" | Select-Object -First 1
-    if ($rejected) { Say ("the log says: " + $rejected.Line) } else { Say "FAIL: the press was not reported as rejected" }
-    if ($started) { Say ("FAIL: a drag was started anyway: " + $started.Line) } else { Say "PASS: no drag was started" }
+    $started = $log | Select-String -Pattern "drag \d+ started in the" | Select-Object -First 1
+    $opened = $log | Select-String -Pattern "the wheel is opening" | Select-Object -First 1
+    $carried = $log | Select-String -Pattern "the drop target reports" | Select-Object -First 1
+    $selection = $log | Select-String -Pattern "the selection holds" | Select-Object -Last 1
+    if ($started) { Say ("the log says: " + $started.Line) } else { Say "FAIL: the log does not say that a drag started" }
+    if ($opened) { Say ("the log says: " + $opened.Line) } else { Say "FAIL: the wheel did not open" }
+    if ($carried) { Say ("the log says: " + $carried.Line) } else { Say "FAIL: the drop target did not report what the drag carried" }
+    if ($selection) { Say ("the log says: " + $selection.Line) }
+
+    if ($started -and $opened) { Say "PASS: a drag of a desktop file opened the wheel" }
+    else { Say "FAIL: a drag of a desktop file did not open the wheel" }
+    # The wheel knows what is being dragged. The log does not name the file,
+    # so the number of items is what can be checked.
+    if ($selection -and $selection.Line -match "1 item\(s\) of 1 kind\(s\)") {
+        Say "PASS: the wheel knows what is being dragged"
+    } else {
+        Say "FAIL: the wheel does not know what is being dragged"
+    }
+
+    Remove-Item -Force $file -ErrorAction SilentlyContinue
 }
 
 function Case-DevelopmentWheel {
@@ -1003,7 +1156,7 @@ if ($Only -eq "" -or $Only -eq "cancel") { Case-Cancelled }
 if ($Only -eq "" -or $Only -eq "unselected") { Case-Unselected }
 if ($Only -eq "" -or $Only -eq "stays") { Case-WheelStays }
 if ($Only -eq "" -or $Only -eq "hub") { Case-DropOnHub }
-if ($Only -eq "" -or $Only -eq "unsupported") { Case-Unsupported }
+if ($Only -eq "" -or $Only -eq "desktop") { Case-DesktopDrag }
 if ($Only -eq "" -or $Only -eq "devwheel") { Case-DevelopmentWheel }
 
 Say ""
