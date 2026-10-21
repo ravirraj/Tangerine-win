@@ -14,11 +14,27 @@ use std::process::{Command, Stdio};
 use crate::media::convert::{ConvertError, Converter};
 use crate::media::locator::Tools;
 use crate::media::manifest::Manifest;
-use crate::media::publish::PlatformPublisher;
+use crate::media::publish::{PublishError, Publisher};
 use crate::media::runner::SystemRunner;
 
 /// The environment variable that says where the program is.
 const WHERE: &str = "OPEN_TANGERINE_FFMPEG";
+
+/// A publisher for the tests.
+///
+/// It moves the file and never overwrites what is there. The publisher the
+/// application uses is tested where it lives, in the platform layer; these
+/// tests are about the conversion, not about the move.
+struct TestPublisher;
+
+impl Publisher for TestPublisher {
+    fn publish(&self, temporary: &Path, destination: &Path) -> Result<(), PublishError> {
+        if destination.exists() {
+            return Err(PublishError::DestinationExists);
+        }
+        std::fs::rename(temporary, destination).map_err(|_| PublishError::CouldNotMove)
+    }
+}
 
 /// The programs, or nothing when they are not there.
 ///
@@ -82,23 +98,47 @@ fn make_picture(
     frames: u32,
     transparent: bool,
 ) -> PathBuf {
-    let mut pixels = Vec::new();
-    for _ in 0..(SIZE * SIZE) {
-        // The top half of the picture is see-through, the bottom half is
-        // a solid red.
-        pixels.extend_from_slice(&[255, 0, 0, 255]);
-    }
-    if transparent {
-        for byte in 0..(SIZE * SIZE / 2) * 4 {
-            pixels[byte] = 255;
-            pixels[byte + 1] = 0;
-            pixels[byte + 2] = 0;
-            pixels[byte + 3] = 0;
+    // The picture: the top half is see-through, the bottom half is a solid
+    // red. The bytes are built here and then checked, so that a picture
+    // which is not what it should be is caught here and not three steps
+    // later as a mysterious failure.
+    let mut pixels = Vec::with_capacity(SIZE * SIZE * 4 * frames as usize);
+    for _ in 0..frames {
+        for row in 0..SIZE {
+            let alpha = if transparent && row < SIZE / 2 {
+                0
+            } else {
+                255
+            };
+            for _ in 0..SIZE {
+                pixels.extend_from_slice(&[255, 0, 0, alpha]);
+            }
         }
+    }
+    assert_eq!(pixels.len(), SIZE * SIZE * 4 * frames as usize);
+    if transparent {
+        let see_through = &pixels[0..4];
+        let solid = &pixels[(SIZE * SIZE / 2) * 4..(SIZE * SIZE / 2) * 4 + 4];
+        assert_eq!(
+            see_through,
+            &[255, 0, 0, 0],
+            "the see-through part of the picture is not see-through"
+        );
+        assert_eq!(
+            solid,
+            &[255, 0, 0, 255],
+            "the solid part of the picture is not solid"
+        );
     }
 
     let path = folder.join(name);
-    let mut child = Command::new(program)
+    // The raw pixels are put in a file of their own, and that file is what
+    // the program is given. The application never does this — it is only
+    // how the tests make the pictures they work with.
+    let raw = folder.join(format!("{name}.raw"));
+    std::fs::write(&raw, &pixels).expect("the pixels could be written");
+
+    let child = Command::new(program)
         .args([
             "-hide_banner",
             "-nostdin",
@@ -112,28 +152,17 @@ fn make_picture(
             "-r",
             "5",
             "-i",
-            "-",
-            "-frames:v",
-            &frames.to_string(),
-            "-c:v",
-            codec,
-            "-f",
-            muxer,
         ])
+        .arg(&raw)
+        .args(["-frames:v", &frames.to_string(), "-c:v", codec, "-f", muxer])
         .arg(&path)
-        .stdin(Stdio::piped())
+        .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
         .expect("the program was started");
-    {
-        use std::io::Write;
-        let mut stdin = child.stdin.take().expect("the input is there");
-        stdin
-            .write_all(&pixels)
-            .expect("the pixels could be written");
-    }
     let output = child.wait_with_output().expect("the program finished");
+    let _ = std::fs::remove_file(&raw);
     assert!(
         output.status.success() && path.is_file(),
         "the program could not make {name}: {}",
@@ -143,11 +172,16 @@ fn make_picture(
 }
 
 /// The pixels of a picture, as the program reads them back.
-fn pixels_of(program: &Path, picture: &Path) -> Vec<u8> {
+///
+/// The demuxer is named, the same way the application names it, so that
+/// the picture is read the same way every time.
+fn pixels_of(program: &Path, picture: &Path, demuxer: &str) -> Vec<u8> {
     let output = Command::new(program)
         .args([
             "-hide_banner",
             "-nostdin",
+            "-f",
+            demuxer,
             "-i",
             picture.to_str().expect("the path is text"),
             "-f",
@@ -219,7 +253,7 @@ fn every_picture_is_converted_into_every_format() {
     let folder = TempFolder::new("matrix");
     let manifest = Manifest::get();
     let runner = SystemRunner;
-    let publisher = PlatformPublisher;
+    let publisher = TestPublisher;
 
     // A picture of every format the program can read.
     let mut pictures = Vec::new();
@@ -284,40 +318,51 @@ fn a_picture_that_can_hold_transparency_keeps_it() {
     let folder = TempFolder::new("alpha");
     let manifest = Manifest::get();
     let runner = SystemRunner;
-    let publisher = PlatformPublisher;
+    let publisher = TestPublisher;
 
-    let picture = make_picture(
-        &tools.ffmpeg,
-        &folder.path,
-        "source.png",
-        "png",
-        "image2pipe",
-        1,
-        true,
-    );
-
-    for name in ["png", "tiff", "webp"] {
-        let Some(target) = manifest.format(name) else {
+    // Each target that can hold transparency is reached from a source that
+    // is not in that format, because a picture that is already in the
+    // format is not converted at all.
+    for (source, target) in [("png", "tiff"), ("png", "webp"), ("webp", "png")] {
+        let Some(source_format) = manifest.format(source) else {
             continue;
         };
+        let Some(target_format) = manifest.format(target) else {
+            continue;
+        };
+        let picture = make_picture(
+            &tools.ffmpeg,
+            &folder.path,
+            &format!("source-{source}.{}", source_format.extensions[0]),
+            &source_format.write.encoder,
+            &source_format.write.muxer,
+            1,
+            true,
+        );
+
         let converter = Converter {
             tools: &tools,
             runner: &runner,
             publisher: &publisher,
         };
         let result = converter
-            .convert(&picture, target)
-            .unwrap_or_else(|reason| panic!("it could not be converted: {}", reason.name()));
-        let pixels = pixels_of(&tools.ffmpeg, &result);
+            .convert(&picture, target_format)
+            .unwrap_or_else(|reason| {
+                panic!(
+                    "{source} could not be converted into {target}: {}",
+                    reason.name()
+                )
+            });
+        let pixels = pixels_of(&tools.ffmpeg, &result, &target_format.read.demuxer);
         let top = first_pixel(&pixels);
         let lower = lower_pixel(&pixels);
         assert!(
             top[3] == 0,
-            "the see-through part of the {name} is not see-through: {top:?}"
+            "the see-through part of the {target} is not see-through: {top:?}"
         );
         assert!(
             lower[3] == 255,
-            "the solid part of the {name} is not solid: {lower:?}"
+            "the solid part of the {target} is not solid: {lower:?}"
         );
     }
 }
@@ -332,7 +377,7 @@ fn a_picture_that_cannot_hold_transparency_is_painted_onto_white() {
     let folder = TempFolder::new("matte");
     let manifest = Manifest::get();
     let runner = SystemRunner;
-    let publisher = PlatformPublisher;
+    let publisher = TestPublisher;
 
     let picture = make_picture(
         &tools.ffmpeg,
@@ -356,7 +401,7 @@ fn a_picture_that_cannot_hold_transparency_is_painted_onto_white() {
         let result = converter
             .convert(&picture, target)
             .unwrap_or_else(|reason| panic!("it could not be converted: {}", reason.name()));
-        let pixels = pixels_of(&tools.ffmpeg, &result);
+        let pixels = pixels_of(&tools.ffmpeg, &result, &target.read.demuxer);
         let top = first_pixel(&pixels);
         // The background is white: the see-through part of the picture has
         // been painted onto it, and not left black.
@@ -377,7 +422,7 @@ fn a_picture_with_several_frames_is_refused() {
     let folder = TempFolder::new("animation");
     let manifest = Manifest::get();
     let runner = SystemRunner;
-    let publisher = PlatformPublisher;
+    let publisher = TestPublisher;
 
     // A picture with two frames is an animation, and is not converted.
     let picture = make_picture(
@@ -413,7 +458,7 @@ fn an_animated_webp_is_refused() {
     let folder = TempFolder::new("animated-webp");
     let manifest = Manifest::get();
     let runner = SystemRunner;
-    let publisher = PlatformPublisher;
+    let publisher = TestPublisher;
 
     // A WebP with two frames is an animation, and is not converted.
     let picture = make_picture(
@@ -449,7 +494,7 @@ fn a_file_that_is_broken_is_refused() {
     let folder = TempFolder::new("broken");
     let manifest = Manifest::get();
     let runner = SystemRunner;
-    let publisher = PlatformPublisher;
+    let publisher = TestPublisher;
 
     // A file that says it is a picture and is not one.
     let picture = folder.path.join("broken.png");
@@ -512,7 +557,7 @@ fn the_original_is_left_alone() {
     let folder = TempFolder::new("original");
     let manifest = Manifest::get();
     let runner = SystemRunner;
-    let publisher = PlatformPublisher;
+    let publisher = TestPublisher;
 
     let picture = make_picture(
         &tools.ffmpeg,
@@ -539,4 +584,103 @@ fn the_original_is_left_alone() {
         before,
         "the original was changed"
     );
+}
+
+#[test]
+#[ignore = "needs the conversion program"]
+fn awkward_names_are_converted_as_they_are() {
+    let Some(tools) = programs() else {
+        eprintln!("the program is not there; this test needs it");
+        return;
+    };
+    let folder = TempFolder::new("awkward");
+    let manifest = Manifest::get();
+    let runner = SystemRunner;
+    let publisher = TestPublisher;
+    let target = manifest.format("jpeg").expect("jpeg is in the manifest");
+
+    // The names a file may be called by on Windows. The characters
+    // Windows does not allow in a name are not here: they cannot happen,
+    // and a test that used them would be testing nothing.
+    let names = [
+        "photo with spaces.png",
+        "café ☕ 日本語.png",
+        "100%.png",
+        "photo%03d.png",
+        "a&b;c'd.png",
+        "price$100.png",
+    ];
+
+    for name in names {
+        let picture = make_picture(
+            &tools.ffmpeg,
+            &folder.path,
+            name,
+            "png",
+            "image2pipe",
+            1,
+            false,
+        );
+        let converter = Converter {
+            tools: &tools,
+            runner: &runner,
+            publisher: &publisher,
+        };
+        let result = converter
+            .convert(&picture, target)
+            .unwrap_or_else(|reason| panic!("{name} could not be converted: {}", reason.name()));
+        assert_eq!(
+            result,
+            folder.path.join(name).with_extension("jpeg"),
+            "{name} was given the wrong name"
+        );
+        assert!(result.is_file(), "{name} was not made");
+    }
+}
+
+#[test]
+#[ignore = "needs the conversion program"]
+fn pictures_in_folders_are_converted_as_they_are() {
+    let Some(tools) = programs() else {
+        eprintln!("the program is not there; this test needs it");
+        return;
+    };
+    let folder = TempFolder::new("nested");
+    let manifest = Manifest::get();
+    let runner = SystemRunner;
+    let publisher = TestPublisher;
+    let target = manifest.format("jpeg").expect("jpeg is in the manifest");
+
+    // A folder of its own, with a space and a picture in it, and a folder
+    // inside that one.
+    let inner = folder.path.join("sub folder");
+    std::fs::create_dir_all(&inner).expect("the folder could be made");
+    let deeper = inner.join("one").join("two");
+    std::fs::create_dir_all(&deeper).expect("the folder could be made");
+
+    for (folder_to_use, name) in [(&inner, "photo.png"), (&deeper, "café ☕.png")] {
+        let picture = make_picture(
+            &tools.ffmpeg,
+            folder_to_use,
+            name,
+            "png",
+            "image2pipe",
+            1,
+            false,
+        );
+        let converter = Converter {
+            tools: &tools,
+            runner: &runner,
+            publisher: &publisher,
+        };
+        let result = converter
+            .convert(&picture, target)
+            .unwrap_or_else(|reason| panic!("{name} could not be converted: {}", reason.name()));
+        assert_eq!(
+            result,
+            folder_to_use.join(name).with_extension("jpeg"),
+            "{name} was given the wrong name"
+        );
+        assert!(result.is_file(), "{name} was not made");
+    }
 }
