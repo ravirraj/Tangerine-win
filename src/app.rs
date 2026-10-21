@@ -490,17 +490,19 @@ impl App {
 
     /// Where the pointer is, in screen pixels.
     ///
-    /// The pointer is the truth. The one exception is a drag that is over the
-    /// wheel: the drag owns the pointer while it runs and may move it about,
-    /// so the place the drag reports is preferred. Both answers are in screen
-    /// pixels and both go through the same test, so the two can never
-    /// disagree about where the wheel is.
+    /// The pointer is the truth. The drag that may be passing over the wheel
+    /// is not asked: it answers with the place it last heard of the pointer,
+    /// and that place can be a long way behind the pointer that is on the
+    /// screen, and can miss the places the pointer has been on the way. The
+    /// two would then take turns deciding which segment is chosen.
+    ///
+    /// Both are in the same space: the pointer is read with `GetCursorPos`,
+    /// which gives physical screen pixels, and the wheel's shape is worked out
+    /// in physical screen pixels too.
+    ///
+    /// The drop is a different matter. There the place the drag hands over is
+    /// the place the file was let go of, and that is what `handle_drop` uses.
     fn hover_point(&self) -> Option<Point> {
-        if self.drop_state.over.get()
-            && let Some(point) = self.drop_state.screen_point()
-        {
-            return Some(point);
-        }
         input::cursor_position()
     }
 
