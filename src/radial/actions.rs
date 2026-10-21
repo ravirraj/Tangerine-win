@@ -3,6 +3,13 @@
 //! The definitions live here, away from the renderer, so a later milestone can
 //! fill them in from the real conversion matrix or the real tool list without
 //! touching the drawing code.
+//!
+//! The operations themselves are in the registry, which is where the rules
+//! about what may be used for a selection live. This module holds the
+//! vocabulary the rest of the program speaks: the wheels, the modifier keys,
+//! and what a choice looks like.
+
+use super::registry::{Operation, operations_for};
 
 /// The three wheels.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -160,7 +167,8 @@ pub struct Segment {
 }
 
 impl Segment {
-    fn new(id: &str, label: &str, detail: &str, icon: IconKind) -> Self {
+    /// Makes a choice for the wheel.
+    pub fn new(id: &str, label: &str, detail: &str, icon: IconKind) -> Self {
         Self {
             id: id.to_string(),
             label: label.to_string(),
@@ -172,90 +180,25 @@ impl Segment {
 
 /// The choices each wheel offers.
 ///
-/// These are placeholders for Milestone 1: the visual structure and the
-/// interaction are real, but nothing is converted, compressed or renamed yet.
+/// The operations themselves live in the registry, which also knows which of
+/// them can really be used for the files that were dragged. The wheel shows
+/// every operation of the wheel for now: whether one may be offered is the
+/// registry's business, and the menu does not depend on the selection yet.
 pub fn segments_for(mode: RadialMode) -> Vec<Segment> {
-    match mode {
-        RadialMode::Convert => vec![
-            Segment::new("convert.png", "PNG", "Convert to PNG", IconKind::Picture),
-            Segment::new("convert.jpeg", "JPEG", "Convert to JPEG", IconKind::Picture),
-            Segment::new("convert.webp", "WebP", "Convert to WebP", IconKind::Picture),
-            Segment::new("convert.pdf", "PDF", "Convert to PDF", IconKind::Document),
-            Segment::new("convert.mp4", "MP4", "Convert to MP4", IconKind::Film),
-            Segment::new("convert.gif", "GIF", "Convert to GIF", IconKind::Film),
-            Segment::new("convert.tiff", "TIFF", "Convert to TIFF", IconKind::Picture),
-            Segment::new("convert.bmp", "BMP", "Convert to BMP", IconKind::Picture),
-        ],
-        RadialMode::Tools => vec![
-            Segment::new(
-                "tools.compress",
-                "Compress",
-                "Make the file smaller",
-                IconKind::Gauge,
-            ),
-            Segment::new(
-                "tools.crop",
-                "Crop",
-                "Trim the edges away",
-                IconKind::Scissors,
-            ),
-            Segment::new(
-                "tools.trim",
-                "Trim",
-                "Cut the beginning or the end",
-                IconKind::Scissors,
-            ),
-            Segment::new(
-                "tools.merge",
-                "Merge",
-                "Join several files together",
-                IconKind::Merge,
-            ),
-            Segment::new(
-                "tools.metadata",
-                "Metadata",
-                "Edit the file metadata",
-                IconKind::Pencil,
-            ),
-        ],
-        RadialMode::Actions => vec![
-            Segment::new(
-                "actions.copy-path",
-                "Path",
-                "Copy the full path",
-                IconKind::Lines,
-            ),
-            Segment::new(
-                "actions.duplicate",
-                "Copy",
-                "Make a duplicate",
-                IconKind::Copy,
-            ),
-            Segment::new(
-                "actions.rename",
-                "Rename",
-                "Give the file a new name",
-                IconKind::Pencil,
-            ),
-            Segment::new(
-                "actions.zip",
-                "ZIP",
-                "Put the files in an archive",
-                IconKind::Archive,
-            ),
-            Segment::new(
-                "actions.reveal",
-                "Show",
-                "Reveal in Explorer",
-                IconKind::Folder,
-            ),
-        ],
-    }
+    operations_for(mode).map(Operation::as_segment).collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What a segment looks like, in one line.
+    fn shape(segment: &Segment) -> String {
+        format!(
+            "{} | {} | {} | {:?}",
+            segment.id, segment.label, segment.detail, segment.icon
+        )
+    }
 
     #[test]
     fn every_mode_has_segments() {
@@ -265,6 +208,57 @@ mod tests {
                 "{} has no segments",
                 mode.name()
             );
+        }
+    }
+
+    #[test]
+    fn the_menu_shows_exactly_what_it_showed_before() {
+        // The operations come from the registry now, but the menu must look
+        // exactly the way it did: the same choices, in the same order, with
+        // the same names and the same pictures. This is what pins it.
+        let expected: Vec<(&str, Vec<&str>)> = vec![
+            (
+                "convert",
+                vec![
+                    "convert.png | PNG | Convert to PNG | Picture",
+                    "convert.jpeg | JPEG | Convert to JPEG | Picture",
+                    "convert.webp | WebP | Convert to WebP | Picture",
+                    "convert.pdf | PDF | Convert to PDF | Document",
+                    "convert.mp4 | MP4 | Convert to MP4 | Film",
+                    "convert.gif | GIF | Convert to GIF | Film",
+                    "convert.tiff | TIFF | Convert to TIFF | Picture",
+                    "convert.bmp | BMP | Convert to BMP | Picture",
+                ],
+            ),
+            (
+                "tools",
+                vec![
+                    "tools.compress | Compress | Make the file smaller | Gauge",
+                    "tools.crop | Crop | Trim the edges away | Scissors",
+                    "tools.trim | Trim | Cut the beginning or the end | Scissors",
+                    "tools.merge | Merge | Join several files together | Merge",
+                    "tools.metadata | Metadata | Edit the file metadata | Pencil",
+                ],
+            ),
+            (
+                "actions",
+                vec![
+                    "actions.copy-path | Path | Copy the full path | Lines",
+                    "actions.duplicate | Copy | Make a duplicate | Copy",
+                    "actions.rename | Rename | Give the file a new name | Pencil",
+                    "actions.zip | ZIP | Put the files in an archive | Archive",
+                    "actions.reveal | Show | Reveal in Explorer | Folder",
+                ],
+            ),
+        ];
+        let modes = [
+            ("convert", RadialMode::Convert),
+            ("tools", RadialMode::Tools),
+            ("actions", RadialMode::Actions),
+        ];
+        for ((name, wanted), (_, mode)) in expected.iter().zip(modes) {
+            let got: Vec<String> = segments_for(mode).iter().map(shape).collect();
+            assert_eq!(&got, wanted, "the {} wheel has changed", name);
         }
     }
 

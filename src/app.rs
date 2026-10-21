@@ -27,6 +27,8 @@ use crate::platform::windows::shellselection;
 use crate::radial::actions::{ModifierMap, Modifiers, RadialMode, Segment};
 use crate::radial::controller::RadialController;
 use crate::radial::geometry::{Point, RadialGeometry, WheelPlacement};
+use crate::radial::registry::{self, Environment};
+use crate::radial::selection::Selection;
 use crate::radial::state::{Effect, InteractionEvent, InteractionSource, InteractionState};
 use crate::session::DragSession;
 use crate::ui::animation::WheelAnimation;
@@ -156,6 +158,8 @@ struct App {
     /// comes up, and that is a better answer than the pointer, which the drag
     /// may have moved about. So the choice waits for the drop.
     pending_release: Option<PendingRelease>,
+    /// What the files of the drag are.
+    selection: Selection,
 }
 
 /// The end of a drag that has not been acted on yet.
@@ -236,6 +240,7 @@ impl App {
             session: DragSession::new(),
             shell_window: None,
             pending_release: None,
+            selection: Selection::default(),
         })
     }
 
@@ -332,6 +337,10 @@ impl App {
                     // began, so the shell is asked once more now that the
                     // wheel is opening.
                     self.refresh_payload();
+                    // The files are looked at here, and not in the drag
+                    // itself: the look is cheap, but a slow disk must not
+                    // hold the wheel up.
+                    self.refresh_selection();
                 }
             }
             Effect::UpdateWheel => {
@@ -392,6 +401,36 @@ impl App {
                 source
             ),
         );
+
+        // What the registry knows about the operation that was chosen. The
+        // name of the operation is its identity, so this is also the check
+        // that the menu and the registry agree.
+        match registry::operation_by_id(&segment.id) {
+            Some(operation) => diagnostics::log(
+                Level::Info,
+                "action",
+                &format!(
+                    "the operation {} is {}, and it would {} the files it is given (the selection was {})",
+                    operation.id,
+                    if operation.implemented {
+                        "implemented"
+                    } else {
+                        "not implemented yet"
+                    },
+                    if operation.destructive {
+                        "change"
+                    } else {
+                        "leave"
+                    },
+                    self.selection.shape().name(),
+                ),
+            ),
+            None => diagnostics::log(
+                Level::Warn,
+                "action",
+                "the chosen operation is not in the registry",
+            ),
+        }
     }
 
     /// The scroll wheel moves between the three wheels.
@@ -651,6 +690,66 @@ impl App {
             "the drop did not come, so the segment that is lit is taken",
         );
         self.dispatch(InteractionEvent::DragEnded);
+    }
+
+    /// Looks at the files of the drag and says what they are.
+    ///
+    /// The files come from the shell, and the look is cheap: the attributes
+    /// of each item are read, and nothing else. No file is opened, no folder
+    /// is looked inside, and no processor is run.
+    ///
+    /// Only counts and kinds go into the log. The names of the files do not.
+    fn refresh_selection(&mut self) {
+        let selection = Selection::inspect(self.session.paths());
+        let kinds: Vec<&str> = selection
+            .categories()
+            .iter()
+            .map(|kind| kind.name())
+            .collect();
+        diagnostics::log(
+            Level::Info,
+            "selection",
+            &format!(
+                "the selection holds {} item(s) of {} kind(s) ({})",
+                selection.len(),
+                kinds.len(),
+                kinds.join(", ")
+            ),
+        );
+        self.selection = selection;
+        self.report_availability();
+    }
+
+    /// Says what the registry makes of the files that were dragged.
+    ///
+    /// The menu shows every operation of the wheel for now. This is what the
+    /// registry says about the ones that are really there: how many could be
+    /// used for these files, and, when none of them can, why the first one
+    /// cannot.
+    fn report_availability(&self) {
+        let mode = self.controller.mode();
+        let environment = Environment::none();
+        let total = registry::operations_for(mode).count();
+        let offered = registry::eligible_operations(mode, &self.selection, &environment);
+        let why = if offered.is_empty() {
+            registry::operations_for(mode)
+                .find_map(|operation| {
+                    registry::eligibility(operation, &self.selection, &environment).err()
+                })
+                .map(|reason| reason.name())
+        } else {
+            None
+        };
+        let mut line = format!(
+            "{} of the {} operations of the {} wheel can be used for it",
+            offered.len(),
+            total,
+            mode.name()
+        );
+        if let Some(why) = why {
+            line.push_str(&format!(": {why}"));
+        }
+        diagnostics::log(Level::Info, "selection", &line);
     }
 
     /// Asks the shell once more whether the files of this drag have changed.

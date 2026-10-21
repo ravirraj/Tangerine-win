@@ -64,6 +64,8 @@ src/
     controller.rs          the interaction state machine
     geometry.rs            the wheel's shape and the hit testing
     icons.rs               the little pictures
+    registry.rs            the operations, and when they may be used
+    selection.rs           what the dragged files are
     state.rs               the states and the events
   platform/windows/
     droptarget.rs          being the target of a drag

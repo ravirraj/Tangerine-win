@@ -4,4 +4,6 @@ pub mod actions;
 pub mod controller;
 pub mod geometry;
 pub mod icons;
+pub mod registry;
+pub mod selection;
 pub mod state;
