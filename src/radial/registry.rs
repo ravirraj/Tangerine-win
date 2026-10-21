@@ -249,7 +249,7 @@ pub const OPERATIONS: &[Operation] = &[
         folders: false,
         output: Output::Beside("gif"),
         collision: Collision::Rename,
-        implemented: false,
+        implemented: true,
         requires: Requirement::Processor("image"),
     },
     Operation {
@@ -1032,6 +1032,7 @@ mod tests {
             "convert.webp",
             "convert.bmp",
             "convert.tiff",
+            "convert.gif",
         ];
         for entry in OPERATIONS {
             assert_eq!(

@@ -549,6 +549,63 @@ fn a_webp_that_is_broken_is_not_taken_for_a_still_one() {
 
 #[test]
 #[ignore = "needs the conversion program"]
+fn a_picture_survives_a_trip_through_a_gif() {
+    // The GIF operation is offered because this works: a picture that is
+    // written as a GIF and read back is the picture it was.
+    let Some(tools) = programs() else {
+        eprintln!("the program is not there; this test needs it");
+        return;
+    };
+    let folder = TempFolder::new("gif");
+    let manifest = Manifest::get();
+    let runner = SystemRunner;
+    let publisher = TestPublisher;
+
+    let picture = make_picture(
+        &tools.ffmpeg,
+        &folder.path,
+        "source.png",
+        "png",
+        "image2pipe",
+        1,
+        false,
+    );
+
+    let to_gif = manifest.format("gif").expect("gif is in the manifest");
+    let to_png = manifest.format("png").expect("png is in the manifest");
+
+    let converter = Converter {
+        tools: &tools,
+        runner: &runner,
+        publisher: &publisher,
+    };
+    let gif = converter
+        .convert(&picture, to_gif)
+        .expect("it was written as a gif");
+    assert!(gif.is_file(), "the gif was not made");
+    let gif_bytes = std::fs::read(&gif).expect("the gif is there");
+    assert!(to_gif.matches(&gif_bytes), "what was written is not a gif");
+
+    let back = converter.convert(&gif, to_png).expect("it was read back");
+    let back_pixels = pixels_of(&tools.ffmpeg, &back, &to_png.read.demuxer);
+    let original = pixels_of(&tools.ffmpeg, &picture, &to_png.read.demuxer);
+    assert_eq!(
+        back_pixels.len(),
+        original.len(),
+        "the picture came back a different size"
+    );
+    // A GIF holds a palette of a few hundred colours, so the picture comes
+    // back the same picture and not quite the same numbers.
+    for (came_back, was) in back_pixels.iter().zip(original.iter()) {
+        assert!(
+            (*came_back as i32 - *was as i32).abs() <= 8,
+            "the picture came back a different colour: {came_back} and {was}"
+        );
+    }
+}
+
+#[test]
+#[ignore = "needs the conversion program"]
 fn the_original_is_left_alone() {
     let Some(tools) = programs() else {
         eprintln!("the program is not there; this test needs it");
