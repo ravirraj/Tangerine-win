@@ -7,7 +7,7 @@
 
 use std::path::PathBuf;
 
-use super::actions::{ModifierMap, RadialMode, Segment, segments_for};
+use super::actions::{Menu, ModifierMap, RadialMode, Segment};
 use super::geometry::Point;
 use super::state::{Effect, InteractionEvent, InteractionSource, InteractionState};
 
@@ -17,7 +17,11 @@ pub struct RadialController {
     source: InteractionSource,
     mode: RadialMode,
     files: Vec<PathBuf>,
-    segments: Vec<Segment>,
+    /// What the wheels offer.
+    ///
+    /// The controller is told what may be offered; it does not decide. A wheel
+    /// with nothing in it is a wheel with nothing on it.
+    menu: Menu,
     highlighted: Option<usize>,
     center: Option<Point>,
     /// Whether the wheel takes clicks of its own. True for the development
@@ -40,7 +44,7 @@ impl RadialController {
             source: InteractionSource::Development,
             mode: RadialMode::Convert,
             files: Vec::new(),
-            segments: Vec::new(),
+            menu: Menu::empty(),
             highlighted: None,
             center: None,
             interactive: false,
@@ -67,7 +71,21 @@ impl RadialController {
     }
 
     pub fn segments(&self) -> &[Segment] {
-        &self.segments
+        self.menu.segments(self.mode)
+    }
+
+    /// Whether a wheel has anything on it.
+    pub fn menu_is_empty(&self, mode: RadialMode) -> bool {
+        self.menu.is_empty(mode)
+    }
+
+    /// Sets what the wheels may offer.
+    ///
+    /// The choices of the wheel that is showing may change, and the lit
+    /// segment is put out: it may not be on the wheel any more.
+    pub fn set_menu(&mut self, menu: Menu) {
+        self.menu = menu;
+        self.highlighted = None;
     }
 
     pub fn highlighted(&self) -> Option<usize> {
@@ -111,7 +129,6 @@ impl RadialController {
         self.source = InteractionSource::Development;
         self.mode = RadialMode::Convert;
         self.files.clear();
-        self.segments = segments_for(self.mode);
         self.highlighted = None;
         self.center = Some(center);
         self.interactive = true;
@@ -135,7 +152,10 @@ impl RadialController {
         self.state = InteractionState::Idle;
         self.source = InteractionSource::Development;
         self.files.clear();
-        self.segments.clear();
+        // What the wheels may offer was for this interaction, and this
+        // interaction is over. The application says what may be offered when
+        // the next one begins.
+        self.menu = Menu::empty();
         self.highlighted = None;
         self.center = None;
         self.interactive = false;
@@ -162,7 +182,6 @@ impl RadialController {
                 self.source = InteractionSource::ExplorerDrag;
                 self.files = paths;
                 self.mode = RadialMode::Convert;
-                self.segments = segments_for(self.mode);
                 self.highlighted = None;
                 self.interactive = false;
                 self.state = InteractionState::CandidateDrag;
@@ -188,7 +207,6 @@ impl RadialController {
                 match self.modifiers.mode_for(modifiers) {
                     Some(mode) => {
                         self.mode = mode;
-                        self.segments = segments_for(mode);
                         self.highlighted = None;
                         self.state = InteractionState::WheelVisible;
                         vec![Effect::ShowWheel]
@@ -229,7 +247,6 @@ impl RadialController {
                     return vec![Effect::None];
                 }
                 self.mode = wanted;
-                self.segments = segments_for(wanted);
                 self.highlighted = None;
                 vec![Effect::UpdateWheel]
             }
@@ -241,13 +258,13 @@ impl RadialController {
             }
             InteractionEvent::SegmentEntered(index) => {
                 let before = self.highlighted;
-                self.highlighted = index.filter(|i| *i < self.segments.len());
+                self.highlighted = index.filter(|i| *i < self.segments().len());
                 if before != self.highlighted {
                     // The log says what changed and what the drawing will do
                     // about it, so that a choice that does not show up can be
                     // traced.
                     let name = self
-                        .segments
+                        .segments()
                         .get(self.highlighted.unwrap_or(usize::MAX))
                         .map(|segment| segment.label.clone())
                         .unwrap_or_else(|| "the hub".to_string());
@@ -279,7 +296,6 @@ impl RadialController {
                     self.state = InteractionState::CandidateDrag;
                     self.files = paths;
                     self.highlighted = None;
-                    self.segments = segments_for(self.mode);
                     return vec![Effect::None];
                 }
                 vec![Effect::None]
@@ -288,7 +304,7 @@ impl RadialController {
                 // The mouse came up. If it came up on a choice, that choice is
                 // taken; otherwise the wheel stays up and starts taking clicks.
                 match self.highlighted {
-                    Some(index) if index < self.segments.len() => self.select(index),
+                    Some(index) if index < self.segments().len() => self.select(index),
                     _ => {
                         self.interactive = true;
                         vec![Effect::UpdateWheel]
@@ -297,7 +313,6 @@ impl RadialController {
             }
             InteractionEvent::ModeStepped(delta) => {
                 self.mode = self.mode.stepped(delta);
-                self.segments = segments_for(self.mode);
                 self.highlighted = None;
                 crate::diagnostics::log(
                     crate::diagnostics::Level::Info,
@@ -311,7 +326,7 @@ impl RadialController {
                 vec![Effect::None]
             }
             InteractionEvent::ActivatePressed => match self.highlighted {
-                Some(index) if index < self.segments.len() => self.select(index),
+                Some(index) if index < self.segments().len() => self.select(index),
                 _ => vec![Effect::None],
             },
             InteractionEvent::EscapePressed | InteractionEvent::WheelDismissed => {
@@ -355,22 +370,23 @@ impl RadialController {
     // --------------------------------------------------------------- helpers
 
     fn step_highlight(&mut self, delta: i32) {
-        if self.segments.is_empty() {
+        if self.segments().is_empty() {
             return;
         }
-        let count = self.segments.len() as i32;
+        let count = self.segments().len() as i32;
         let current = self.highlighted.map(|i| i as i32).unwrap_or(-1);
         let next = (current + delta).rem_euclid(count);
         self.highlighted = Some(next as usize);
     }
 
     fn select(&mut self, index: usize) -> Vec<Effect> {
-        if index >= self.segments.len() {
+        let segments = self.segments();
+        if index >= segments.len() {
             // An invalid choice must not run anything, but it must not wedge
             // the interaction either: the wheel stays up.
             return vec![Effect::None];
         }
-        let segment = self.segments[index].clone();
+        let segment = segments[index].clone();
         let files = self.files.clone();
         let source = self.source;
         let mode = self.mode;
@@ -392,9 +408,18 @@ impl RadialController {
 mod tests {
     use super::*;
     use crate::radial::actions::{ModifierMap, Modifiers};
+    use crate::radial::registry::design_menu;
 
+    /// A controller with the design of the wheels on it.
+    ///
+    /// The controller is told what the wheels may offer; it does not decide.
+    /// These tests are about the interaction, so they use the design as the
+    /// menu. What may really be offered is the registry's business, and it has
+    /// its own tests.
     fn controller() -> RadialController {
-        RadialController::new()
+        let mut c = RadialController::new();
+        c.set_menu(design_menu());
+        c
     }
 
     fn paths() -> Vec<PathBuf> {
@@ -861,5 +886,77 @@ mod tests {
         assert_eq!(effects.len(), 2);
         assert_eq!(effects[0], Effect::HideWheel);
         assert!(matches!(effects[1], Effect::Run { .. }));
+    }
+
+    // ------------------------------------------------------- the changing menu
+
+    #[test]
+    fn a_wheel_with_nothing_on_it_opens_and_nothing_can_be_chosen() {
+        // Nothing may be done with the files that were dragged, so the wheel
+        // has nothing on it. It still opens, and nothing can be chosen on it.
+        let mut c = RadialController::new();
+        c.set_menu(Menu::empty());
+        open_wheel(&mut c);
+        assert_eq!(c.state(), InteractionState::WheelVisible);
+        assert!(c.segments().is_empty());
+
+        // There is no segment to point at.
+        c.handle(InteractionEvent::SegmentEntered(Some(0)));
+        assert_eq!(c.highlighted(), None);
+
+        // And nothing is chosen.
+        let effects = c.handle(InteractionEvent::SegmentSelected { index: 0 });
+        assert_eq!(effects, vec![Effect::None]);
+        assert_eq!(c.state(), InteractionState::WheelVisible);
+    }
+
+    #[test]
+    fn the_choices_of_the_wheel_follow_what_may_be_offered() {
+        let mut c = controller();
+        open_wheel(&mut c);
+        assert_eq!(c.segments().len(), 8);
+
+        // The files change, and less may be done with them.
+        let mut smaller = Menu::empty();
+        smaller.set(
+            RadialMode::Convert,
+            design_menu().segments(RadialMode::Convert)[..2].to_vec(),
+        );
+        c.set_menu(smaller);
+        assert_eq!(c.segments().len(), 2);
+    }
+
+    #[test]
+    fn a_change_of_the_menu_puts_out_the_lit_segment() {
+        let mut c = controller();
+        open_wheel(&mut c);
+        c.handle(InteractionEvent::SegmentEntered(Some(4)));
+        assert_eq!(c.highlighted(), Some(4));
+
+        // The menu changed, and the segment that was lit may not be on the
+        // wheel any more.
+        c.set_menu(Menu::empty());
+        assert_eq!(c.highlighted(), None);
+    }
+
+    #[test]
+    fn switching_wheels_does_not_keep_the_choices_of_the_last_one() {
+        let mut c = controller();
+        open_wheel(&mut c);
+        assert_eq!(c.segments().len(), 8);
+
+        // The tools wheel has five choices of its own.
+        c.handle(InteractionEvent::ModifiersChanged(Modifiers {
+            shift: true,
+            ..Modifiers::NONE
+        }));
+        assert_eq!(c.mode(), RadialMode::Convert);
+
+        let mut menu = design_menu();
+        menu.set(RadialMode::Convert, Vec::new());
+        c.set_menu(menu);
+        assert!(c.segments().is_empty());
+        assert!(c.menu_is_empty(RadialMode::Convert));
+        assert!(!c.menu_is_empty(RadialMode::Tools));
     }
 }

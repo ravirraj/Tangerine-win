@@ -31,9 +31,19 @@ other two have five each. These are **placeholders**: they show the design and
 the interaction, and choosing one logs the choice. Nothing is converted,
 compressed, renamed or zipped yet.
 
-The mode definitions live in `src/radial/actions.rs` and have nothing to do
-with the drawing, so a later milestone can fill each wheel in from the real
-conversion matrix and the real tool list without touching the renderer.
+The three wheels are fixed, but what is on them is not. The wheel shows the
+operations that may really be done with the files that were dragged, and the
+registry decides which those are. A wheel with nothing to offer is empty, and
+that is what a selection that nothing can be done with looks like.
+
+The mode definitions live in `src/radial/actions.rs` and the operations in
+`src/radial/registry.rs`, away from the drawing, so that a later milestone can
+fill each wheel in from the real conversion matrix and the real tool list
+without touching the renderer.
+
+The **development wheel** (`Ctrl+Alt+T`) is a look at the design, and it shows
+every operation there is, whether or not it can be run. It is marked on screen
+and in the log, and nothing it reports is a real Explorer drag.
 
 ## The modifier mapping
 

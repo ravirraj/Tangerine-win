@@ -137,6 +137,8 @@ struct App {
     /// Where the wheel was put the last time, so that it is only moved when it
     /// really has to be.
     placed_centre: Option<Point>,
+    /// Whether the wheel has been put on the screen.
+    placed: bool,
     /// Where the wheel is, and how big it is. The drawing and the pointer
     /// test both use this.
     placement: Option<WheelPlacement>,
@@ -234,6 +236,7 @@ impl App {
             wheel_open: false,
             placement_logged: false,
             placed_centre: None,
+            placed: false,
             placement: None,
             pending_drop_target: false,
             _instance: Some(instance),
@@ -341,6 +344,10 @@ impl App {
                     // itself: the look is cheap, but a slow disk must not
                     // hold the wheel up.
                     self.refresh_selection();
+                } else {
+                    // The development wheel is a look at the design, and the
+                    // design is every operation there is.
+                    self.controller.set_menu(registry::design_menu());
                 }
             }
             Effect::UpdateWheel => {
@@ -405,18 +412,18 @@ impl App {
         // What the registry knows about the operation that was chosen. The
         // name of the operation is its identity, so this is also the check
         // that the menu and the registry agree.
-        match registry::operation_by_id(&segment.id) {
-            Some(operation) => diagnostics::log(
+        //
+        // The operation is looked up by that name and is checked again
+        // against the files of the drag: what is on the screen must be what
+        // is run. A choice that was made a moment ago, before the files
+        // changed, is not run.
+        match registry::may_run(&segment.id, &self.selection, &self.environment()) {
+            Ok(operation) => diagnostics::log(
                 Level::Info,
                 "action",
                 &format!(
-                    "the operation {} is {}, and it would {} the files it is given (the selection was {})",
+                    "the operation {} can be run, and it would {} the files it is given (the selection was {})",
                     operation.id,
-                    if operation.implemented {
-                        "implemented"
-                    } else {
-                        "not implemented yet"
-                    },
                     if operation.destructive {
                         "change"
                     } else {
@@ -425,10 +432,14 @@ impl App {
                     self.selection.shape().name(),
                 ),
             ),
-            None => diagnostics::log(
+            Err(reason) => diagnostics::log(
                 Level::Warn,
                 "action",
-                "the chosen operation is not in the registry",
+                &format!(
+                    "the operation {} was not run: {}",
+                    segment.id,
+                    reason.name()
+                ),
             ),
         }
     }
@@ -719,18 +730,30 @@ impl App {
             ),
         );
         self.selection = selection;
+        // The wheel shows what may really be done with these files, and
+        // nothing else. The registry says what that is.
+        let menu = registry::menu_for(&self.selection, &self.environment());
+        self.controller.set_menu(menu);
         self.report_availability();
+    }
+
+    /// What the machine can do right now.
+    ///
+    /// Nothing is implemented yet, so nothing that needs a processor can run.
+    /// The environment is the one place that will change when the first
+    /// operation really works.
+    fn environment(&self) -> Environment {
+        Environment::none()
     }
 
     /// Says what the registry makes of the files that were dragged.
     ///
-    /// The menu shows every operation of the wheel for now. This is what the
-    /// registry says about the ones that are really there: how many could be
-    /// used for these files, and, when none of them can, why the first one
-    /// cannot.
+    /// This is what the registry says about the operations of the wheel: how
+    /// many could be used for these files, and, when none of them can, why
+    /// the first one cannot.
     fn report_availability(&self) {
         let mode = self.controller.mode();
-        let environment = Environment::none();
+        let environment = self.environment();
         let total = registry::operations_for(mode).count();
         let offered = registry::eligible_operations(mode, &self.selection, &environment);
         let why = if offered.is_empty() {
@@ -752,6 +775,20 @@ impl App {
             line.push_str(&format!(": {why}"));
         }
         diagnostics::log(Level::Info, "selection", &line);
+        // The wheel shows nothing when there is nothing to show, and that is
+        // said plainly rather than left to be guessed at.
+        let empty: Vec<&str> = RadialMode::ALL
+            .iter()
+            .filter(|mode| self.controller.menu_is_empty(**mode))
+            .map(|mode| mode.name())
+            .collect();
+        if !empty.is_empty() {
+            diagnostics::log(
+                Level::Info,
+                "selection",
+                &format!("the {} wheel has nothing on it", empty.join(", the ")),
+            );
+        }
     }
 
     /// Asks the shell once more whether the files of this drag have changed.
@@ -1154,9 +1191,26 @@ impl App {
             return;
         };
 
+        // The shape of the wheel follows the number of segments, and that
+        // number can change while the wheel is up. So the shape is worked out
+        // every time. The window is only moved when the place really changes:
+        // the size of the wheel does not depend on the number of segments.
+        let count = self.controller.segments().len();
+        let disc = DISC_SIZE * self.scale;
+        let radius = disc / 2.0;
+        let monitor = monitors::monitor_for_point(centre.x as i32, centre.y as i32);
+        let bounds = monitor
+            .map(|monitor| monitor.bounds)
+            .unwrap_or_else(monitors::virtual_bounds);
+        // The shape of the wheel, at the scale of the display. The very same
+        // shape is used to test the pointer against.
+        let geometry = RadialGeometry::new(count).scaled(self.scale);
+        let placement = geometry.placement(centre, radius, bounds);
+        self.placement = Some(placement);
+
         // The wheel does not move once it has opened, so the work of placing it
         // is only done when the place really changes.
-        if self.placed_centre == Some(centre) && self.placement.is_some() {
+        if self.placed_centre == Some(centre) && self.placed {
             return;
         }
         diagnostics::log(
@@ -1168,23 +1222,13 @@ impl App {
             ),
         );
         self.placed_centre = Some(centre);
+        self.placed = true;
 
-        let disc = DISC_SIZE * self.scale;
-        let radius = disc / 2.0;
-        let monitor = monitors::monitor_for_point(centre.x as i32, centre.y as i32);
-        let bounds = monitor
-            .map(|monitor| monitor.bounds)
-            .unwrap_or_else(monitors::virtual_bounds);
-        // The shape of the wheel, at the scale of the display. The very same
-        // shape is used to test the pointer against.
-        let geometry = RadialGeometry::new(self.controller.segments().len()).scaled(self.scale);
-        let placement = geometry.placement(centre, radius, bounds);
         let x = (placement.centre.x - radius).round() as i32;
         let y = (placement.centre.y - radius).round() as i32;
         self.overlay_origin = (x, y);
         self.overlay
             .place(x, y, disc.round() as u32, disc.round() as u32);
-        self.placement = Some(placement);
 
         if !self.placement_logged {
             self.placement_logged = true;

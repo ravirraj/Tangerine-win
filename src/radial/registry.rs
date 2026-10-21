@@ -19,7 +19,7 @@
 //! menu are still placeholders. The registry does not pretend otherwise, and
 //! it does not hold a processor that is not there.
 
-use crate::radial::actions::{IconKind, RadialMode, Segment};
+use crate::radial::actions::{IconKind, Menu, RadialMode, Segment};
 use crate::radial::selection::{FileKind, Selection};
 
 /// What an operation needs in order to run.
@@ -374,6 +374,8 @@ pub enum Ineligible {
     NotImplemented,
     /// The processor the operation needs is not there.
     ProcessorMissing(&'static str),
+    /// There is no operation with that name.
+    UnknownOperation,
 }
 
 impl Ineligible {
@@ -389,6 +391,7 @@ impl Ineligible {
             }
             Ineligible::NotImplemented => "the operation is not implemented",
             Ineligible::ProcessorMissing(_) => "the processor is not there",
+            Ineligible::UnknownOperation => "there is no operation with that name",
         }
     }
 }
@@ -453,6 +456,51 @@ pub fn operations_for(mode: RadialMode) -> impl Iterator<Item = &'static Operati
         .filter(move |operation| operation.mode == mode)
 }
 
+/// The choices the wheels may offer for a selection.
+///
+/// Only the operations that can really be run for these files are in it: the
+/// ones that fit every selected item, that are implemented, and whose
+/// processor is there. A wheel with nothing to offer is left empty, which is
+/// what a selection that nothing can be done with looks like.
+pub fn menu_for(selection: &Selection, environment: &Environment) -> Menu {
+    menu_from(OPERATIONS, selection, environment)
+}
+
+/// The same, for a given set of operations.
+///
+/// The rule is the same one the registry uses; this is the rule with the
+/// operations handed in, so that it can be tried with operations that are not
+/// in the registry.
+pub fn menu_from(
+    operations: &[Operation],
+    selection: &Selection,
+    environment: &Environment,
+) -> Menu {
+    let mut menu = Menu::empty();
+    for mode in RadialMode::ALL {
+        let segments = eligible_operations_from(operations, mode, selection, environment)
+            .into_iter()
+            .map(Operation::as_segment)
+            .collect();
+        menu.set(mode, segments);
+    }
+    menu
+}
+
+/// The choices the wheels would show if everything could be run.
+///
+/// This is the design of the wheels, and it is what the development wheel
+/// shows. It is not what a drag is offered: the registry says which of these
+/// can really be run, and that is what `menu_for` gives.
+pub fn design_menu() -> Menu {
+    let mut menu = Menu::empty();
+    for mode in RadialMode::ALL {
+        let segments = operations_for(mode).map(Operation::as_segment).collect();
+        menu.set(mode, segments);
+    }
+    menu
+}
+
 /// The operation with this name.
 ///
 /// The name is the identity of an operation: the label may be translated and
@@ -468,9 +516,40 @@ pub fn eligible_operations(
     selection: &Selection,
     environment: &Environment,
 ) -> Vec<&'static Operation> {
-    operations_for(mode)
+    eligible_operations_from(OPERATIONS, mode, selection, environment)
+}
+
+/// The same, for a given set of operations.
+///
+/// The registry is the one place that knows what there is. This is the same
+/// rule with the operations handed in, so that the rule can be tried with
+/// operations that are not in the registry.
+pub fn eligible_operations_from<'a>(
+    operations: &'a [Operation],
+    mode: RadialMode,
+    selection: &Selection,
+    environment: &Environment,
+) -> Vec<&'a Operation> {
+    operations
+        .iter()
+        .filter(|operation| operation.mode == mode)
         .filter(|operation| eligibility(operation, selection, environment).is_ok())
         .collect()
+}
+
+/// Whether a chosen operation may be run for the files of a drag.
+///
+/// The operation is found by its name, which is its identity, and it is
+/// checked again against the files: what is on the screen must be what is
+/// run. A choice that was made before the files changed is not run.
+pub fn may_run(
+    id: &str,
+    selection: &Selection,
+    environment: &Environment,
+) -> Result<&'static Operation, Ineligible> {
+    let operation = operation_by_id(id).ok_or(Ineligible::UnknownOperation)?;
+    eligibility(operation, selection, environment)?;
+    Ok(operation)
 }
 
 #[cfg(test)]
@@ -543,6 +622,228 @@ mod tests {
         Environment {
             processors: vec!["encode/png".to_string()],
         }
+    }
+
+    /// An operation for a test that can really be run.
+    fn ready(name: &'static str) -> Operation {
+        Operation {
+            id: name,
+            label: name,
+            detail: name,
+            icon: IconKind::Picture,
+            mode: RadialMode::Convert,
+            categories: &[FileKind::Image],
+            multiple: true,
+            folders: false,
+            implemented: true,
+            requires: Requirement::None,
+            destructive: false,
+        }
+    }
+
+    /// A selection of pictures, for a test.
+    fn pictures(folder: &TempFolder, count: usize) -> Selection {
+        let paths: Vec<PathBuf> = (0..count)
+            .map(|index| folder.file(&format!("picture{index}.png")))
+            .collect();
+        Selection::inspect(&paths)
+    }
+
+    // ------------------------------------------------------- the menu itself
+
+    #[test]
+    fn a_selection_with_nothing_to_do_has_an_empty_menu() {
+        let folder = TempFolder::new("empty-menu");
+        let selection = pictures(&folder, 1);
+        // Nothing in the registry is implemented, so nothing may be offered.
+        let menu = menu_for(&selection, &everything());
+        for mode in RadialMode::ALL {
+            assert!(
+                menu.segments(mode).is_empty(),
+                "the {} wheel has something on it",
+                mode.name()
+            );
+        }
+    }
+
+    #[test]
+    fn one_operation_that_may_be_run_gives_one_segment() {
+        let folder = TempFolder::new("one-segment");
+        let selection = pictures(&folder, 1);
+        let operations = [ready("test.one")];
+        let menu = menu_from(&operations, &selection, &everything());
+        assert_eq!(menu.segments(RadialMode::Convert).len(), 1);
+        assert_eq!(menu.segments(RadialMode::Convert)[0].id, "test.one");
+        // The other wheels are not affected.
+        assert!(menu.segments(RadialMode::Tools).is_empty());
+        assert!(menu.segments(RadialMode::Actions).is_empty());
+    }
+
+    #[test]
+    fn several_operations_give_several_segments_in_the_same_order() {
+        let folder = TempFolder::new("several-segments");
+        let selection = pictures(&folder, 1);
+        let operations = [
+            ready("test.first"),
+            ready("test.second"),
+            ready("test.third"),
+        ];
+        let menu = menu_from(&operations, &selection, &everything());
+        let ids: Vec<String> = menu
+            .segments(RadialMode::Convert)
+            .iter()
+            .map(|segment| segment.id.clone())
+            .collect();
+        assert_eq!(ids, vec!["test.first", "test.second", "test.third"]);
+    }
+
+    #[test]
+    fn the_wheels_can_hold_different_numbers_of_choices() {
+        let folder = TempFolder::new("different-counts");
+        let selection = pictures(&folder, 1);
+        let mut operations = vec![ready("test.convert.one"), ready("test.convert.two")];
+        let mut tool = ready("test.tool.one");
+        tool.mode = RadialMode::Tools;
+        operations.push(tool);
+        let menu = menu_from(&operations, &selection, &everything());
+        assert_eq!(menu.segments(RadialMode::Convert).len(), 2);
+        assert_eq!(menu.segments(RadialMode::Tools).len(), 1);
+        assert!(menu.segments(RadialMode::Actions).is_empty());
+    }
+
+    #[test]
+    fn an_empty_wheel_does_not_break_the_others() {
+        let folder = TempFolder::new("empty-one-wheel");
+        let selection = pictures(&folder, 1);
+        let mut tool = ready("test.tool.one");
+        tool.mode = RadialMode::Tools;
+        let operations = [tool];
+        let menu = menu_from(&operations, &selection, &everything());
+        assert!(menu.segments(RadialMode::Convert).is_empty());
+        assert_eq!(menu.segments(RadialMode::Tools).len(), 1);
+    }
+
+    #[test]
+    fn a_segment_carries_the_name_of_its_operation() {
+        let folder = TempFolder::new("segment-identity");
+        let selection = pictures(&folder, 1);
+        let mut operation = ready("test.named");
+        operation.label = "Named";
+        operation.detail = "What it does";
+        let operations = [operation];
+        let menu = menu_from(&operations, &selection, &everything());
+        let segment = &menu.segments(RadialMode::Convert)[0];
+        assert_eq!(segment.id, "test.named");
+        assert_eq!(segment.label, "Named");
+        assert_eq!(segment.detail, "What it does");
+    }
+
+    // ------------------------------------------------ the rules of the menu
+
+    #[test]
+    fn an_operation_that_is_not_implemented_is_never_offered() {
+        let folder = TempFolder::new("not-implemented");
+        let selection = pictures(&folder, 1);
+        let mut operation = ready("test.not-implemented");
+        operation.implemented = false;
+        let operations = [operation];
+        let menu = menu_from(&operations, &selection, &everything());
+        assert!(menu.segments(RadialMode::Convert).is_empty());
+    }
+
+    #[test]
+    fn an_operation_whose_processor_is_missing_is_not_offered() {
+        let folder = TempFolder::new("no-processor");
+        let selection = pictures(&folder, 1);
+        let mut operation = ready("test.needs-processor");
+        operation.requires = Requirement::Processor("encode/png");
+        let operations = [operation];
+        // The processor is not there.
+        let menu = menu_from(&operations, &selection, &Environment::none());
+        assert!(menu.segments(RadialMode::Convert).is_empty());
+        // It is.
+        let menu = menu_from(&operations, &selection, &everything());
+        assert_eq!(menu.segments(RadialMode::Convert).len(), 1);
+    }
+
+    #[test]
+    fn an_operation_of_another_kind_is_not_offered() {
+        let folder = TempFolder::new("another-kind");
+        let selection = Selection::inspect(&[folder.file("paper.pdf")]);
+        let operations = [ready("test.for-images")];
+        let menu = menu_from(&operations, &selection, &everything());
+        assert!(menu.segments(RadialMode::Convert).is_empty());
+    }
+
+    #[test]
+    fn the_menu_offers_nothing_when_the_operation_is_for_one_item_at_a_time() {
+        let folder = TempFolder::new("one-at-a-time");
+        let selection = pictures(&folder, 2);
+        let mut operation = ready("test.one-at-a-time");
+        operation.multiple = false;
+        let operations = [operation];
+        let menu = menu_from(&operations, &selection, &everything());
+        assert!(menu.segments(RadialMode::Convert).is_empty());
+        // One file is fine.
+        let one = pictures(&folder, 1);
+        let menu = menu_from(&operations, &one, &everything());
+        assert_eq!(menu.segments(RadialMode::Convert).len(), 1);
+    }
+
+    #[test]
+    fn the_menu_offers_nothing_when_the_operation_does_not_work_on_a_folder() {
+        let folder = TempFolder::new("no-folders");
+        let selection = Selection::inspect(&[folder.folder("pictures")]);
+        let operations = [ready("test.for-files")];
+        let menu = menu_from(&operations, &selection, &everything());
+        assert!(menu.segments(RadialMode::Convert).is_empty());
+    }
+
+    #[test]
+    fn a_selection_with_an_item_that_cannot_be_read_is_offered_nothing() {
+        let folder = TempFolder::new("unreadable-item");
+        let good = folder.file("one.png");
+        let missing = folder.path.join("not-here.png");
+        let selection = Selection::inspect(&[good, missing]);
+        let operations = [ready("test.anything")];
+        let menu = menu_from(&operations, &selection, &everything());
+        assert!(menu.segments(RadialMode::Convert).is_empty());
+    }
+
+    #[test]
+    fn an_empty_selection_is_offered_nothing() {
+        let selection = Selection::inspect(&[]);
+        let operations = [ready("test.anything")];
+        let menu = menu_from(&operations, &selection, &everything());
+        assert!(menu.segments(RadialMode::Convert).is_empty());
+    }
+
+    // ------------------------------------------------------ running an action
+
+    #[test]
+    fn a_choice_that_is_no_longer_valid_is_not_run() {
+        let folder = TempFolder::new("stale");
+        // The choice was made for a picture.
+        let pictures_selection = pictures(&folder, 1);
+        // The files have changed since.
+        let papers = Selection::inspect(&[folder.file("paper.pdf")]);
+        // The operation is looked up by its name and is checked again.
+        let result = may_run("convert.png", &papers, &everything());
+        assert!(result.is_err(), "a stale choice was run");
+        // For the files it was made for, it is fine.
+        let result = may_run("convert.png", &pictures_selection, &everything());
+        assert!(
+            result.is_err(),
+            "an operation that is not implemented was run"
+        );
+    }
+
+    #[test]
+    fn a_choice_of_an_operation_that_does_not_exist_is_not_run() {
+        let folder = TempFolder::new("unknown");
+        let selection = pictures(&folder, 1);
+        let result = may_run("there.is.no.such.operation", &selection, &everything());
+        assert_eq!(result.err(), Some(Ineligible::UnknownOperation));
     }
 
     // ------------------------------------------------------- the registry
@@ -692,7 +993,7 @@ mod tests {
     }
 
     #[test]
-    fn an_operation_that_is_one_at_a_time_is_not_offered_for_several() {
+    fn the_menu_offers_nothing_when_the_operation_is_for_one_item_at_a_time_only() {
         let folder = TempFolder::new("single-only");
         let selection = Selection::inspect(&[folder.file("one.png"), folder.file("two.png")]);
         let mut entry = operation("test");
@@ -716,7 +1017,7 @@ mod tests {
     }
 
     #[test]
-    fn an_operation_that_does_not_work_on_folders_is_not_offered_for_one() {
+    fn the_menu_offers_nothing_when_the_operation_does_not_work_on_folders() {
         let folder = TempFolder::new("no-folders");
         let selection = Selection::inspect(&[folder.folder("pictures")]);
         assert_eq!(
@@ -770,9 +1071,11 @@ mod tests {
     fn the_operations_of_a_wheel_match_the_menu() {
         // The menu and the registry must agree on what is in each wheel.
         // The menu shows the operations of the wheel, in the same order.
-        let menu: Vec<String> = crate::radial::actions::segments_for(RadialMode::Tools)
-            .into_iter()
-            .map(|segment| segment.id)
+        let design = design_menu();
+        let menu: Vec<String> = design
+            .segments(RadialMode::Tools)
+            .iter()
+            .map(|segment| segment.id.clone())
             .collect();
         let registry: Vec<&str> = operations_for(RadialMode::Tools)
             .map(|entry| entry.id)

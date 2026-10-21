@@ -487,6 +487,63 @@ mod tests {
     }
 
     #[test]
+    fn a_wheel_with_any_number_of_segments_is_a_wheel() {
+        // The number of segments on the wheel follows the files that were
+        // dragged, so the shape has to hold for every number of them.
+        for count in [0, 1, 2, 3, 4, 5, 8] {
+            let g = geometry(count);
+            // Every segment has an outline, and only the segments that are
+            // there have one.
+            for index in 0..count {
+                let path = g.wedge_path(index);
+                assert!(!path.is_empty(), "segment {index} has no outline");
+                assert!(path.starts_with('M'), "segment {index} is not a path");
+                assert!(path.ends_with('Z'), "segment {index} is not closed");
+            }
+            assert!(
+                g.wedge_path(count).is_empty(),
+                "there is a segment too many"
+            );
+            assert!(
+                g.wedge_path(count + 5).is_empty(),
+                "there is a segment too many"
+            );
+            // And a pointer on the ring is on one of them.
+            for index in 0..count {
+                let angle = g.segment_span(index).0 + 1.0;
+                let point = g.point_at(100.0, angle);
+                assert_eq!(
+                    g.hit_test(point),
+                    Some(index),
+                    "segment {index} of {count} cannot be pointed at"
+                );
+            }
+            // A wheel with no segments is never pointed at.
+            if count == 0 {
+                assert_eq!(g.hit_test(at(0.0, 100.0)), None);
+            }
+        }
+    }
+
+    #[test]
+    fn the_segments_of_a_wheel_do_not_overlap() {
+        // Every segment of a wheel has its own slice of the circle, and the
+        // points where two of them meet belong to one of them, never to both.
+        for count in [1, 2, 3, 4, 5, 8] {
+            let g = geometry(count);
+            let slice = g.slice_degrees();
+            for index in 0..count {
+                let (start, end) = g.segment_span(index);
+                assert!(end > start, "segment {index} of {count} has no width");
+                assert!(
+                    end - start <= slice,
+                    "segment {index} of {count} is wider than its share"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn hit_testing_is_stable_at_the_centre_of_the_screen() {
         let g = geometry(8);
         assert_eq!(g.hit_test(Point::new(0.0, 0.0)), None);

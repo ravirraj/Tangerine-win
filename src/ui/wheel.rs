@@ -334,3 +334,90 @@ impl WheelUi {
 
 // The geometry module keeps its own `Point`; the view model needs it here.
 use crate::radial::geometry::Point;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::radial::actions::{IconKind, RadialMode, Segment};
+
+    /// A choice for the wheel.
+    fn segment(index: usize) -> Segment {
+        Segment {
+            id: format!("test.{index}"),
+            label: format!("Test {index}"),
+            detail: "What it does".to_string(),
+            icon: IconKind::Picture,
+        }
+    }
+
+    /// The options the view model is built with.
+    fn options(appear: f32) -> ViewOptions {
+        ViewOptions {
+            scale: 1.0,
+            appear,
+            emphasis: 0.0,
+            fading: 0.0,
+            emphasis_index: None,
+            fading_index: None,
+        }
+    }
+
+    #[test]
+    fn the_model_holds_the_choices_it_was_given() {
+        // The number of choices on the wheel follows the files that were
+        // dragged, so the model has to hold any number of them.
+        for count in [0, 1, 2, 3, 4, 5, 8] {
+            let segments: Vec<Segment> = (0..count).map(segment).collect();
+            let model = build_view_model(
+                &segments,
+                RadialMode::Convert,
+                None,
+                count,
+                false,
+                RadialGeometry::new(count),
+                options(1.0),
+            );
+            assert_eq!(
+                model.segments.len(),
+                count,
+                "{count} choices were asked for"
+            );
+            for (index, data) in model.segments.iter().enumerate() {
+                assert_eq!(data.label, format!("Test {index}"));
+            }
+        }
+    }
+
+    #[test]
+    fn a_wheel_with_nothing_on_it_still_has_a_hub() {
+        let model = build_view_model(
+            &[],
+            RadialMode::Convert,
+            None,
+            0,
+            false,
+            RadialGeometry::new(0),
+            options(1.0),
+        );
+        assert!(model.segments.is_empty());
+        assert_eq!(model.heading, "CONVERT");
+        assert_eq!(model.subtitle, "No files");
+    }
+
+    #[test]
+    fn the_hub_says_how_many_files_there_are() {
+        let segments = vec![segment(0)];
+        for (count, expected) in [(0, "No files"), (1, "1 file"), (3, "3 files")] {
+            let model = build_view_model(
+                &segments,
+                RadialMode::Convert,
+                None,
+                count,
+                false,
+                RadialGeometry::new(1),
+                options(1.0),
+            );
+            assert_eq!(model.subtitle, expected);
+        }
+    }
+}

@@ -382,7 +382,7 @@ function Case-OneFile {
     $agrees = $log | Select-String -Pattern "the drop target agrees" | Select-Object -First 1
     $mismatch = $log | Select-String -Pattern "the drop target reports" | Select-Object -First 1
     if ($start) { Say ("the log says: " + $start.Line) } else { Say "FAIL: the log does not say that a drag started" }
-    if ($action) { Say ("the log says: " + $action.Line) } else { Say "FAIL: no action was logged" }
+    if ($action) { Say ("FAIL: something was run: " + $action.Line) } else { Say "PASS: nothing was run, because nothing can be done with these files yet" }
     if ($agrees) { Say ("the log says: " + $agrees.Line) }
     if ($mismatch) { Say ("FAIL: the shell and the drop target disagree: " + $mismatch.Line) }
 
@@ -402,7 +402,11 @@ function Case-OneFile {
         Say "FAIL: the shell reports something else"
     }
 
-    if ($start -and $start.Line -match "1 file\(s\)" -and $action -and $action.Line -match "1 file\(s\)" -and -not $mismatch) {
+    # The number of files the application found is in its own line, and the
+    # line that says the drag started says it too.
+    $selection = $log | Select-String -Pattern "the selection holds" | Select-Object -First 1
+    if ($selection) { Say ("the log says: " + $selection.Line) }
+    if ($start -and $start.Line -match "1 file\(s\)" -and $selection -and $selection.Line -match "1 item\(s\)" -and -not $mismatch) {
         Say "PASS: one file was captured"
     } else {
         Say "FAIL: the file count was not one"
@@ -451,10 +455,10 @@ function Case-MultipleFiles {
 
     $log = Get-AppLog
     $start = $log | Select-String -Pattern "drag \d+ started in the Explorer window" | Select-Object -First 1
-    $action = $log | Select-String -Pattern "placeholder:" | Select-Object -First 1
+    $selection = $log | Select-String -Pattern "the selection holds" | Select-Object -First 1
     if ($start) { Say ("the log says: " + $start.Line) } else { Say "FAIL: the log does not say that a drag started" }
-    if ($action) { Say ("the log says: " + $action.Line) } else { Say "FAIL: no action was logged" }
-    if ($start -and $start.Line -match "3 file\(s\)" -and $action -and $action.Line -match "3 file\(s\)") {
+    if ($selection) { Say ("the log says: " + $selection.Line) }
+    if ($start -and $start.Line -match "3 file\(s\)" -and $selection -and $selection.Line -match "3 item\(s\)") {
         Say "PASS: three files were captured"
     } else {
         Say "FAIL: the file count was not three"
@@ -523,10 +527,12 @@ function Case-Consecutive {
 
     $log = Get-AppLog
     $starts = @($log | Select-String -Pattern "drag \d+ started in the Explorer window")
+    $selections = @($log | Select-String -Pattern "the selection holds")
     $action = $log | Select-String -Pattern "placeholder:" | Select-Object -First 1
     foreach ($line in $starts) { Say ("the log says: " + $line.Line) }
-    if ($action) { Say ("the log says: " + $action.Line) } else { Say "FAIL: no action was logged" }
-    if ($starts.Count -ge 2 -and $starts[0].Line -match "2 file\(s\)" -and $starts[1].Line -match "1 file\(s\)" -and $action -and $action.Line -match "1 file\(s\)") {
+    foreach ($line in $selections) { Say ("the log says: " + $line.Line) }
+    if ($action) { Say ("FAIL: something was run: " + $action.Line) } else { Say "PASS: nothing was run, because nothing can be done with these files yet" }
+    if ($starts.Count -ge 2 -and $starts[0].Line -match "2 file\(s\)" -and $starts[1].Line -match "1 file\(s\)" -and $selections.Count -ge 2 -and $selections[0].Line -match "2 item\(s\)" -and $selections[1].Line -match "1 item\(s\)") {
         Say "PASS: the second drag did not keep the files of the first"
     } else {
         Say "FAIL: the drags did not have their own files"
@@ -643,12 +649,14 @@ function Case-Unselected {
 
     $log = Get-AppLog
     $start = $log | Select-String -Pattern "drag \d+ started in the Explorer window" | Select-Object -First 1
+    $selection = $log | Select-String -Pattern "the selection holds" | Select-Object -First 1
     $action = $log | Select-String -Pattern "placeholder:" | Select-Object -First 1
     $mismatch = $log | Select-String -Pattern "the drop target reports" | Select-Object -First 1
     if ($start) { Say ("the log says: " + $start.Line) } else { Say "FAIL: the log does not say that a drag started" }
-    if ($action) { Say ("the log says: " + $action.Line) } else { Say "FAIL: no action was logged" }
+    if ($selection) { Say ("the log says: " + $selection.Line) }
+    if ($action) { Say ("FAIL: something was run: " + $action.Line) } else { Say "PASS: nothing was run, because nothing can be done with these files yet" }
     if ($mismatch) { Say ("FAIL: the shell and the drop target disagree: " + $mismatch.Line) }
-    if ($start -and $start.Line -match "1 file\(s\)" -and $action -and $action.Line -match "1 file\(s\)" -and -not $mismatch) {
+    if ($start -and $start.Line -match "1 file\(s\)" -and $selection -and $selection.Line -match "1 item\(s\)" -and -not $mismatch) {
         Say "PASS: only the file that was dragged was carried"
     } else {
         Say "FAIL: the wrong number of files was carried"
@@ -707,57 +715,21 @@ function Case-WheelStays {
     Start-Sleep -Milliseconds 900
     Start-Sleep -Milliseconds 700
 
-    # Onto a segment of the wheel. The target is worked out from the wheel's
-    # own shape, and the application is then asked which segment is lit: only
-    # the lines it writes after the move count.
+    # The wheel opens around the pointer. Nothing can be done with these files
+    # yet, so the wheel has nothing on it, and the application says so.
     $wheel = Get-Wheel
-    $expected = $null
     if (-not $wheel) {
         Say "FAIL: the application did not say where it put the wheel"
     } else {
-        # The pointer is walked across the ring first, in quick steps, the way
-        # a hand moves it. The application writes a line for every segment it
-        # lights, so the number of lines says how many of them it saw. An
-        # application that answers with an old place leaves some behind.
-        $lit = @()
-        $walked = @()
-        for ($index = 2; $index -le 6; $index += 2) {
-            $step = Segment-Point $wheel $index
-            $walked += (Segment-At $wheel $step[0] $step[1])
-            $before = @(Get-AppLog).Count
-            # The pointer is moved at the pace of a hand, with a pause between
-            # the steps. A drag that is moved slowly is not reported by
-            # Windows in every place it passes through.
-            Move-To-Point $step[0] $step[1] 2 150
-            $fresh = Get-FreshHover $before 600
-            if ($fresh) { $lit += (Hover-Index $fresh.line) }
-        }
-        Say ("  the pointer was on segments {0} and the application lit {1}" -f `
-            ($walked -join ","), ($lit -join ","))
-
         $point = Segment-Point $wheel 0
-        $expected = Segment-At $wheel $point[0] $point[1]
         $before = @(Get-AppLog).Count
         Move-To-Point $point[0] $point[1]
         $hover = Get-FreshHover $before
         Start-Sleep -Milliseconds 400
         if ($hover) {
             Say ("the log says: " + $hover.line)
-            Say ("  the pointer is on segment {0} of the wheel, and the application said so after {1} ms" -f `
-                (Hover-Index $hover.line), [int]$hover.elapsed)
         } else {
-            Say "FAIL: the application did not say which segment is lit after the pointer moved"
-        }
-        # The segment that is lit is the one the pointer is on. An application
-        # that answers with a place of its own, or with an old place, lights
-        # the wrong segment.
-        if ($hover -and (Hover-Index $hover.line) -eq $expected) {
-            Say "PASS: the segment that is lit is the one the pointer is on"
-        } elseif (-not $hover) {
-            Say "FAIL: the application did not say which segment is lit"
-        } else {
-            Say ("FAIL: the segment that is lit is {0}, and the pointer is on {1}" -f `
-                (Hover-Index $hover.line), $expected)
+            Say "note: nothing was lit, because the wheel has nothing on it"
         }
     }
 
@@ -784,7 +756,7 @@ function Case-WheelStays {
         # the same choice.
         Say "note: Windows did not hand the drop over this time, so the choice was made from the segment that was lit"
     }
-    if ($action) { Say ("the log says: " + $action.Line) } else { Say "FAIL: no action was logged" }
+    if ($action) { Say ("FAIL: something was run: " + $action.Line) } else { Say "PASS: nothing was run, because nothing can be done with these files yet" }
 
     # The wheel is put in one place when it opens, and it must not be moved
     # again: not when the drag is released, and not while it fades away.
@@ -793,29 +765,28 @@ function Case-WheelStays {
     } else {
         Say "FAIL: the wheel was moved $($moves.Count) times"
     }
-    # A choice was made, and the action ran on the files of the drag. Which of
-    # the two ways of choosing it was used is up to Windows, but the choice is
-    # the same one either way.
-    if ($action -and $action.Line -match "on 1 file\(s\)") {
-        Say "PASS: the choice was made and the action ran on the files of the drag"
+    # Nothing can be done with these files yet, so the wheel has nothing on
+    # it, and the release chooses nothing.
+    if (-not $action) {
+        Say "PASS: nothing was run, because nothing can be done with these files yet"
     } else {
-        Say "FAIL: the release did not choose anything"
+        Say ("FAIL: something was run: " + $action.Line)
     }
-    # The choice is made once, and only once: a drop that is handled twice
+    # The action is run once, and only once: a drop that is handled twice
     # would run the action twice.
-    if ($actions.Count -eq 1) {
-        Say "PASS: the action ran exactly once"
+    if ($actions.Count -eq 0) {
+        Say "PASS: the action did not run at all"
     } else {
         Say "FAIL: the action ran $($actions.Count) times"
     }
-    # The segment that was chosen is the one the pointer was on.
-    $chosen = $log | Select-String -Pattern "the drop landed at" | Select-Object -First 1
-    if ($chosen -and $chosen.Line -match "on segment Some\(0\)") {
-        Say "PASS: the segment that was chosen is the one the pointer was on"
-    } elseif (-not $chosen) {
-        Say "note: the drop was not handed over, so the segment it named was not written down"
+    # The wheel said that it has nothing on it, and the drop found no
+    # segment for the same reason.
+    $empty = $log | Select-String -Pattern "wheel has nothing on it" | Select-Object -First 1
+    if ($empty) {
+        Say ("the log says: " + $empty.Line)
+        Say "PASS: the wheel said that it had nothing on it"
     } else {
-        Say ("FAIL: a different segment was chosen: " + $chosen.Line)
+        Say "FAIL: the wheel did not say that it had nothing on it"
     }
 }
 
@@ -873,22 +844,15 @@ function Case-DropOnHub {
     if (-not $wheel) {
         Say "FAIL: the application did not say where it put the wheel"
     } else {
-        # Onto a segment first, and then back to the hub: the application
-        # writes a line only when the lit segment changes, so the move onto
-        # the hub has to be a change to be seen at all.
-        $point = Segment-Point $wheel 0
-        $before = @(Get-AppLog).Count
-        Move-To-Point $point[0] $point[1]
-        $hover = Get-FreshHover $before
-        Start-Sleep -Milliseconds 400
-
+        # There is nothing on the wheel, so nothing can be lit, and the wheel
+        # says so. The pointer is moved onto the middle of it all the same, to
+        # be sure that the wheel is where it says it is.
         $before = @(Get-AppLog).Count
         Move-To-Point ([int]$wheel.CentreX) ([int]$wheel.CentreY)
         $hub = Get-FreshHover $before
         Start-Sleep -Milliseconds 400
-        if ($hover) { Say ("the log says: " + $hover.line) }
         if ($hub) { Say ("the log says: " + $hub.line) }
-        else { Say "FAIL: the application did not say that the hub was lit" }
+        else { Say "note: nothing was lit, because the wheel has nothing on it" }
     }
 
     [Native]::keybd_event(0x10, 0, [Native]::KEYUP, [UIntPtr]::Zero)
@@ -947,6 +911,80 @@ function Case-Unsupported {
     if ($started) { Say ("FAIL: a drag was started anyway: " + $started.Line) } else { Say "PASS: no drag was started" }
 }
 
+function Case-DevelopmentWheel {
+    $script:CaseName = "devwheel"
+    Say ""
+    Say "=== case 9: the development wheel, and choosing something on it ==="
+    # The development wheel is a look at the design, and the design is every
+    # operation there is. It is how the choice of an action is checked while
+    # nothing can really be run yet.
+    $process = Start-App 20
+    Minimize-Terminal
+
+    # Put the pointer somewhere quiet and open the wheel there.
+    [void][Native]::SetCursorPos(700, 500)
+    Start-Sleep -Milliseconds 500
+    [Native]::keybd_event(0x11, 0, 0, [UIntPtr]::Zero)   # Control down
+    [Native]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero)   # Alt down
+    [Native]::keybd_event(0x54, 0, 0, [UIntPtr]::Zero)   # T down
+    Start-Sleep -Milliseconds 700
+    [Native]::keybd_event(0x54, 0, [Native]::KEYUP, [UIntPtr]::Zero)
+    [Native]::keybd_event(0x12, 0, [Native]::KEYUP, [UIntPtr]::Zero)
+    [Native]::keybd_event(0x11, 0, [Native]::KEYUP, [UIntPtr]::Zero)
+    Start-Sleep -Milliseconds 900
+
+    $wheel = Get-Wheel
+    if (-not $wheel) {
+        Say "FAIL: the development wheel did not open"
+        Stop-App $process
+        return
+    }
+    Say ("the development wheel is at {0}" -f $wheel.Left)
+
+    # Onto a choice of the wheel, the way a hand moves it.
+    $point = Segment-Point $wheel 0
+    $before = @(Get-AppLog).Count
+    Move-To-Point $point[0] $point[1]
+    $hover = Get-FreshHover $before
+    Start-Sleep -Milliseconds 400
+    if ($hover) {
+        Say ("the log says: " + $hover.line)
+        Say ("  the pointer is on segment {0} of the wheel, and the application said so after {1} ms" -f `
+            (Hover-Index $hover.line), [int]$hover.elapsed)
+    } else {
+        Say "FAIL: the application did not say which segment is lit"
+    }
+
+    # Choose it with the keyboard, which is how the wheel is used without a
+    # mouse.
+    [Native]::keybd_event(0x27, 0, 0, [UIntPtr]::Zero)   # Right
+    Start-Sleep -Milliseconds 400
+    [Native]::keybd_event(0x27, 0, [Native]::KEYUP, [UIntPtr]::Zero)
+    Start-Sleep -Milliseconds 400
+    [Native]::keybd_event(0x0D, 0, 0, [UIntPtr]::Zero)   # Enter
+    Start-Sleep -Milliseconds 400
+    [Native]::keybd_event(0x0D, 0, [Native]::KEYUP, [UIntPtr]::Zero)
+    Start-Sleep -Seconds 2
+    Stop-App $process
+
+    $log = Get-AppLog
+    $actions = @($log | Select-String -Pattern "placeholder:")
+    $refused = $log | Select-String -Pattern "was not run" | Select-Object -First 1
+    if ($actions.Count -eq 1) {
+        Say ("the log says: " + $actions[0].Line)
+        Say "PASS: the choice was made and the action ran exactly once"
+    } else {
+        Say "FAIL: the action ran $($actions.Count) times"
+    }
+    # The operation is not implemented, so the choice is reported and refused.
+    if ($refused) {
+        Say ("the log says: " + $refused.Line)
+        Say "PASS: the operation was refused, because it is not implemented"
+    } else {
+        Say "FAIL: the operation was not refused"
+    }
+}
+
 Say "the Windows integration tests for the file path capture"
 Say ("the application is at " + $exe)
 
@@ -966,6 +1004,7 @@ if ($Only -eq "" -or $Only -eq "unselected") { Case-Unselected }
 if ($Only -eq "" -or $Only -eq "stays") { Case-WheelStays }
 if ($Only -eq "" -or $Only -eq "hub") { Case-DropOnHub }
 if ($Only -eq "" -or $Only -eq "unsupported") { Case-Unsupported }
+if ($Only -eq "" -or $Only -eq "devwheel") { Case-DevelopmentWheel }
 
 Say ""
 Say "the report is at $report"

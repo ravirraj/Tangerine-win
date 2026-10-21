@@ -9,7 +9,7 @@
 //! vocabulary the rest of the program speaks: the wheels, the modifier keys,
 //! and what a choice looks like.
 
-use super::registry::{Operation, operations_for};
+use std::collections::HashMap;
 
 /// The three wheels.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -178,19 +178,47 @@ impl Segment {
     }
 }
 
-/// The choices each wheel offers.
+/// What the wheels offer.
 ///
-/// The operations themselves live in the registry, which also knows which of
-/// them can really be used for the files that were dragged. The wheel shows
-/// every operation of the wheel for now: whether one may be offered is the
-/// registry's business, and the menu does not depend on the selection yet.
-pub fn segments_for(mode: RadialMode) -> Vec<Segment> {
-    operations_for(mode).map(Operation::as_segment).collect()
+/// The three wheels are fixed, but what is on them is not: the choices of a
+/// wheel are whatever may really be done with the files that were dragged.
+/// A wheel with nothing in it is not an error: it is what a selection that
+/// nothing can be done with looks like.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Menu {
+    wheels: HashMap<RadialMode, Vec<Segment>>,
+}
+
+impl Menu {
+    /// A menu with nothing in it.
+    pub fn empty() -> Menu {
+        Menu {
+            wheels: HashMap::new(),
+        }
+    }
+
+    /// Puts the choices of a wheel in the menu.
+    pub fn set(&mut self, mode: RadialMode, segments: Vec<Segment>) {
+        self.wheels.insert(mode, segments);
+    }
+
+    /// The choices of a wheel.
+    ///
+    /// A wheel that is not in the menu has no choices.
+    pub fn segments(&self, mode: RadialMode) -> &[Segment] {
+        self.wheels.get(&mode).map(|s| s.as_slice()).unwrap_or(&[])
+    }
+
+    /// Whether a wheel has any choices.
+    pub fn is_empty(&self, mode: RadialMode) -> bool {
+        self.segments(mode).is_empty()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::radial::registry::design_menu;
 
     /// What a segment looks like, in one line.
     fn shape(segment: &Segment) -> String {
@@ -204,7 +232,7 @@ mod tests {
     fn every_mode_has_segments() {
         for mode in RadialMode::ALL {
             assert!(
-                !segments_for(mode).is_empty(),
+                !design_menu().segments(mode).is_empty(),
                 "{} has no segments",
                 mode.name()
             );
@@ -257,7 +285,8 @@ mod tests {
             ("actions", RadialMode::Actions),
         ];
         for ((name, wanted), (_, mode)) in expected.iter().zip(modes) {
-            let got: Vec<String> = segments_for(mode).iter().map(shape).collect();
+            let menu = design_menu();
+            let got: Vec<String> = menu.segments(mode).iter().map(shape).collect();
             assert_eq!(&got, wanted, "the {} wheel has changed", name);
         }
     }
@@ -265,7 +294,8 @@ mod tests {
     #[test]
     fn segment_ids_are_unique_inside_a_mode() {
         for mode in RadialMode::ALL {
-            let segments = segments_for(mode);
+            let menu = design_menu();
+            let segments = menu.segments(mode);
             let mut ids: Vec<&str> = segments.iter().map(|s| s.id.as_str()).collect();
             ids.sort_unstable();
             let count = ids.len();
