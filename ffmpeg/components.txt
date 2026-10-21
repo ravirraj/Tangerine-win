@@ -85,8 +85,9 @@ magic      = 0:52 49 46 46 8:57 45 42 50
 
 # Components only the test suite needs. They ship in the release build
 # because the tests read pixels back with the very binary being released.
-test-encoders = rawvideo
-test-muxers   = rawvideo
+test-demuxers = rawvideo
+test-encoders = rawvideo apng
+test-muxers   = rawvideo apng
 
 # Components kept in the build for a later phase. The webp muxer writes
 # animated WebP, which this phase refuses to produce.
