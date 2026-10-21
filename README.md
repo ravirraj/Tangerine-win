@@ -5,8 +5,10 @@ files out of Explorer and a wheel appears around the pointer: move onto a choice
 let go, and the action runs on the files you were dragging.
 
 This is **Milestone 1**: the interaction, the visual design and the Windows
-drag integration are real. The actions themselves are placeholders — nothing is
-converted, compressed or renamed yet.
+drag integration are real. The picture operations work too: a picture that
+is dragged onto one of them is converted, by the FFmpeg program, and the
+original is left exactly as it was. The other actions are still
+placeholders — nothing is compressed or renamed yet.
 
 ## Build and run
 
