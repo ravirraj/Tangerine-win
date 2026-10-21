@@ -86,6 +86,7 @@ magic      = 0:52 49 46 46 8:57 45 42 50
 # Components only the test suite needs. They ship in the release build
 # because the tests read pixels back with the very binary being released.
 test-demuxers = rawvideo
+test-decoders = rawvideo
 test-encoders = rawvideo apng
 test-muxers   = rawvideo apng
 

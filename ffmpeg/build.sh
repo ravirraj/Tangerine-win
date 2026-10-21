@@ -47,7 +47,7 @@ PROTOCOLS="$(manifest_value protocols)"
 FILTERS="$(manifest_value filters)"
 
 DEMUXERS="$( { manifest_field read demuxer; manifest_field animation demuxer; manifest_field confirm demuxer; manifest_words test-demuxers; } | sort -u | tr '\n' ' ')"
-DECODERS="$( { manifest_field read decoder; manifest_field animation decoder; manifest_field confirm decoder; } | sort -u | tr '\n' ' ')"
+DECODERS="$( { manifest_field read decoder; manifest_field animation decoder; manifest_field confirm decoder; manifest_words test-decoders; } | sort -u | tr '\n' ' ')"
 ENCODERS="$( { manifest_field write encoder; manifest_words test-encoders; } | sort -u | tr '\n' ' ')"
 MUXERS="$( { manifest_field write muxer; manifest_words test-muxers; manifest_words reserved-muxers; } | sort -u | tr '\n' ' ')"
 
@@ -58,12 +58,12 @@ comma() { tr ' ' ',' <<<"$1" | sed 's/,$//'; }
 #
 # Most parts are called the same in the build and on the command line, but
 # the demuxers that read a picture from a stream are not: the build calls
-# the PNG one "image_png_pipe_demuxer" and the program calls it "png_pipe".
-# The assertions below look for the names on the command line, because
-# those are the names the program uses.
+# the PNG one "image_png_pipe" and the program calls it "png_pipe". The
+# assertions below look for the names on the command line, because those
+# are the names the program uses.
 configure_name() {
     case "$1" in
-        *_pipe) echo "image_$1_demuxer" ;;
+        *_pipe) echo "image_$1" ;;
         *) echo "$1" ;;
     esac
 }
@@ -181,13 +181,13 @@ assert_formats() {
     demuxers="$( { manifest_field read demuxer; manifest_field animation demuxer; manifest_field confirm demuxer; manifest_words test-demuxers; } | sort -u )"
     muxers="$( { manifest_field write muxer; manifest_words test-muxers; manifest_words reserved-muxers; } | sort -u )"
     for name in $demuxers; do
-        if ! grep -qE "^ *D[^ ]*[ ]+$name([ ]|$)" <<<"$found"; then
+        if ! grep -qE "^ *[.A-Z]*D[^ ]*[ ]+$name([ ]|$)" <<<"$found"; then
             echo "MISSING: $name is not a demuxer"
             MISSING=1
         fi
     done
     for name in $muxers; do
-        if ! grep -qE "^ *[^D]*E[^ ]*[ ]+$name([ ]|$)" <<<"$found"; then
+        if ! grep -qE "^ *[.A-Z]*E[^ ]*[ ]+$name([ ]|$)" <<<"$found"; then
             echo "MISSING: $name is not a muxer"
             MISSING=1
         fi

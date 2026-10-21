@@ -126,6 +126,8 @@ pub struct Manifest {
     pub formats: Vec<FormatSupport>,
     /// The encoders that only the test suite needs.
     pub test_encoders: Vec<String>,
+    /// The decoders that only the test suite needs.
+    pub test_decoders: Vec<String>,
     /// The demuxers that only the test suite needs.
     pub test_demuxers: Vec<String>,
     /// The muxers that only the test suite needs.
@@ -179,6 +181,7 @@ impl Manifest {
                 "protocols" => manifest.protocols = words(value),
                 "filters" => manifest.filters = words(value),
                 "test-encoders" => manifest.test_encoders = words(value),
+                "test-decoders" => manifest.test_decoders = words(value),
                 "test-demuxers" => manifest.test_demuxers = words(value),
                 "test-muxers" => manifest.test_muxers = words(value),
                 "reserved-muxers" => manifest.reserved_muxers = words(value),
