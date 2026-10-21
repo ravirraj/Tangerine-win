@@ -333,8 +333,9 @@ never needed.
 
 ## 2. Files created or modified
 
-Nothing existed before this milestone except `reference/Open-Tangerine-main.zip`.
-Everything below is new.
+Nothing existed before this milestone except `reference/Open-Tangerine-main.zip`
+— which is kept on the machine and not in the repository, for the reason given
+in section 11. Everything below is new.
 
 | File | Lines | What it is |
 | --- | --- | --- |
@@ -723,6 +724,12 @@ too.
 ---
 
 ## 11. A note on the reference
+
+The archive `reference/Open-Tangerine-main.zip` is **not** in the repository.
+It is the original macOS product, and it is under the GPL-3, while this port
+is under the MIT or the Apache-2.0; the two are kept apart for that reason.
+It stays on the machine, the port is written against it, and the reports refer
+to it.
 
 The macOS product in `reference/Open-Tangerine-main.zip` was read before any
 of this was written. `NativeApp/Sources/Radial/DragMonitor.swift`,

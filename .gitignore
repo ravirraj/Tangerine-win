@@ -1,6 +1,7 @@
 # Build output
 /target/
 **/*.rs.bk
+/reference/
 
 # Cargo
 # Cargo.lock is committed on purpose: this is a binary application, so the
@@ -28,5 +29,7 @@ $RECYCLE.BIN/
 *.bak
 /out/
 
-# The reference sources under reference/ are kept in the repository on
-# purpose: the port is written against them, and the report refers to them.
+# The reference sources of the original macOS product stay on the machine but
+# not in the repository: they are under the GPL-3, this project is under the
+# MIT or the Apache-2.0, and the two should not travel together. The port is
+# still written against them, and the report still refers to them.
