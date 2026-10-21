@@ -1,0 +1,102 @@
+# The component manifest: what the FFmpeg build is made of.
+#
+# This file is the single source of truth for the build. The build script
+# reads it to generate the configure flags and the post-build assertions,
+# and the program reads it at compile time to learn the names of the parts
+# and how they fit together. They cannot disagree, because they are the
+# same file.
+
+# The programs the build produces. ffprobe is not optional: the animation
+# check uses it, and a build without it cannot offer every format.
+programs  = ffmpeg ffprobe
+
+# The protocols the conversion needs. "pipe" is how the image is written.
+protocols = file pipe
+
+# The filters the conversion needs.
+filters   = format scale split drawbox overlay
+
+# The formats we can work with.
+#
+#   read       how a file of this format is opened
+#   write      how a file of this format is produced
+#   alpha      "keep" if the format can hold a transparent area, "matte" if
+#              it cannot and one has to be painted in
+#   animation  the demuxer and decoder that can see every frame of the
+#              format; "-" for a format that cannot be animated
+#   confirm    the demuxer and decoder that proves a file is a single image,
+#              used only where the animation demuxer rejects still files
+#   magic      the bytes a file of this format begins with, in hex, with "|"
+#              between the ones that are allowed
+
+format     = png
+extensions = png
+read       = demuxer=png_pipe decoder=png
+write      = encoder=png muxer=image2pipe
+alpha      = keep
+animation  = demuxer=apng decoder=apng
+confirm    = -
+magic      = 0:89 50 4E 47 0D 0A 1A 0A
+
+format     = jpeg
+extensions = jpg jpeg jpe jfif
+read       = demuxer=jpeg_pipe decoder=mjpeg
+write      = encoder=mjpeg muxer=image2pipe
+alpha      = matte
+animation  = -
+confirm    = -
+magic      = 0:FF D8 FF
+
+format     = bmp
+extensions = bmp dib
+read       = demuxer=bmp_pipe decoder=bmp
+write      = encoder=bmp muxer=image2pipe
+alpha      = matte
+animation  = -
+confirm    = -
+magic      = 0:42 4D
+
+format     = tiff
+extensions = tif tiff
+read       = demuxer=tiff_pipe decoder=tiff
+write      = encoder=tiff muxer=image2pipe
+alpha      = keep
+animation  = demuxer=tiff_pipe decoder=tiff
+confirm    = -
+magic      = 0:49 49 2A 00 | 0:4D 4D 00 2A
+
+format     = gif
+extensions = gif
+read       = demuxer=gif decoder=gif
+write      = encoder=gif muxer=gif
+alpha      = matte
+animation  = demuxer=gif decoder=gif
+confirm    = -
+magic      = 0:47 49 46 38 37 61 | 0:47 49 46 38 39 61
+
+format     = webp
+extensions = webp
+read       = demuxer=webp_pipe decoder=webp
+write      = encoder=libwebp muxer=image2pipe
+alpha      = keep
+animation  = demuxer=webp_anim decoder=webp_anim
+confirm    = demuxer=webp_pipe decoder=webp
+magic      = 0:52 49 46 46 8:57 45 42 50
+
+# Components only the test suite needs. They ship in the release build
+# because the tests read pixels back with the very binary being released.
+test-encoders = rawvideo
+test-muxers   = rawvideo
+
+# Components kept in the build for a later phase. The webp muxer writes
+# animated WebP, which this phase refuses to produce.
+reserved-muxers = webp
+
+# External libraries, and the licence each one carries. zlib is a system
+# library that FFmpeg detects; it is needed by the PNG codec and the TIFF
+# encoder, so it is pinned here rather than left to the build host.
+#
+# The versions are the ones the build image pins, and the build compares
+# the version it detects against them.
+library = zlib    licence=zlib           version=1.3.2
+library = libwebp licence=BSD-3-Clause    version=1.6.0

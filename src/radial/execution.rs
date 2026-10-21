@@ -13,8 +13,10 @@
 //! - what comes back is one of three things: it worked, it did not work, or
 //!   the user stopped it.
 //!
-//! Nothing here pretends to have worked. There is no handler for any
-//! operation yet, so every operation is refused, and the refusal says why.
+//! The work itself is done by a [Handler]. A handler may take a long time —
+//! converting a picture does — so the program that draws does not call it
+//! directly: it hands the request to a worker and hears about the outcome
+//! later.
 
 use std::path::PathBuf;
 
@@ -99,16 +101,43 @@ impl From<Ineligible> for Failure {
     }
 }
 
+/// The work an operation does.
+///
+/// The work is not done on the thread that draws: a handler is called by a
+/// worker, and the outcome comes back through a channel.
+pub trait Handler {
+    /// Does the work of the operation that was asked for.
+    fn run(&self, request: &Request, selection: &Selection) -> Outcome;
+}
+
+/// A handler for the operations that are not implemented.
+///
+/// It says so, rather than pretending to have done something.
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct NotImplemented;
+
+impl Handler for NotImplemented {
+    fn run(&self, _request: &Request, _selection: &Selection) -> Outcome {
+        Outcome::Failed {
+            reason: Failure::NotImplemented,
+        }
+    }
+}
+
 /// Runs an operation for the files that were dragged.
 ///
 /// The request is checked before anything is run: the operation has to exist,
 /// it has to be implemented, it has to be allowed for these files, and the
 /// files it names have to be the files that were dragged.
 ///
-/// What happens then is up to the handler for the operation, and there is no
-/// handler yet, so every operation is refused. Nothing pretends to have
-/// worked.
-pub fn run(request: &Request, selection: &Selection, environment: &Environment) -> Outcome {
+/// What happens then is up to the handler.
+pub fn run(
+    request: &Request,
+    selection: &Selection,
+    environment: &Environment,
+    handler: &dyn Handler,
+) -> Outcome {
     let Some(operation) = operation_by_id(&request.operation) else {
         return Outcome::Failed {
             reason: Failure::UnknownOperation,
@@ -131,10 +160,7 @@ pub fn run(request: &Request, selection: &Selection, environment: &Environment) 
         };
     }
 
-    // There is no handler for this operation yet.
-    Outcome::Failed {
-        reason: Failure::NotImplemented,
-    }
+    handler.run(request, selection)
 }
 
 #[cfg(test)]
@@ -207,7 +233,7 @@ mod tests {
             operation: "there.is.no.such.operation".to_string(),
             inputs: vec![path],
         };
-        let outcome = run(&request, &selection, &Environment::none());
+        let outcome = run(&request, &selection, &Environment::none(), &NotImplemented);
         assert_eq!(
             outcome,
             Outcome::Failed {
@@ -222,10 +248,11 @@ mod tests {
         let path = folder.file("one.png");
         let selection = Selection::inspect(std::slice::from_ref(&path));
         let request = Request {
-            operation: "convert.png".to_string(),
+            // Converting to a PDF is not something that is implemented.
+            operation: "convert.pdf".to_string(),
             inputs: vec![path],
         };
-        let outcome = run(&request, &selection, &Environment::none());
+        let outcome = run(&request, &selection, &Environment::none(), &NotImplemented);
         assert_eq!(
             outcome,
             Outcome::Failed {
@@ -245,7 +272,7 @@ mod tests {
             operation: "convert.png".to_string(),
             inputs: vec![other],
         };
-        let outcome = run(&request, &selection, &Environment::none());
+        let outcome = run(&request, &selection, &Environment::none(), &NotImplemented);
         match outcome {
             Outcome::Failed {
                 reason: Failure::InvalidInput(_),
@@ -263,7 +290,7 @@ mod tests {
             operation: "convert.png".to_string(),
             inputs: vec![path],
         };
-        let outcome = run(&request, &selection, &Environment::none());
+        let outcome = run(&request, &selection, &Environment::none(), &NotImplemented);
         match outcome {
             Outcome::Failed {
                 reason: Failure::InvalidInput(_),
@@ -281,7 +308,7 @@ mod tests {
             operation: "convert.png".to_string(),
             inputs: vec![path],
         };
-        let outcome = run(&request, &selection, &Environment::none());
+        let outcome = run(&request, &selection, &Environment::none(), &NotImplemented);
         let name = match &outcome {
             Outcome::Failed { reason } => reason.name(),
             _ => "",
@@ -291,10 +318,8 @@ mod tests {
 
     #[test]
     fn an_operation_that_is_allowed_reaches_the_handler() {
-        // There is no handler yet, so an operation that may be run is still
-        // refused, and it is refused as "not implemented" rather than as
-        // "not allowed". That is the difference that matters: the operation
-        // was allowed, and what is missing is the work.
+        // The operation is allowed, so what is missing is the work: the
+        // handler is what says whether the work was done.
         let folder = TempFolder::new("allowed");
         let path = folder.file("one.png");
         let selection = Selection::inspect(std::slice::from_ref(&path));
@@ -302,7 +327,14 @@ mod tests {
             operation: "convert.png".to_string(),
             inputs: vec![path],
         };
-        let outcome = run(&request, &selection, &Environment::none());
+        let environment = Environment {
+            processors: vec![crate::radial::registry::Processor {
+                name: "image".to_string(),
+                reads: vec!["png".to_string()],
+                writes: vec!["png".to_string()],
+            }],
+        };
+        let outcome = run(&request, &selection, &environment, &NotImplemented);
         assert_eq!(
             outcome,
             Outcome::Failed {

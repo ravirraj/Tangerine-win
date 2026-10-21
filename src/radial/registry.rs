@@ -177,7 +177,7 @@ pub const OPERATIONS: &[Operation] = &[
         folders: false,
         output: Output::Beside("png"),
         collision: Collision::Rename,
-        implemented: false,
+        implemented: true,
         requires: Requirement::Processor("image"),
     },
     Operation {
@@ -191,7 +191,7 @@ pub const OPERATIONS: &[Operation] = &[
         folders: false,
         output: Output::Beside("jpeg"),
         collision: Collision::Rename,
-        implemented: false,
+        implemented: true,
         requires: Requirement::Processor("image"),
     },
     Operation {
@@ -205,7 +205,7 @@ pub const OPERATIONS: &[Operation] = &[
         folders: false,
         output: Output::Beside("webp"),
         collision: Collision::Rename,
-        implemented: false,
+        implemented: true,
         // Windows has no WebP writer of its own, so this one needs a
         // backend of its own.
         requires: Requirement::Processor("webp"),
@@ -263,7 +263,7 @@ pub const OPERATIONS: &[Operation] = &[
         folders: false,
         output: Output::Beside("tiff"),
         collision: Collision::Rename,
-        implemented: false,
+        implemented: true,
         requires: Requirement::Processor("image"),
     },
     Operation {
@@ -277,7 +277,7 @@ pub const OPERATIONS: &[Operation] = &[
         folders: false,
         output: Output::Beside("bmp"),
         collision: Collision::Rename,
-        implemented: false,
+        implemented: true,
         requires: Requirement::Processor("image"),
     },
     // --------------------------------------------------------------- tools
@@ -827,18 +827,24 @@ mod tests {
     // ------------------------------------------------------- the menu itself
 
     #[test]
-    fn a_selection_with_nothing_to_do_has_an_empty_menu() {
+    fn a_wheel_with_nothing_implemented_has_an_empty_menu() {
         let folder = TempFolder::new("empty-menu");
         let selection = pictures(&folder, 1);
-        // Nothing in the registry is implemented, so nothing may be offered.
         let menu = menu_for(&selection, &everything());
-        for mode in RadialMode::ALL {
+        // The picture conversions are implemented, so the convert wheel has
+        // something on it. The other two wheels have nothing implemented in
+        // them, and must show nothing.
+        for mode in [RadialMode::Tools, RadialMode::Actions] {
             assert!(
                 menu.segments(mode).is_empty(),
                 "the {} wheel has something on it",
                 mode.name()
             );
         }
+        assert!(
+            !menu.segments(RadialMode::Convert).is_empty(),
+            "the convert wheel has nothing on it"
+        );
     }
 
     #[test]
@@ -1017,11 +1023,23 @@ mod tests {
     }
 
     #[test]
-    fn the_registry_does_not_claim_that_anything_works() {
-        // Nothing is implemented yet, and the registry must say so rather
-        // than pretend otherwise.
+    fn the_registry_says_exactly_what_is_implemented() {
+        // The picture conversions are implemented, and nothing else is. The
+        // registry has to say so plainly, because the menu is built from it.
+        const IMPLEMENTED: &[&str] = &[
+            "convert.png",
+            "convert.jpeg",
+            "convert.webp",
+            "convert.bmp",
+            "convert.tiff",
+        ];
         for entry in OPERATIONS {
-            assert!(!entry.implemented, "{} says it is implemented", entry.id);
+            assert_eq!(
+                entry.implemented,
+                IMPLEMENTED.contains(&entry.id),
+                "{} says the wrong thing about being implemented",
+                entry.id
+            );
         }
     }
 

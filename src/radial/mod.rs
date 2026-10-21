@@ -5,6 +5,7 @@ pub mod controller;
 pub mod execution;
 pub mod geometry;
 pub mod icons;
+pub mod images;
 pub mod registry;
 pub mod selection;
 pub mod state;

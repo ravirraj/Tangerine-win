@@ -6,6 +6,7 @@
 
 mod app;
 mod diagnostics;
+mod media;
 mod platform;
 mod radial;
 mod session;

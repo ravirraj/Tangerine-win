@@ -3,6 +3,11 @@
 **/*.rs.bk
 /reference/
 
+# The conversion program, when it is kept in the repository for a developer
+# to use. The released one is put in the package, and is never committed.
+/vendor/
+/dist/
+
 # Cargo
 # Cargo.lock is committed on purpose: this is a binary application, so the
 # exact versions of the dependencies are part of the build.

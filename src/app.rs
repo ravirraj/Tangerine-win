@@ -18,6 +18,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use crate::diagnostics::{self, Level, ScopedTimer};
+use crate::media::{locator, probe, runner};
 use crate::platform::windows::droptarget::{DropState, make_drop_target};
 use crate::platform::windows::explorer::{DragDetector, DragEvent};
 use crate::platform::windows::input::{self, Key, KeyTracker};
@@ -28,6 +29,7 @@ use crate::radial::actions::{ModifierMap, Modifiers, RadialMode, Segment};
 use crate::radial::controller::RadialController;
 use crate::radial::execution;
 use crate::radial::geometry::{Point, RadialGeometry, WheelPlacement};
+use crate::radial::images;
 use crate::radial::registry::{self, Environment};
 use crate::radial::selection::Selection;
 use crate::radial::state::{Effect, InteractionEvent, InteractionSource, InteractionState};
@@ -91,6 +93,62 @@ pub fn parse_options(arguments: &[String]) -> Result<Options, String> {
         index += 1;
     }
     Ok(options)
+}
+
+/// What a worker sends back.
+///
+/// The workers are other threads, so what they have to say comes back
+/// through a channel and is picked up when the next frame is drawn.
+enum Message {
+    /// The programs have been asked what they can do.
+    Probed(probe::Capabilities),
+    /// An operation has finished: the name of the operation, and what came
+    /// of it.
+    Finished(String, execution::Outcome),
+}
+
+/// Asks the programs what they can do.
+///
+/// The question is asked on a worker, because it starts other programs and
+/// takes a moment. Nothing waits for it: the wheel shows what it can until
+/// the answer comes, and the answer is used from then on.
+fn ask_what_the_machine_can_do(sender: std::sync::mpsc::Sender<Message>) {
+    std::thread::spawn(move || {
+        let Some(tools) = locator::find() else {
+            diagnostics::log(
+                Level::Info,
+                "media",
+                "no conversion program was found, so nothing that needs one is offered",
+            );
+            return;
+        };
+        let system = runner::SystemRunner;
+        match probe::Capabilities::probe(&tools, &system) {
+            Ok(capabilities) => {
+                let environment = capabilities.environment();
+                let processor = environment.processor("image");
+                diagnostics::log(
+                    Level::Info,
+                    "media",
+                    &format!(
+                        "the conversion program can read {} format(s) and write {}",
+                        processor
+                            .map(|processor| processor.reads.len())
+                            .unwrap_or(0),
+                        processor
+                            .map(|processor| processor.writes.len())
+                            .unwrap_or(0),
+                    ),
+                );
+                let _ = sender.send(Message::Probed(capabilities));
+            }
+            Err(_) => diagnostics::log(
+                Level::Warn,
+                "media",
+                "the conversion program could not be asked what it can do",
+            ),
+        }
+    });
 }
 
 /// The running application.
@@ -163,6 +221,17 @@ struct App {
     pending_release: Option<PendingRelease>,
     /// What the files of the drag are.
     selection: Selection,
+    /// What the machine can do, once the programs have been asked.
+    environment: Environment,
+    /// What the programs can do, once they have been found and asked.
+    ///
+    /// There is nothing here until the probe has finished, and until then
+    /// the operations that need a program are not offered.
+    capabilities: Option<probe::Capabilities>,
+    /// What the workers have to say.
+    messages: std::sync::mpsc::Receiver<Message>,
+    /// The end of the channel the workers are given.
+    sender: std::sync::mpsc::Sender<Message>,
 }
 
 /// The end of a drag that has not been acted on yet.
@@ -208,6 +277,11 @@ impl App {
         let mut controller = RadialController::new();
         controller.set_modifier_map(options.modifier_map);
 
+        // The workers are other threads, and what they have to say comes
+        // back through this channel.
+        let (sender, messages) = std::sync::mpsc::channel::<Message>();
+        ask_what_the_machine_can_do(sender.clone());
+
         Ok(Self {
             controller,
             animation: WheelAnimation::new(),
@@ -245,6 +319,10 @@ impl App {
             shell_window: None,
             pending_release: None,
             selection: Selection::default(),
+            environment: Environment::none(),
+            capabilities: None,
+            messages,
+            sender: sender.clone(),
         })
     }
 
@@ -422,35 +500,80 @@ impl App {
             operation: segment.id.clone(),
             inputs: files.to_vec(),
         };
-        let outcome = execution::run(&request, &self.selection, &self.environment());
-        match &outcome {
+        self.start_operation(request);
+    }
+
+    /// Starts the work of an operation.
+    ///
+    /// The work is done on a worker: a conversion can take a while, and the
+    /// wheel has to keep moving while it does. What comes of it is reported
+    /// when the next frame is drawn.
+    fn start_operation(&self, request: execution::Request) {
+        let Some(capabilities) = self.capabilities.clone() else {
+            diagnostics::log(
+                Level::Warn,
+                "action",
+                "the operation was not started: the conversion program is not there",
+            );
+            return;
+        };
+        let selection = self.selection.clone();
+        let environment = self.environment();
+        let handler = images::Pictures {
+            tools: capabilities.tools,
+        };
+        let sender = self.sender.clone();
+        let operation = request.operation.clone();
+        std::thread::spawn(move || {
+            let outcome = execution::run(&request, &selection, &environment, &handler);
+            let _ = sender.send(Message::Finished(operation, outcome));
+        });
+    }
+
+    /// Takes what the workers have to say.
+    fn take_messages(&mut self) {
+        while let Ok(message) = self.messages.try_recv() {
+            match message {
+                Message::Probed(capabilities) => {
+                    self.environment = capabilities.environment();
+                    self.capabilities = Some(capabilities);
+                    // The wheel may now offer more than it did.
+                    let menu = registry::menu_for(&self.selection, &self.environment);
+                    self.controller.set_menu(menu);
+                    self.report_availability();
+                }
+                Message::Finished(operation, outcome) => {
+                    self.report_outcome(&operation, &outcome);
+                }
+            }
+        }
+    }
+
+    /// Says what came of an operation.
+    fn report_outcome(&self, operation: &str, outcome: &execution::Outcome) {
+        match outcome {
             execution::Outcome::Succeeded { outputs } => diagnostics::log(
                 Level::Info,
                 "action",
-                &format!(
-                    "the operation {} wrote {} file(s)",
-                    segment.id,
-                    outputs.len()
-                ),
+                &format!("the operation {operation} wrote {} file(s)", outputs.len()),
             ),
             execution::Outcome::Cancelled => diagnostics::log(
                 Level::Info,
                 "action",
-                &format!("the operation {} was cancelled", segment.id),
+                &format!("the operation {operation} was cancelled"),
             ),
             execution::Outcome::Failed { reason } => {
                 // What the operation would have done to the files is said as
                 // well: an operation that writes over the original is the one
                 // that changes the user's files.
-                let changes = registry::operation_by_id(&segment.id)
+                let changes = registry::operation_by_id(operation)
                     .map(|operation| operation.is_destructive())
                     .unwrap_or(false);
                 diagnostics::log(
                     Level::Warn,
                     "action",
                     &format!(
-                        "the operation {} was not run: {} (it would {} the files, and the selection was {})",
-                        segment.id,
+                        "the operation {operation} was not run: {} (it would {} the files, and the selection was {})",
                         reason.name(),
                         if changes { "change" } else { "leave" },
                         self.selection.shape().name(),
@@ -541,6 +664,9 @@ impl App {
         self.last_tick = now;
 
         self.handle_keys();
+        // What the workers have to say is taken first: the answer about
+        // what the machine can do changes what the wheel offers.
+        self.take_messages();
         // The drop comes before the end of the drag. Windows hands over the
         // place the mouse was let go of, and that is a better answer than the
         // pointer, which the drag may have moved about. The end of the drag
@@ -755,11 +881,11 @@ impl App {
 
     /// What the machine can do right now.
     ///
-    /// Nothing is implemented yet, so nothing that needs a processor can run.
-    /// The environment is the one place that will change when the first
-    /// operation really works.
+    /// This is what the programs said when they were asked. Until the
+    /// answer comes, the environment is empty, and nothing that needs a
+    /// program is offered.
     fn environment(&self) -> Environment {
-        Environment::none()
+        self.environment.clone()
     }
 
     /// Says what the registry makes of the files that were dragged.
