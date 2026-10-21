@@ -26,9 +26,11 @@ public static class Native {
     [DllImport("user32.dll")] public static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, UIntPtr dwExtraInfo);
     [DllImport("user32.dll")] public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
     [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+    [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT lpPoint);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X; public int Y; }
     public const uint LEFTDOWN = 0x02, LEFTUP = 0x04, KEYUP = 0x02, MOVE = 0x01, ABSOLUTE = 0x8000;
 }
 "@
@@ -50,6 +52,13 @@ function Say($text) {
     $line = $text
     Add-Content -Path $report -Value $line
     Write-Output $line
+}
+
+# Says something without putting it in the pipeline, so that a function that
+# gives something back is not muddled up by its own messages.
+function Note($text) {
+    Add-Content -Path $report -Value $text
+    Write-Host $text
 }
 
 function Get-ExplorerWindow($titleLike) {
@@ -133,8 +142,127 @@ function Get-AppLog {
     return @()
 }
 
+# The shape of the wheel, as the application has it. This mirrors
+# RadialGeometry in src/radial/geometry.rs: eight segments, an inner radius of
+# 64 and an outer radius of 150, with the angles measured clockwise from the
+# top. The radii are given as a part of the wheel's size, so a display that
+# is scaled comes out right without anything being assumed about it.
+$WheelSegments = 8
+$WheelInnerRatio = 64.0 / 380.0
+$WheelOuterRatio = 150.0 / 380.0
+
+# Reads where the application put the wheel, and how big it is.
+#
+# The application writes this down every time it puts the wheel somewhere, so
+# this is the wheel's real place even when a second drag opens a second wheel.
+# It is not the pointer's place: the wheel is pushed against the edge of the
+# screen when the pointer is near it.
+function Get-Wheel {
+    $line = Get-AppLog | Where-Object { $_ -match "the window was moved to" } | Select-Object -Last 1
+    if (-not $line) { return $null }
+    if ($line -match "moved to \((-?\d+), (-?\d+)\), (\d+) by \d+ pixels, and is now at \((-?\d+), (-?\d+), (-?\d+), (-?\d+)\)") {
+        $left = [int]$Matches[4]
+        $top = [int]$Matches[5]
+        $right = [int]$Matches[6]
+        $bottom = [int]$Matches[7]
+        return @{
+            Left = $left
+            Top = $top
+            Size = $right - $left
+            CentreX = ($left + $right) / 2.0
+            CentreY = ($top + $bottom) / 2.0
+        }
+    }
+    return $null
+}
+
+# The point in the middle of a segment, in screen pixels.
+function Segment-Point($wheel, $index) {
+    $radius = $wheel.Size * ($WheelInnerRatio + $WheelOuterRatio) / 2
+    $angle = ($index * 360 / $WheelSegments) + (180 / $WheelSegments)
+    $rad = $angle * [Math]::PI / 180
+    return @([int]($wheel.CentreX + $radius * [Math]::Sin($rad)),
+              [int]($wheel.CentreY - $radius * [Math]::Cos($rad)))
+}
+
+# The segment a point falls in, the way the application works it out.
+# $null means the point is not on a segment.
+function Segment-At($wheel, $x, $y) {
+    $inner = $wheel.Size * $WheelInnerRatio
+    $outer = $wheel.Size * $WheelOuterRatio
+    $dx = $x - $wheel.CentreX
+    $dy = $y - $wheel.CentreY
+    $distance = [Math]::Sqrt($dx * $dx + $dy * $dy)
+    if ($distance -lt $inner -or $distance -gt $outer) { return $null }
+    $angle = [Math]::Atan2($dx, -$dy) * 180 / [Math]::PI
+    if ($angle -lt 0) { $angle += 360 }
+    $index = [int][Math]::Floor($angle / (360 / $WheelSegments))
+    if ($index -ge $WheelSegments) { $index = $WheelSegments - 1 }
+    return $index
+}
+
+# The segment a log line says is lit. $null means the line says nothing.
+# -1 means the hub, which is not a segment.
+function Hover-Index($line) {
+    if (-not $line) { return $null }
+    if ($line -match "segment Some\((\d+)\)") { return [int]$Matches[1] }
+    if ($line -match "segment None") { return -1 }
+    return $null
+}
+
+# Moves the pointer to a place in a few steps, the way a hand does it.
+#
+# One jump is not the same as a movement: a drag that is given to Windows in
+# one piece is not reported the same way as a drag that is moved along.
+function Move-To-Point($x, $y, [int]$Steps = 4, [int]$Pause = 35) {
+    $from = Cursor-Position
+    for ($i = 1; $i -le $Steps; $i++) {
+        $tx = [int]($from[0] + ($x - $from[0]) * $i / $Steps)
+        $ty = [int]($from[1] + ($y - $from[1]) * $i / $Steps)
+        [void][Native]::SetCursorPos($tx, $ty)
+        Start-Sleep -Milliseconds $Pause
+    }
+}
+
+# Where the pointer is, in screen pixels.
+function Cursor-Position {
+    $p = New-Object Native+POINT
+    [void][Native]::GetCursorPos([ref]$p)
+    return @($p.X, $p.Y)
+}
+# and gives that line back together with how long it took.
+#
+# Only the lines written after the movement being tested are looked at: a line
+# from before the movement says nothing about where the pointer is now.
+#
+# The application writes a line only when the lit segment changes, so a move
+# that does not change it writes nothing at all. The wait is bounded for that
+# reason.
+function Get-FreshHover($fromLine, [int]$Milliseconds = 400) {
+    $started = Get-Date
+    $deadline = $started.AddMilliseconds($Milliseconds)
+    while ($true) {
+        $lines = @(Get-AppLog)
+        if ($lines.Count -gt $fromLine) {
+            $new = $lines[$fromLine..($lines.Count - 1)] |
+                Where-Object { $_ -match "the pointer is over" } | Select-Object -Last 1
+            if ($new) {
+                return @{ line = $new; elapsed = ((Get-Date) - $started).TotalMilliseconds }
+            }
+        }
+        if ((Get-Date) -ge $deadline) { return $null }
+        Start-Sleep -Milliseconds 10
+    }
+}
+
 # Presses on a file, drags a little, optionally holds Shift (which opens the
-# wheel), optionally chooses a segment, and lets go.
+# wheel), optionally puts the pointer on a segment, and lets go.
+#
+# The pointer stops where the wheel opens. Running past it would cross
+# another segment on the way, and the test would be about the wrong one.
+#
+# It gives back the line the application wrote about the segment that is lit,
+# so that a caller can see what the application thought.
 function Invoke-Gesture($x, $y, [bool]$holdShift, [bool]$choose, [int]$dx = 120, [int]$dy = 60) {
     [void][Native]::SetCursorPos($x, $y)
     Start-Sleep -Milliseconds 400
@@ -144,34 +272,34 @@ function Invoke-Gesture($x, $y, [bool]$holdShift, [bool]$choose, [int]$dx = 120,
         [void][Native]::SetCursorPos(($x + [int]($dx * $i / 10)), ($y + [int]($dy * $i / 10)))
         Start-Sleep -Milliseconds 45
     }
+    # The wheel opens around the pointer here.
+    $centreX = $x + [int]($dx)
+    $centreY = $y + [int]($dy)
     if ($holdShift) {
         [Native]::keybd_event(0x10, 0, 0, [UIntPtr]::Zero)
         Start-Sleep -Milliseconds 700
-        for ($i = 11; $i -le 20; $i++) {
-            [void][Native]::SetCursorPos(($x + [int]($dx * $i / 10)), ($y + [int]($dy * $i / 10)))
-            Start-Sleep -Milliseconds 55
-        }
         Start-Sleep -Milliseconds 500
     }
+    $hover = $null
     if ($choose) {
-        # Move onto a segment of the wheel, which lies around the pointer.
-        # The directions are tried one after the other until the log says
-        # that a segment is under the pointer.
-        $centreX = $x + [int]($dx)
-        $centreY = $y + [int]($dy)
-        $found = $false
-        foreach ($angle in @(90, 135, 45, 0, 180, 270, 315, 225)) {
-            $radius = 110
-            $rad = $angle * [Math]::PI / 180
-            $tx = [int]($centreX + $radius * [Math]::Cos($rad))
-            $ty = [int]($centreY - $radius * [Math]::Sin($rad))
-            [void][Native]::SetCursorPos($tx, $ty)
-            Start-Sleep -Milliseconds 350
-            $tail = Get-AppLog | Where-Object { $_ -match "the pointer is over" } | Select-Object -Last 1
-            if ($tail -match "segment Some\((\d+)\)") { $found = $true; break }
+        $wheel = Get-Wheel
+        if (-not $wheel) {
+            Note "  (the application did not say where it put the wheel)"
+        } else {
+            # The target is worked out from the wheel's own shape, so that the
+            # pointer lands in the middle of a segment and not on a seam.
+            $point = Segment-Point $wheel 0
+            $before = @(Get-AppLog).Count
+            Move-To-Point $point[0] $point[1]
+            $hover = Get-FreshHover $before
+            if ($hover) {
+                Note ("  the pointer is on segment {0} of the wheel, and the application said so after {1} ms" -f `
+                    (Hover-Index $hover.line), [int]$hover.elapsed)
+            } else {
+                Note "  (the application did not say which segment is lit)"
+            }
+            Start-Sleep -Milliseconds 400
         }
-        if (-not $found) { Write-Output "  (no segment was found under the pointer)" }
-        Start-Sleep -Milliseconds 400
     }
     if ($holdShift) {
         [Native]::keybd_event(0x10, 0, [Native]::KEYUP, [UIntPtr]::Zero)
@@ -179,6 +307,7 @@ function Invoke-Gesture($x, $y, [bool]$holdShift, [bool]$choose, [int]$dx = 120,
     }
     [Native]::mouse_event([Native]::LEFTUP, 0, 0, 0, [UIntPtr]::Zero)
     Start-Sleep -Milliseconds 900
+    return $hover
 }
 
 function Select-Item($titlePattern, $name, [bool]$control) {
@@ -560,6 +689,9 @@ function Case-WheelStays {
     Start-Sleep -Milliseconds 500
 
     # The wheel opens, and the drag is released over a segment of it.
+    #
+    # The pointer stops where the wheel opens: running past it would cross
+    # another segment on the way, and the test would be about the wrong one.
     [void][Native]::SetCursorPos($at[0], $at[1])
     Start-Sleep -Milliseconds 500
     [Native]::mouse_event([Native]::LEFTDOWN, 0, 0, 0, [UIntPtr]::Zero)
@@ -568,19 +700,66 @@ function Case-WheelStays {
         [void][Native]::SetCursorPos(($at[0] + $i * 4), ($at[1] + $i * 3))
         Start-Sleep -Milliseconds 45
     }
+    # The wheel opens here, around the pointer.
+    $centreX = $at[0] + 10 * 4
+    $centreY = $at[1] + 10 * 3
     [Native]::keybd_event(0x10, 0, 0, [UIntPtr]::Zero)
     Start-Sleep -Milliseconds 900
-    for ($i = 11; $i -le 18; $i++) {
-        [void][Native]::SetCursorPos(($at[0] + $i * 4), ($at[1] + $i * 3))
-        Start-Sleep -Milliseconds 55
-    }
     Start-Sleep -Milliseconds 700
 
-    # Onto a segment of the wheel: up and to the right of the pointer.
-    $centreX = $at[0] + 18 * 4
-    $centreY = $at[1] + 18 * 3
-    [void][Native]::SetCursorPos(($centreX + 30), ($centreY - 95))
-    Start-Sleep -Milliseconds 800
+    # Onto a segment of the wheel. The target is worked out from the wheel's
+    # own shape, and the application is then asked which segment is lit: only
+    # the lines it writes after the move count.
+    $wheel = Get-Wheel
+    $expected = $null
+    if (-not $wheel) {
+        Say "FAIL: the application did not say where it put the wheel"
+    } else {
+        # The pointer is walked across the ring first, in quick steps, the way
+        # a hand moves it. The application writes a line for every segment it
+        # lights, so the number of lines says how many of them it saw. An
+        # application that answers with an old place leaves some behind.
+        $lit = @()
+        $walked = @()
+        for ($index = 2; $index -le 6; $index += 2) {
+            $step = Segment-Point $wheel $index
+            $walked += (Segment-At $wheel $step[0] $step[1])
+            $before = @(Get-AppLog).Count
+            # The pointer is moved at the pace of a hand, with a pause between
+            # the steps. A drag that is moved slowly is not reported by
+            # Windows in every place it passes through.
+            Move-To-Point $step[0] $step[1] 2 150
+            $fresh = Get-FreshHover $before 600
+            if ($fresh) { $lit += (Hover-Index $fresh.line) }
+        }
+        Say ("  the pointer was on segments {0} and the application lit {1}" -f `
+            ($walked -join ","), ($lit -join ","))
+
+        $point = Segment-Point $wheel 0
+        $expected = Segment-At $wheel $point[0] $point[1]
+        $before = @(Get-AppLog).Count
+        Move-To-Point $point[0] $point[1]
+        $hover = Get-FreshHover $before
+        Start-Sleep -Milliseconds 400
+        if ($hover) {
+            Say ("the log says: " + $hover.line)
+            Say ("  the pointer is on segment {0} of the wheel, and the application said so after {1} ms" -f `
+                (Hover-Index $hover.line), [int]$hover.elapsed)
+        } else {
+            Say "FAIL: the application did not say which segment is lit after the pointer moved"
+        }
+        # The segment that is lit is the one the pointer is on. An application
+        # that answers with a place of its own, or with an old place, lights
+        # the wrong segment.
+        if ($hover -and (Hover-Index $hover.line) -eq $expected) {
+            Say "PASS: the segment that is lit is the one the pointer is on"
+        } elseif (-not $hover) {
+            Say "FAIL: the application did not say which segment is lit"
+        } else {
+            Say ("FAIL: the segment that is lit is {0}, and the pointer is on {1}" -f `
+                (Hover-Index $hover.line), $expected)
+        }
+    }
 
     [Native]::keybd_event(0x10, 0, [Native]::KEYUP, [UIntPtr]::Zero)
     Start-Sleep -Milliseconds 200
@@ -591,7 +770,8 @@ function Case-WheelStays {
     $log = Get-AppLog
     $moves = @($log | Select-String -Pattern "the window was moved to")
     $drop = $log | Select-String -Pattern "the drag was dropped on the wheel" | Select-Object -First 1
-    $action = $log | Select-String -Pattern "placeholder:" | Select-Object -First 1
+    $actions = @($log | Select-String -Pattern "placeholder:")
+    $action = $actions | Select-Object -First 1
     foreach ($line in $moves) { Say ("the log says: " + $line.Line) }
     if ($drop) {
         Say ("the log says: " + $drop.Line)
@@ -620,6 +800,22 @@ function Case-WheelStays {
         Say "PASS: the choice was made and the action ran on the files of the drag"
     } else {
         Say "FAIL: the release did not choose anything"
+    }
+    # The choice is made once, and only once: a drop that is handled twice
+    # would run the action twice.
+    if ($actions.Count -eq 1) {
+        Say "PASS: the action ran exactly once"
+    } else {
+        Say "FAIL: the action ran $($actions.Count) times"
+    }
+    # The segment that was chosen is the one the pointer was on.
+    $chosen = $log | Select-String -Pattern "the drop landed at" | Select-Object -First 1
+    if ($chosen -and $chosen.Line -match "on segment Some\(0\)") {
+        Say "PASS: the segment that was chosen is the one the pointer was on"
+    } elseif (-not $chosen) {
+        Say "note: the drop was not handed over, so the segment it named was not written down"
+    } else {
+        Say ("FAIL: a different segment was chosen: " + $chosen.Line)
     }
 }
 
@@ -658,6 +854,9 @@ function Case-DropOnHub {
 
     # The wheel opens around the pointer, and the drag is released on the hub
     # in the middle of it: there is no choice there.
+    #
+    # The pointer stops where the wheel opens, and the hub is worked out from
+    # the wheel's own place, so that it is the real middle of the wheel.
     [void][Native]::SetCursorPos($at[0], $at[1])
     Start-Sleep -Milliseconds 500
     [Native]::mouse_event([Native]::LEFTDOWN, 0, 0, 0, [UIntPtr]::Zero)
@@ -668,15 +867,29 @@ function Case-DropOnHub {
     }
     [Native]::keybd_event(0x10, 0, 0, [UIntPtr]::Zero)
     Start-Sleep -Milliseconds 900
-    for ($i = 11; $i -le 18; $i++) {
-        [void][Native]::SetCursorPos(($at[0] + $i * 4), ($at[1] + $i * 3))
-        Start-Sleep -Milliseconds 55
-    }
     Start-Sleep -Milliseconds 700
 
-    # Back to the middle of the wheel: the hub.
-    [void][Native]::SetCursorPos(($at[0] + 18 * 4), ($at[1] + 18 * 3))
-    Start-Sleep -Milliseconds 800
+    $wheel = Get-Wheel
+    if (-not $wheel) {
+        Say "FAIL: the application did not say where it put the wheel"
+    } else {
+        # Onto a segment first, and then back to the hub: the application
+        # writes a line only when the lit segment changes, so the move onto
+        # the hub has to be a change to be seen at all.
+        $point = Segment-Point $wheel 0
+        $before = @(Get-AppLog).Count
+        Move-To-Point $point[0] $point[1]
+        $hover = Get-FreshHover $before
+        Start-Sleep -Milliseconds 400
+
+        $before = @(Get-AppLog).Count
+        Move-To-Point ([int]$wheel.CentreX) ([int]$wheel.CentreY)
+        $hub = Get-FreshHover $before
+        Start-Sleep -Milliseconds 400
+        if ($hover) { Say ("the log says: " + $hover.line) }
+        if ($hub) { Say ("the log says: " + $hub.line) }
+        else { Say "FAIL: the application did not say that the hub was lit" }
+    }
 
     [Native]::keybd_event(0x10, 0, [Native]::KEYUP, [UIntPtr]::Zero)
     Start-Sleep -Milliseconds 200
