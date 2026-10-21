@@ -195,10 +195,11 @@ Filters:
 ";
 
 const PROTOCOLS: &str = "\
- File protocols:
- D  = Demuxing supported
- .E = Muxing supported
- ---
- D  file          File input/output
- DE pipe          Unix pipe access
+Supported file protocols:
+Input:
+  file
+  pipe
+Output:
+  file
+  pipe
 ";
