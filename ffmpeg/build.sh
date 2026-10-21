@@ -141,10 +141,12 @@ cd "ffmpeg-$VERSION"
 export SOURCE_DATE_EPOCH
 
 echo "=== configure ==="
+# The summary of what was enabled and what was linked in is only printed
+# here, so it is kept.
 ./configure \
     --prefix="$PREFIX" \
     --pkg-config-flags=--static \
-    "${CONFIGURE_FLAGS[@]}"
+    "${CONFIGURE_FLAGS[@]}" 2>&1 | tee "$WORK/configure.txt"
 
 echo "=== make ==="
 make -j"$(nproc 2>/dev/null || echo 4)"
@@ -212,6 +214,35 @@ for unwanted in http https tcp udp rtp ftp tls; do
     if "$FFMPEG" -hide_banner -protocols 2>/dev/null | grep -qE "(^|[ .])${unwanted}([ .]|$)"; then
         echo "UNWANTED: $unwanted is a protocol"
         MISSING=1
+    fi
+done
+
+echo "=== the libraries that were linked in ==="
+# The build must have found exactly the libraries the manifest names, and
+# the versions of the ones that are pinned must be the ones that were
+# asked for. A build that quietly gained a library cannot be released.
+ACTUAL_LIBRARIES="$(sed -n '/^External libraries:/,/^$/p' "$WORK/configure.txt" \
+    | tail -n +2 | tr -s ' ' '\n' | grep -v '^$' | sort -u)"
+EXPECTED_LIBRARIES="$(sed -n 's/^library[[:space:]]*=[[:space:]]*\([^[:space:]]*\).*/\1/p' "$MANIFEST" | sort -u)"
+if [ "$ACTUAL_LIBRARIES" != "$EXPECTED_LIBRARIES" ]; then
+    echo "MISSING: the libraries in the build are not the ones in the manifest:"
+    diff <(echo "$EXPECTED_LIBRARIES") <(echo "$ACTUAL_LIBRARIES") || true
+    MISSING=1
+else
+    echo "the libraries are the ones the manifest names"
+fi
+
+for name in $EXPECTED_LIBRARIES; do
+    version="$(sed -n "s/^library[[:space:]]*=[[:space:]]*$name[[:space:]].*version=\([^[:space:]]*\).*/\1/p" "$MANIFEST" | head -n 1)"
+    case "$version" in
+        ""|system) continue ;;
+    esac
+    found="$(pkgconf --modversion "$name" 2>/dev/null || echo "not found")"
+    if [ "$found" != "$version" ]; then
+        echo "MISSING: $name is $found, not $version"
+        MISSING=1
+    else
+        echo "$name is $found"
     fi
 done
 
