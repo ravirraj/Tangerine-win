@@ -201,7 +201,7 @@ mod tests {
     /// A publisher that records where things were put.
     struct Recording {
         taken: Vec<PathBuf>,
-        published: std::cell::RefCell<Vec<PathBuf>>,
+        published: std::sync::Mutex<Vec<PathBuf>>,
     }
 
     impl Publisher for Recording {
@@ -211,7 +211,10 @@ mod tests {
             }
             // The file is moved, not copied, so that nothing is left behind.
             std::fs::rename(temporary, destination).expect("the file could be moved");
-            self.published.borrow_mut().push(destination.to_path_buf());
+            self.published
+                .lock()
+                .expect("the record could be read")
+                .push(destination.to_path_buf());
             Ok(())
         }
     }
@@ -322,7 +325,7 @@ mod tests {
         let tools = tools();
         let publisher = Recording {
             taken: Vec::new(),
-            published: std::cell::RefCell::new(Vec::new()),
+            published: std::sync::Mutex::new(Vec::new()),
         };
         let converter = Converter {
             tools: &tools,
@@ -344,7 +347,7 @@ mod tests {
         let tools = tools();
         let publisher = Recording {
             taken: Vec::new(),
-            published: std::cell::RefCell::new(Vec::new()),
+            published: std::sync::Mutex::new(Vec::new()),
         };
         // The program says it worked but wrote something that is not a
         // picture.
@@ -379,7 +382,7 @@ mod tests {
         let tools = tools();
         let publisher = Recording {
             taken: Vec::new(),
-            published: std::cell::RefCell::new(Vec::new()),
+            published: std::sync::Mutex::new(Vec::new()),
         };
         let runner = Writing {
             bytes: vec![0xFF, 0xD8, 0xFF, 0xE0, 0, 0],
@@ -408,7 +411,7 @@ mod tests {
         let tools = tools();
         let publisher = Recording {
             taken: vec![folder.path.join("photo.jpeg")],
-            published: std::cell::RefCell::new(Vec::new()),
+            published: std::sync::Mutex::new(Vec::new()),
         };
         let runner = Writing {
             bytes: vec![0xFF, 0xD8, 0xFF, 0xE0, 0, 0],
@@ -439,7 +442,7 @@ mod tests {
         let tools = tools();
         let publisher = Recording {
             taken: Vec::new(),
-            published: std::cell::RefCell::new(Vec::new()),
+            published: std::sync::Mutex::new(Vec::new()),
         };
         let runner = Writing {
             bytes: Vec::new(),
@@ -460,6 +463,12 @@ mod tests {
             .filter(|entry| entry.file_name().to_string_lossy().ends_with(".part"))
             .collect();
         assert!(left.is_empty(), "a temporary file was left behind");
-        assert!(publisher.published.borrow().is_empty());
+        assert!(
+            publisher
+                .published
+                .lock()
+                .expect("the record could be read")
+                .is_empty()
+        );
     }
 }

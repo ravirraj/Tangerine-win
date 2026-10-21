@@ -521,6 +521,7 @@ impl App {
         let environment = self.environment();
         let handler = images::Pictures {
             tools: capabilities.tools,
+            publisher: crate::platform::windows::publish::WindowsPublisher,
         };
         let sender = self.sender.clone();
         let operation = request.operation.clone();

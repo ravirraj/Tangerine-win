@@ -23,16 +23,16 @@ pub enum PublishError {
 }
 
 /// Puts a finished file at its final name.
-pub trait Publisher {
+///
+/// The publisher is used from a worker thread, so it has to be safe to
+/// share.
+pub trait Publisher: Send + Sync {
     /// Moves the file from where it was made to where it belongs.
     ///
     /// The two paths are on the same place, so the move is a rename and not
     /// a copy: the file either arrives whole or does not arrive at all.
     fn publish(&self, temporary: &Path, destination: &Path) -> Result<(), PublishError>;
 }
-
-/// The publisher of this platform.
-pub use crate::platform::windows::publish::WindowsPublisher as PlatformPublisher;
 
 /// The name a file should have, when the one that was asked for is taken.
 ///

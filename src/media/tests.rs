@@ -18,7 +18,7 @@ use crate::media::convert::{ConvertError, Converter};
 use crate::media::locator::Tools;
 use crate::media::manifest::Manifest;
 use crate::media::probe::Capabilities;
-use crate::media::publish::PlatformPublisher;
+use crate::media::publish::{PublishError, Publisher};
 use crate::media::runner::SystemRunner;
 
 /// The stand-in for the conversion program.
@@ -99,6 +99,21 @@ fn temporaries_left(folder: &Path) -> Vec<String> {
     names
 }
 
+/// A publisher for the tests.
+///
+/// It moves the file and never overwrites what is there. The publisher the
+/// application uses is tested where it lives, in the platform layer.
+struct TestPublisher;
+
+impl Publisher for TestPublisher {
+    fn publish(&self, temporary: &Path, destination: &Path) -> Result<(), PublishError> {
+        if destination.exists() {
+            return Err(PublishError::DestinationExists);
+        }
+        std::fs::rename(temporary, destination).map_err(|_| PublishError::CouldNotMove)
+    }
+}
+
 #[test]
 fn the_stand_in_is_found_and_asked_what_it_can_do() {
     let tools = tools();
@@ -158,7 +173,7 @@ fn a_picture_is_converted_and_the_original_is_left_alone() {
 
     let tools = tools();
     let runner = SystemRunner;
-    let publisher = PlatformPublisher;
+    let publisher = TestPublisher;
     let converter = Converter {
         tools: &tools,
         runner: &runner,
@@ -189,7 +204,7 @@ fn a_name_that_is_taken_is_given_a_number() {
 
     let tools = tools();
     let runner = SystemRunner;
-    let publisher = PlatformPublisher;
+    let publisher = TestPublisher;
     let converter = Converter {
         tools: &tools,
         runner: &runner,
@@ -216,7 +231,7 @@ fn a_file_that_holds_more_than_one_picture_is_not_converted() {
 
     let tools = tools();
     let runner = SystemRunner;
-    let publisher = PlatformPublisher;
+    let publisher = TestPublisher;
     let converter = Converter {
         tools: &tools,
         runner: &runner,
@@ -241,7 +256,7 @@ fn a_file_that_cannot_be_read_is_not_converted() {
 
     let tools = tools();
     let runner = SystemRunner;
-    let publisher = PlatformPublisher;
+    let publisher = TestPublisher;
     let converter = Converter {
         tools: &tools,
         runner: &runner,
@@ -264,7 +279,7 @@ fn a_file_that_is_already_in_that_format_is_not_converted() {
 
     let tools = tools();
     let runner = SystemRunner;
-    let publisher = PlatformPublisher;
+    let publisher = TestPublisher;
     let converter = Converter {
         tools: &tools,
         runner: &runner,
