@@ -463,8 +463,8 @@ impl App {
 
     /// Runs the chosen action.
     ///
-    /// Milestone 1 does not carry out any file operation: the choice is
-    /// reported and nothing else happens.
+    /// The work is done on a worker, so that the wheel keeps moving while
+    /// it runs. What comes of it is reported when the next frame is drawn.
     fn run_action(
         &mut self,
         source: InteractionSource,
@@ -476,7 +476,7 @@ impl App {
             Level::Info,
             "action",
             &format!(
-                "placeholder: {} ({}) in the {} wheel on {} file(s) from drag {} in the window {:?} ({}), source {:?}. Nothing is executed in Milestone 1.",
+                "{} ({}) in the {} wheel on {} file(s) from drag {} in the window {:?} ({}), source {:?}. The work is done on a worker.",
                 segment.label,
                 segment.id,
                 mode.name(),
