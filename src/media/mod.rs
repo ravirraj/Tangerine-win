@@ -25,3 +25,8 @@ pub mod manifest;
 pub mod probe;
 pub mod publish;
 pub mod runner;
+
+#[cfg(test)]
+mod real;
+#[cfg(test)]
+mod tests;

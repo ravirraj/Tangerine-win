@@ -21,6 +21,19 @@ slint = { version = "1.18", default-features = false, features = [
 windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Media", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_DataExchange", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Ole", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_System_Time", "Win32_System_Variant", "Win32_UI_HiDpi", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 windows-core = "0.62"
 
+# The stand-in for the conversion program, used by the tests.
+#
+# It is a program of its own, because the tests have to start a real child
+# process, and Windows will not run a batch file without a shell. The
+# feature keeps it out of an ordinary build, so it is never shipped.
+[features]
+test-helper = []
+
+[[bin]]
+name = "ot-fake-ffmpeg"
+path = "tests/support/fake_ffmpeg.rs"
+required-features = ["test-helper"]
+
 [profile.release]
 opt-level = 3
 lto = "thin"
