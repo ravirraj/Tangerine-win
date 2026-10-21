@@ -123,6 +123,14 @@ pub struct SelectedItem {
     pub path: PathBuf,
     /// What kind of thing the item is.
     pub kind: FileKind,
+    /// The format the item is written in, if it can be told.
+    ///
+    /// This is the name the format is usually written with, in lower case and
+    /// without the dot: `png`, `jpeg`. It is worked out from the name of the
+    /// file, which says what the file is *called* and not what it holds, so
+    /// it is a guess in the same way the kind is. A file with no name that
+    /// says anything has no format.
+    pub format: Option<String>,
     /// Whether the item could be read at all.
     ///
     /// An item that is gone, or that is not there to be read, is still part
@@ -149,18 +157,21 @@ impl SelectedItem {
                     return SelectedItem {
                         path: path.to_path_buf(),
                         kind: FileKind::Folder,
+                        format: None,
                         readable: true,
                     };
                 }
                 SelectedItem {
                     path: path.to_path_buf(),
                     kind: kind_of(path),
+                    format: format_of(path),
                     readable: true,
                 }
             }
             Err(_) => SelectedItem {
                 path: path.to_path_buf(),
                 kind: FileKind::Unknown,
+                format: None,
                 readable: false,
             },
         }
@@ -172,16 +183,19 @@ impl SelectedItem {
             Ok(metadata) if metadata.is_dir() => SelectedItem {
                 path: path.to_path_buf(),
                 kind: FileKind::Folder,
+                format: None,
                 readable: true,
             },
             Ok(_) => SelectedItem {
                 path: path.to_path_buf(),
                 kind: kind_of(path),
+                format: format_of(path),
                 readable: true,
             },
             Err(_) => SelectedItem {
                 path: path.to_path_buf(),
                 kind: FileKind::Unknown,
+                format: None,
                 readable: false,
             },
         }
@@ -195,6 +209,16 @@ fn kind_of(path: &Path) -> FileKind {
         // A file with no extension is not known.
         None => FileKind::Unknown,
     }
+}
+
+/// The format a path is called, from its extension.
+///
+/// The name is in lower case and without the dot, the way the registry and
+/// the processors name their formats.
+fn format_of(path: &Path) -> Option<String> {
+    let extension = path.extension()?;
+    let name = extension.to_string_lossy().to_lowercase();
+    if name.is_empty() { None } else { Some(name) }
 }
 
 /// The shape of the selection.
@@ -251,6 +275,19 @@ impl Selection {
     /// The items of the selection.
     pub fn items(&self) -> &[SelectedItem] {
         &self.items
+    }
+
+    /// Where the items are.
+    pub fn paths(&self) -> Vec<PathBuf> {
+        self.items.iter().map(|item| item.path.clone()).collect()
+    }
+
+    /// The formats of the items, for the ones whose format is known.
+    pub fn formats(&self) -> Vec<&str> {
+        self.items
+            .iter()
+            .filter_map(|item| item.format.as_deref())
+            .collect()
     }
 
     /// How many items there are.
@@ -399,6 +436,43 @@ mod tests {
         let item = SelectedItem::inspect(&path);
         assert_eq!(item.kind, FileKind::Unknown);
         assert!(item.readable);
+        // And there is no format to go on either.
+        assert_eq!(item.format, None);
+    }
+
+    #[test]
+    fn the_format_is_the_name_the_file_is_called_by() {
+        let folder = TempFolder::new("format");
+        let path = folder.file("photo.PNG");
+        let item = SelectedItem::inspect(&path);
+        // The format is in lower case and without the dot, the way the
+        // registry and the processors name their formats.
+        assert_eq!(item.format.as_deref(), Some("png"));
+        assert_eq!(item.kind, FileKind::Image);
+    }
+
+    #[test]
+    fn a_folder_has_no_format() {
+        let folder = TempFolder::new("folder-format");
+        let path = folder.folder("pictures");
+        let item = SelectedItem::inspect(&path);
+        assert_eq!(item.kind, FileKind::Folder);
+        assert_eq!(item.format, None);
+    }
+
+    #[test]
+    fn the_selection_says_what_formats_it_holds() {
+        let folder = TempFolder::new("formats");
+        let paths = vec![
+            folder.file("one.png"),
+            folder.file("two.jpeg"),
+            folder.file("three.png"),
+        ];
+        let selection = Selection::inspect(&paths);
+        let mut formats = selection.formats();
+        formats.sort_unstable();
+        assert_eq!(formats, vec!["jpeg", "png", "png"]);
+        assert_eq!(selection.paths(), paths);
     }
 
     // ----------------------------------------------------- the items themselves

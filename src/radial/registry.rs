@@ -20,15 +20,93 @@
 //! it does not hold a processor that is not there.
 
 use crate::radial::actions::{IconKind, Menu, RadialMode, Segment};
-use crate::radial::selection::{FileKind, Selection};
+use crate::radial::selection::{FileKind, Selection, SelectionShape};
 
 /// What an operation needs in order to run.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Requirement {
     /// Nothing but the application itself.
+    ///
+    /// These are the file actions the program does on its own: they need no
+    /// conversion backend, and they work on any file.
     None,
     /// A processor, by name.
     Processor(&'static str),
+}
+
+/// How many items an operation takes, and whether they have to be alike.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Batch {
+    /// One item at a time.
+    One,
+    /// Several items, of any of the kinds the operation works on.
+    Several,
+    /// Several items, all of the same kind.
+    ///
+    /// This is for the operations that put their inputs together, like
+    /// merging: a picture and a sound are not one thing to merge.
+    SeveralAlike,
+}
+
+/// What an operation does with the result.
+///
+/// This is the output policy: it says where the result goes and what it is
+/// written in. An operation that writes over the original says so here, and
+/// that is the one that changes the user's files.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Output {
+    /// A new file beside the original, in this format.
+    ///
+    /// The format is in lower case and without the dot: `png`, `jpeg`. The
+    /// original is left alone.
+    Beside(&'static str),
+    /// A new file beside the original, in the same format as the file it was
+    /// given.
+    BesideAsInput,
+    /// The original itself, in place.
+    ///
+    /// This is the one that changes the user's files.
+    InPlace,
+    /// Nothing is written: the operation only reports.
+    Nothing,
+}
+
+/// What to do when the result is already there.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Collision {
+    /// Stop and ask the user.
+    Ask,
+    /// Use another name.
+    Rename,
+}
+
+/// A backend that reads and writes files.
+///
+/// This is what a conversion runs on. What it can read and what it can write
+/// is what it is good at, and the menu is built from that: an operation is
+/// only offered when the files that were dragged are ones the processor can
+/// read, and the format the operation is to write is one the processor can
+/// write.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Processor {
+    /// The name of the processor. This is what an operation asks for.
+    pub name: String,
+    /// The formats it can read, in lower case and without the dot.
+    pub reads: Vec<String>,
+    /// The formats it can write, in lower case and without the dot.
+    pub writes: Vec<String>,
+}
+
+impl Processor {
+    /// Whether the processor can read files of this format.
+    pub fn can_read(&self, format: &str) -> bool {
+        self.reads.iter().any(|known| known == format)
+    }
+
+    /// Whether the processor can write files of this format.
+    pub fn can_write(&self, format: &str) -> bool {
+        self.writes.iter().any(|known| known == format)
+    }
 }
 
 /// An operation the application offers.
@@ -52,26 +130,33 @@ pub struct Operation {
     /// A folder is not a kind of file: whether the operation works on a
     /// folder is said by `folders`.
     pub categories: &'static [FileKind],
-    /// Whether the operation works on more than one item at a time.
-    pub multiple: bool,
-    /// Whether the operation works on a whole folder.
+    /// How many items it takes, and whether they have to be alike.
+    pub batch: Batch,
+    /// Whether it works on a whole folder.
     pub folders: bool,
+    /// What it does with the result: where it goes and what it is written in.
+    pub output: Output,
+    /// What to do when the result is already there.
+    pub collision: Collision,
     /// Whether the operation is implemented and can run.
     pub implemented: bool,
     /// What the operation needs in order to run.
     pub requires: Requirement,
-    /// Whether the operation changes the files it is given.
-    ///
-    /// An operation that writes a new file beside the original is not
-    /// destructive. An operation that changes the original in place is. This
-    /// is the flag that says where the care has to be taken.
-    pub destructive: bool,
 }
 
 impl Operation {
     /// The segment that shows this operation.
     pub fn as_segment(&self) -> Segment {
         Segment::new(self.id, self.label, self.detail, self.icon)
+    }
+
+    /// Whether the operation changes the files it is given.
+    ///
+    /// An operation that writes a new file beside the original does not. One
+    /// that writes over the original does, and that is the one that has to be
+    /// careful.
+    pub fn is_destructive(&self) -> bool {
+        self.output == Output::InPlace
     }
 }
 
@@ -88,11 +173,12 @@ pub const OPERATIONS: &[Operation] = &[
         icon: IconKind::Picture,
         mode: RadialMode::Convert,
         categories: &[FileKind::Image],
-        multiple: true,
+        batch: Batch::Several,
         folders: false,
+        output: Output::Beside("png"),
+        collision: Collision::Rename,
         implemented: false,
-        requires: Requirement::Processor("encode/png"),
-        destructive: false,
+        requires: Requirement::Processor("image"),
     },
     Operation {
         id: "convert.jpeg",
@@ -101,11 +187,12 @@ pub const OPERATIONS: &[Operation] = &[
         icon: IconKind::Picture,
         mode: RadialMode::Convert,
         categories: &[FileKind::Image],
-        multiple: true,
+        batch: Batch::Several,
         folders: false,
+        output: Output::Beside("jpeg"),
+        collision: Collision::Rename,
         implemented: false,
-        requires: Requirement::Processor("encode/jpeg"),
-        destructive: false,
+        requires: Requirement::Processor("image"),
     },
     Operation {
         id: "convert.webp",
@@ -114,11 +201,14 @@ pub const OPERATIONS: &[Operation] = &[
         icon: IconKind::Picture,
         mode: RadialMode::Convert,
         categories: &[FileKind::Image],
-        multiple: true,
+        batch: Batch::Several,
         folders: false,
+        output: Output::Beside("webp"),
+        collision: Collision::Rename,
         implemented: false,
-        requires: Requirement::Processor("encode/webp"),
-        destructive: false,
+        // Windows has no WebP writer of its own, so this one needs a
+        // backend of its own.
+        requires: Requirement::Processor("webp"),
     },
     Operation {
         id: "convert.pdf",
@@ -127,11 +217,12 @@ pub const OPERATIONS: &[Operation] = &[
         icon: IconKind::Document,
         mode: RadialMode::Convert,
         categories: &[FileKind::Image],
-        multiple: true,
+        batch: Batch::Several,
         folders: false,
+        output: Output::Beside("pdf"),
+        collision: Collision::Rename,
         implemented: false,
-        requires: Requirement::Processor("encode/pdf"),
-        destructive: false,
+        requires: Requirement::Processor("document"),
     },
     Operation {
         id: "convert.mp4",
@@ -140,11 +231,12 @@ pub const OPERATIONS: &[Operation] = &[
         icon: IconKind::Film,
         mode: RadialMode::Convert,
         categories: &[FileKind::Video],
-        multiple: true,
+        batch: Batch::Several,
         folders: false,
+        output: Output::Beside("mp4"),
+        collision: Collision::Rename,
         implemented: false,
-        requires: Requirement::Processor("encode/mp4"),
-        destructive: false,
+        requires: Requirement::Processor("video"),
     },
     Operation {
         id: "convert.gif",
@@ -153,11 +245,12 @@ pub const OPERATIONS: &[Operation] = &[
         icon: IconKind::Film,
         mode: RadialMode::Convert,
         categories: &[FileKind::Video, FileKind::Image],
-        multiple: true,
+        batch: Batch::Several,
         folders: false,
+        output: Output::Beside("gif"),
+        collision: Collision::Rename,
         implemented: false,
-        requires: Requirement::Processor("encode/gif"),
-        destructive: false,
+        requires: Requirement::Processor("image"),
     },
     Operation {
         id: "convert.tiff",
@@ -166,11 +259,12 @@ pub const OPERATIONS: &[Operation] = &[
         icon: IconKind::Picture,
         mode: RadialMode::Convert,
         categories: &[FileKind::Image],
-        multiple: true,
+        batch: Batch::Several,
         folders: false,
+        output: Output::Beside("tiff"),
+        collision: Collision::Rename,
         implemented: false,
-        requires: Requirement::Processor("encode/tiff"),
-        destructive: false,
+        requires: Requirement::Processor("image"),
     },
     Operation {
         id: "convert.bmp",
@@ -179,11 +273,12 @@ pub const OPERATIONS: &[Operation] = &[
         icon: IconKind::Picture,
         mode: RadialMode::Convert,
         categories: &[FileKind::Image],
-        multiple: true,
+        batch: Batch::Several,
         folders: false,
+        output: Output::Beside("bmp"),
+        collision: Collision::Rename,
         implemented: false,
-        requires: Requirement::Processor("encode/bmp"),
-        destructive: false,
+        requires: Requirement::Processor("image"),
     },
     // --------------------------------------------------------------- tools
     Operation {
@@ -200,11 +295,12 @@ pub const OPERATIONS: &[Operation] = &[
             FileKind::Document,
             FileKind::Archive,
         ],
-        multiple: true,
+        batch: Batch::Several,
         folders: false,
+        output: Output::BesideAsInput,
+        collision: Collision::Rename,
         implemented: false,
         requires: Requirement::Processor("compress"),
-        destructive: false,
     },
     Operation {
         id: "tools.crop",
@@ -213,11 +309,12 @@ pub const OPERATIONS: &[Operation] = &[
         icon: IconKind::Scissors,
         mode: RadialMode::Tools,
         categories: &[FileKind::Image],
-        multiple: true,
+        batch: Batch::Several,
         folders: false,
+        output: Output::BesideAsInput,
+        collision: Collision::Rename,
         implemented: false,
-        requires: Requirement::Processor("crop"),
-        destructive: false,
+        requires: Requirement::Processor("image"),
     },
     Operation {
         id: "tools.trim",
@@ -226,11 +323,12 @@ pub const OPERATIONS: &[Operation] = &[
         icon: IconKind::Scissors,
         mode: RadialMode::Tools,
         categories: &[FileKind::Image, FileKind::Video],
-        multiple: true,
+        batch: Batch::Several,
         folders: false,
+        output: Output::BesideAsInput,
+        collision: Collision::Rename,
         implemented: false,
-        requires: Requirement::Processor("trim"),
-        destructive: false,
+        requires: Requirement::Processor("image"),
     },
     Operation {
         id: "tools.merge",
@@ -239,11 +337,14 @@ pub const OPERATIONS: &[Operation] = &[
         icon: IconKind::Merge,
         mode: RadialMode::Tools,
         categories: &[FileKind::Image, FileKind::Video, FileKind::Audio],
-        multiple: true,
+        // Files that are put together have to be alike: a picture and a sound
+        // are not one thing to merge.
+        batch: Batch::SeveralAlike,
         folders: false,
+        output: Output::BesideAsInput,
+        collision: Collision::Rename,
         implemented: false,
         requires: Requirement::Processor("merge"),
-        destructive: false,
     },
     Operation {
         id: "tools.metadata",
@@ -252,11 +353,13 @@ pub const OPERATIONS: &[Operation] = &[
         icon: IconKind::Pencil,
         mode: RadialMode::Tools,
         categories: &FileKind::FILES,
-        multiple: true,
+        batch: Batch::Several,
         folders: true,
+        // This one changes the file it is given.
+        output: Output::InPlace,
+        collision: Collision::Ask,
         implemented: false,
         requires: Requirement::Processor("metadata"),
-        destructive: false,
     },
     // ------------------------------------------------------ file actions
     Operation {
@@ -266,11 +369,13 @@ pub const OPERATIONS: &[Operation] = &[
         icon: IconKind::Lines,
         mode: RadialMode::Actions,
         categories: &FileKind::FILES,
-        multiple: true,
+        batch: Batch::Several,
         folders: true,
+        output: Output::Nothing,
+        collision: Collision::Ask,
         implemented: false,
+        // The program does this one itself: no backend is needed.
         requires: Requirement::None,
-        destructive: false,
     },
     Operation {
         id: "actions.duplicate",
@@ -279,11 +384,13 @@ pub const OPERATIONS: &[Operation] = &[
         icon: IconKind::Copy,
         mode: RadialMode::Actions,
         categories: &FileKind::FILES,
-        multiple: true,
+        batch: Batch::Several,
         folders: true,
+        output: Output::BesideAsInput,
+        collision: Collision::Rename,
         implemented: false,
+        // The program does this one itself: no backend is needed.
         requires: Requirement::None,
-        destructive: false,
     },
     Operation {
         id: "actions.rename",
@@ -293,12 +400,14 @@ pub const OPERATIONS: &[Operation] = &[
         mode: RadialMode::Actions,
         categories: &FileKind::FILES,
         // One thing at a time: one name, one file.
-        multiple: false,
+        batch: Batch::One,
         folders: true,
+        // This one changes the file it is given.
+        output: Output::InPlace,
+        collision: Collision::Ask,
         implemented: false,
+        // The program does this one itself: no backend is needed.
         requires: Requirement::None,
-        // This one changes the original.
-        destructive: true,
     },
     Operation {
         id: "actions.zip",
@@ -307,11 +416,12 @@ pub const OPERATIONS: &[Operation] = &[
         icon: IconKind::Archive,
         mode: RadialMode::Actions,
         categories: &FileKind::FILES,
-        multiple: true,
+        batch: Batch::Several,
         folders: true,
+        output: Output::Beside("zip"),
+        collision: Collision::Rename,
         implemented: false,
-        requires: Requirement::Processor("archive/zip"),
-        destructive: false,
+        requires: Requirement::Processor("archive"),
     },
     Operation {
         id: "actions.reveal",
@@ -320,11 +430,13 @@ pub const OPERATIONS: &[Operation] = &[
         icon: IconKind::Folder,
         mode: RadialMode::Actions,
         categories: &FileKind::FILES,
-        multiple: true,
+        batch: Batch::Several,
         folders: true,
+        output: Output::Nothing,
+        collision: Collision::Ask,
         implemented: false,
+        // The program does this one itself: no backend is needed.
         requires: Requirement::None,
-        destructive: false,
     },
 ];
 
@@ -335,8 +447,8 @@ pub const OPERATIONS: &[Operation] = &[
 /// processor is in the environment, whatever the registry says.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Environment {
-    /// The processors that are there, by name.
-    pub processors: Vec<String>,
+    /// The processors that are there.
+    pub processors: Vec<Processor>,
 }
 
 impl Environment {
@@ -350,48 +462,56 @@ impl Environment {
         }
     }
 
-    /// Whether a processor is there.
-    pub fn has(&self, name: &str) -> bool {
-        self.processors.iter().any(|processor| processor == name)
+    /// The processor with this name, if it is there.
+    pub fn processor(&self, name: &str) -> Option<&Processor> {
+        self.processors
+            .iter()
+            .find(|processor| processor.name == name)
     }
 }
 
 /// Why an operation cannot be used for a selection.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Ineligible {
     /// Nothing is selected.
     NothingSelected,
     /// Some of the selected items could not be read, so it is not known what
     /// the selection really is.
     UnreadableItems(usize),
-    /// The operation works on one item at a time.
+    /// The operation takes one item at a time, and there are several.
     SingleItemOnly,
+    /// The operation needs the items to be alike, and they are not.
+    MixedKinds,
     /// The operation does not work on a folder.
     NotFolders,
     /// The operation does not work on this kind of file.
     UnsupportedCategory(FileKind),
+    /// The processor cannot read a file of this format.
+    UnreadableFormat(String),
+    /// The processor cannot write a file of this format.
+    UnwritableFormat(String),
     /// The operation is not implemented.
     NotImplemented,
     /// The processor the operation needs is not there.
     ProcessorMissing(&'static str),
-    /// There is no operation with that name.
-    UnknownOperation,
 }
 
 impl Ineligible {
     /// The name used in the log.
-    pub fn name(self) -> &'static str {
+    pub fn name(&self) -> &'static str {
         match self {
             Ineligible::NothingSelected => "nothing is selected",
             Ineligible::UnreadableItems(_) => "some of the items could not be read",
-            Ineligible::SingleItemOnly => "the operation works on one item at a time",
+            Ineligible::SingleItemOnly => "the operation takes one item at a time",
+            Ineligible::MixedKinds => "the items are of different kinds",
             Ineligible::NotFolders => "the operation does not work on a folder",
             Ineligible::UnsupportedCategory(_) => {
                 "the operation does not work on this kind of file"
             }
+            Ineligible::UnreadableFormat(_) => "the processor cannot read this format",
+            Ineligible::UnwritableFormat(_) => "the processor cannot write this format",
             Ineligible::NotImplemented => "the operation is not implemented",
             Ineligible::ProcessorMissing(_) => "the processor is not there",
-            Ineligible::UnknownOperation => "there is no operation with that name",
         }
     }
 }
@@ -402,6 +522,17 @@ impl Ineligible {
 /// operation is offered when every selected item is one it can work on, not
 /// when one of them happens to be. An image and a PDF together are not an
 /// image selection with a PDF in it.
+///
+/// The rules, in the order they are given:
+///
+/// 1. there is something selected, and every item of it could be read;
+/// 2. the operation takes as many items as the selection has, and takes
+///    items that are alike when it says so;
+/// 3. every item is a kind the operation works on, and a folder only when
+///    the operation works on folders;
+/// 4. the operation is implemented, and the processor it needs is there;
+/// 5. the processor can read every format that was selected, and can write
+///    the format the operation is to produce.
 ///
 /// The order of the rules is the order in which the reasons are given. The
 /// selection is looked at first, because that is the more useful answer, and
@@ -422,8 +553,20 @@ pub fn eligibility(
         return Err(Ineligible::UnreadableItems(unreadable));
     }
 
-    if selection.len() > 1 && !operation.multiple {
-        return Err(Ineligible::SingleItemOnly);
+    // How many items the operation takes.
+    match operation.batch {
+        Batch::One if selection.len() > 1 => return Err(Ineligible::SingleItemOnly),
+        Batch::SeveralAlike => {
+            // Files that are put together have to be alike.
+            let shape = selection.shape();
+            if !matches!(
+                shape,
+                SelectionShape::SeveralFiles | SelectionShape::SeveralFolders
+            ) {
+                return Err(Ineligible::MixedKinds);
+            }
+        }
+        Batch::One | Batch::Several => {}
     }
 
     // Every item has to be one the operation can work on.
@@ -441,10 +584,38 @@ pub fn eligibility(
     if !operation.implemented {
         return Err(Ineligible::NotImplemented);
     }
-    if let Requirement::Processor(name) = operation.requires
-        && !environment.has(name)
-    {
+    let Requirement::Processor(name) = operation.requires else {
+        // The program does this one itself. There is no backend, and so no
+        // backend to be missing.
+        return Ok(());
+    };
+    let Some(processor) = environment.processor(name) else {
         return Err(Ineligible::ProcessorMissing(name));
+    };
+
+    // The processor has to be able to read every format that was dragged.
+    for format in selection.formats() {
+        if !processor.can_read(format) {
+            return Err(Ineligible::UnreadableFormat(format.to_string()));
+        }
+    }
+
+    // And it has to be able to write what the operation is to produce.
+    match operation.output {
+        Output::Beside(format) => {
+            if !processor.can_write(format) {
+                return Err(Ineligible::UnwritableFormat(format.to_string()));
+            }
+        }
+        // The result keeps the format of the file it was given.
+        Output::BesideAsInput | Output::InPlace => {
+            for format in selection.formats() {
+                if !processor.can_write(format) {
+                    return Err(Ineligible::UnwritableFormat(format.to_string()));
+                }
+            }
+        }
+        Output::Nothing => {}
     }
     Ok(())
 }
@@ -537,21 +708,6 @@ pub fn eligible_operations_from<'a>(
         .collect()
 }
 
-/// Whether a chosen operation may be run for the files of a drag.
-///
-/// The operation is found by its name, which is its identity, and it is
-/// checked again against the files: what is on the screen must be what is
-/// run. A choice that was made before the files changed is not run.
-pub fn may_run(
-    id: &str,
-    selection: &Selection,
-    environment: &Environment,
-) -> Result<&'static Operation, Ineligible> {
-    let operation = operation_by_id(id).ok_or(Ineligible::UnknownOperation)?;
-    eligibility(operation, selection, environment)?;
-    Ok(operation)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -609,18 +765,36 @@ mod tests {
             icon: IconKind::Picture,
             mode: RadialMode::Convert,
             categories: &[FileKind::Image],
-            multiple: true,
+            batch: Batch::Several,
             folders: false,
+            output: Output::Nothing,
+            collision: Collision::Ask,
             implemented: true,
             requires: Requirement::None,
-            destructive: false,
         }
     }
 
     /// The environment of a test where everything is there.
     fn everything() -> Environment {
         Environment {
-            processors: vec!["encode/png".to_string()],
+            processors: vec![Processor {
+                name: "image".to_string(),
+                reads: vec![
+                    "png".to_string(),
+                    "jpeg".to_string(),
+                    "bmp".to_string(),
+                    "tiff".to_string(),
+                    "gif".to_string(),
+                    "heif".to_string(),
+                ],
+                writes: vec![
+                    "png".to_string(),
+                    "jpeg".to_string(),
+                    "bmp".to_string(),
+                    "tiff".to_string(),
+                    "heif".to_string(),
+                ],
+            }],
         }
     }
 
@@ -633,11 +807,12 @@ mod tests {
             icon: IconKind::Picture,
             mode: RadialMode::Convert,
             categories: &[FileKind::Image],
-            multiple: true,
+            batch: Batch::Several,
             folders: false,
+            output: Output::Beside("png"),
+            collision: Collision::Rename,
             implemented: true,
             requires: Requirement::None,
-            destructive: false,
         }
     }
 
@@ -756,7 +931,7 @@ mod tests {
         let folder = TempFolder::new("no-processor");
         let selection = pictures(&folder, 1);
         let mut operation = ready("test.needs-processor");
-        operation.requires = Requirement::Processor("encode/png");
+        operation.requires = Requirement::Processor("image");
         let operations = [operation];
         // The processor is not there.
         let menu = menu_from(&operations, &selection, &Environment::none());
@@ -780,7 +955,7 @@ mod tests {
         let folder = TempFolder::new("one-at-a-time");
         let selection = pictures(&folder, 2);
         let mut operation = ready("test.one-at-a-time");
-        operation.multiple = false;
+        operation.batch = Batch::One;
         let operations = [operation];
         let menu = menu_from(&operations, &selection, &everything());
         assert!(menu.segments(RadialMode::Convert).is_empty());
@@ -818,34 +993,7 @@ mod tests {
         assert!(menu.segments(RadialMode::Convert).is_empty());
     }
 
-    // ------------------------------------------------------ running an action
-
-    #[test]
-    fn a_choice_that_is_no_longer_valid_is_not_run() {
-        let folder = TempFolder::new("stale");
-        // The choice was made for a picture.
-        let pictures_selection = pictures(&folder, 1);
-        // The files have changed since.
-        let papers = Selection::inspect(&[folder.file("paper.pdf")]);
-        // The operation is looked up by its name and is checked again.
-        let result = may_run("convert.png", &papers, &everything());
-        assert!(result.is_err(), "a stale choice was run");
-        // For the files it was made for, it is fine.
-        let result = may_run("convert.png", &pictures_selection, &everything());
-        assert!(
-            result.is_err(),
-            "an operation that is not implemented was run"
-        );
-    }
-
-    #[test]
-    fn a_choice_of_an_operation_that_does_not_exist_is_not_run() {
-        let folder = TempFolder::new("unknown");
-        let selection = pictures(&folder, 1);
-        let result = may_run("there.is.no.such.operation", &selection, &everything());
-        assert_eq!(result.err(), Some(Ineligible::UnknownOperation));
-    }
-
+    // ------------------------------------------------------ the rules of the menu
     // ------------------------------------------------------- the registry
 
     #[test]
@@ -891,11 +1039,13 @@ mod tests {
     #[test]
     fn the_operations_that_change_the_original_say_so() {
         for entry in OPERATIONS {
-            if entry.id == "actions.rename" {
-                assert!(entry.destructive, "renaming changes the original");
+            // These two change the file they are given: the one renames it and
+            // the other edits what is written in it.
+            if entry.id == "actions.rename" || entry.id == "tools.metadata" {
+                assert!(entry.is_destructive(), "{} changes the original", entry.id);
             } else {
                 assert!(
-                    !entry.destructive,
+                    !entry.is_destructive(),
                     "{} says it changes the original",
                     entry.id
                 );
@@ -970,11 +1120,11 @@ mod tests {
         let folder = TempFolder::new("processor");
         let selection = Selection::inspect(&[folder.file("photo.png")]);
         let mut entry = operation("test");
-        entry.requires = Requirement::Processor("encode/png");
+        entry.requires = Requirement::Processor("image");
         // The processor is not there.
         assert_eq!(
             eligibility(&entry, &selection, &Environment::none()),
-            Err(Ineligible::ProcessorMissing("encode/png"))
+            Err(Ineligible::ProcessorMissing("image"))
         );
         // It is.
         assert_eq!(eligibility(&entry, &selection, &everything()), Ok(()));
@@ -997,7 +1147,7 @@ mod tests {
         let folder = TempFolder::new("single-only");
         let selection = Selection::inspect(&[folder.file("one.png"), folder.file("two.png")]);
         let mut entry = operation("test");
-        entry.multiple = false;
+        entry.batch = Batch::One;
         assert_eq!(
             eligibility(&entry, &selection, &everything()),
             Err(Ineligible::SingleItemOnly)
@@ -1012,8 +1162,130 @@ mod tests {
         let folder = TempFolder::new("several-ok");
         let selection = Selection::inspect(&[folder.file("one.png"), folder.file("two.png")]);
         let entry = operation("test");
-        assert!(entry.multiple);
+        assert_eq!(entry.batch, Batch::Several);
         assert_eq!(eligibility(&entry, &selection, &everything()), Ok(()));
+    }
+
+    // ------------------------------------------------- the capability of a
+    // processor
+
+    #[test]
+    fn a_processor_says_what_it_can_read_and_write() {
+        let processor = Processor {
+            name: "image".to_string(),
+            reads: vec!["png".to_string(), "jpeg".to_string()],
+            writes: vec!["png".to_string()],
+        };
+        assert!(processor.can_read("png"));
+        assert!(processor.can_read("jpeg"));
+        assert!(!processor.can_read("webp"));
+        assert!(processor.can_write("png"));
+        assert!(!processor.can_write("jpeg"));
+    }
+
+    #[test]
+    fn a_format_the_processor_cannot_read_is_not_offered() {
+        let folder = TempFolder::new("cannot-read");
+        let selection = Selection::inspect(&[folder.file("photo.webp")]);
+        let mut entry = operation("test");
+        entry.requires = Requirement::Processor("image");
+        // The image processor reads png and jpeg, but not webp.
+        assert_eq!(
+            eligibility(&entry, &selection, &everything()),
+            Err(Ineligible::UnreadableFormat("webp".to_string()))
+        );
+    }
+
+    #[test]
+    fn a_format_the_processor_cannot_write_is_not_offered() {
+        let folder = TempFolder::new("cannot-write");
+        let selection = Selection::inspect(&[folder.file("photo.png")]);
+        let mut entry = operation("test");
+        entry.requires = Requirement::Processor("image");
+        entry.output = Output::Beside("webp");
+        // The image processor writes png, but not webp.
+        assert_eq!(
+            eligibility(&entry, &selection, &everything()),
+            Err(Ineligible::UnwritableFormat("webp".to_string()))
+        );
+    }
+
+    #[test]
+    fn a_result_that_keeps_the_format_needs_a_processor_that_can_write_it() {
+        let folder = TempFolder::new("keeps-format");
+        // The image processor reads a gif but cannot write one.
+        let selection = Selection::inspect(&[folder.file("photo.gif")]);
+        let mut entry = operation("test");
+        entry.requires = Requirement::Processor("image");
+        entry.output = Output::BesideAsInput;
+        assert_eq!(
+            eligibility(&entry, &selection, &everything()),
+            Err(Ineligible::UnwritableFormat("gif".to_string()))
+        );
+    }
+
+    #[test]
+    fn a_processor_that_reads_and_writes_the_format_is_offered() {
+        let folder = TempFolder::new("can-do-it");
+        let selection = Selection::inspect(&[folder.file("photo.png")]);
+        let mut entry = operation("test");
+        entry.requires = Requirement::Processor("image");
+        entry.output = Output::Beside("png");
+        assert_eq!(eligibility(&entry, &selection, &everything()), Ok(()));
+    }
+
+    // ---------------------------------------------------- the shape of the
+    // selection
+
+    #[test]
+    fn an_operation_that_needs_alike_items_is_not_offered_a_mixed_selection() {
+        let folder = TempFolder::new("alike");
+        let selection = Selection::inspect(&[folder.file("one.png"), folder.file("two.pdf")]);
+        let mut entry = operation("test");
+        entry.batch = Batch::SeveralAlike;
+        // The kinds are not alike, so the operation is not offered.
+        assert_eq!(
+            eligibility(&entry, &selection, &everything()),
+            Err(Ineligible::MixedKinds)
+        );
+    }
+
+    #[test]
+    fn an_operation_that_needs_alike_items_is_offered_alike_items() {
+        let folder = TempFolder::new("alike-ok");
+        let selection = Selection::inspect(&[folder.file("one.png"), folder.file("two.png")]);
+        let mut entry = operation("test");
+        entry.batch = Batch::SeveralAlike;
+        assert_eq!(eligibility(&entry, &selection, &everything()), Ok(()));
+    }
+
+    // ------------------------------------------- the actions without a backend
+
+    #[test]
+    fn an_action_the_program_does_itself_needs_no_processor() {
+        let folder = TempFolder::new("universal");
+        let selection = Selection::inspect(&[folder.file("photo.png")]);
+        let mut entry = operation("test");
+        entry.requires = Requirement::None;
+        // There is no processor at all, and the action is still offered.
+        assert_eq!(
+            eligibility(&entry, &selection, &Environment::none()),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn the_actions_of_the_registry_that_need_no_backend_are_the_file_ones() {
+        for entry in OPERATIONS {
+            let needs_no_backend = matches!(entry.requires, Requirement::None);
+            if entry.mode == RadialMode::Actions {
+                assert!(
+                    needs_no_backend || entry.id == "actions.zip",
+                    "{} is a file action and should need no conversion backend",
+                    entry.id
+                );
+            }
+        }
     }
 
     #[test]
@@ -1094,7 +1366,11 @@ mod tests {
             processors: OPERATIONS
                 .iter()
                 .filter_map(|entry| match entry.requires {
-                    Requirement::Processor(name) => Some(name.to_string()),
+                    Requirement::Processor(name) => Some(Processor {
+                        name: name.to_string(),
+                        reads: Vec::new(),
+                        writes: Vec::new(),
+                    }),
                     Requirement::None => None,
                 })
                 .collect(),

@@ -106,8 +106,10 @@ else is using the machine.
 
 ## The documents
 
-- [`docs/INTERACTION.md`](docs/INTERACTION.md) — the gesture, the states, the
+- [`docs/INTERACTION.md`](docs/INTERACTION.md) - the gesture, the states, the
   keys, the modifier mapping.
+- [`docs/CAPABILITIES.md`](docs/CAPABILITIES.md) - what the program can do,
+  what the machine can do, and how an operation is run.
 - [`docs/DRAG-INTEGRATION.md`](docs/DRAG-INTEGRATION.md) — how a Windows
   Explorer drag is found, what was measured, and what the limits are.
 - [`docs/MILESTONE-1-REPORT.md`](docs/MILESTONE-1-REPORT.md) — what was built,

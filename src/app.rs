@@ -26,6 +26,7 @@ use crate::platform::windows::overlay::{Overlay, OverlayEvent};
 use crate::platform::windows::shellselection;
 use crate::radial::actions::{ModifierMap, Modifiers, RadialMode, Segment};
 use crate::radial::controller::RadialController;
+use crate::radial::execution;
 use crate::radial::geometry::{Point, RadialGeometry, WheelPlacement};
 use crate::radial::registry::{self, Environment};
 use crate::radial::selection::Selection;
@@ -417,30 +418,45 @@ impl App {
         // against the files of the drag: what is on the screen must be what
         // is run. A choice that was made a moment ago, before the files
         // changed, is not run.
-        match registry::may_run(&segment.id, &self.selection, &self.environment()) {
-            Ok(operation) => diagnostics::log(
+        let request = execution::Request {
+            operation: segment.id.clone(),
+            inputs: files.to_vec(),
+        };
+        let outcome = execution::run(&request, &self.selection, &self.environment());
+        match &outcome {
+            execution::Outcome::Succeeded { outputs } => diagnostics::log(
                 Level::Info,
                 "action",
                 &format!(
-                    "the operation {} can be run, and it would {} the files it is given (the selection was {})",
-                    operation.id,
-                    if operation.destructive {
-                        "change"
-                    } else {
-                        "leave"
-                    },
-                    self.selection.shape().name(),
-                ),
-            ),
-            Err(reason) => diagnostics::log(
-                Level::Warn,
-                "action",
-                &format!(
-                    "the operation {} was not run: {}",
+                    "the operation {} wrote {} file(s)",
                     segment.id,
-                    reason.name()
+                    outputs.len()
                 ),
             ),
+            execution::Outcome::Cancelled => diagnostics::log(
+                Level::Info,
+                "action",
+                &format!("the operation {} was cancelled", segment.id),
+            ),
+            execution::Outcome::Failed { reason } => {
+                // What the operation would have done to the files is said as
+                // well: an operation that writes over the original is the one
+                // that changes the user's files.
+                let changes = registry::operation_by_id(&segment.id)
+                    .map(|operation| operation.is_destructive())
+                    .unwrap_or(false);
+                diagnostics::log(
+                    Level::Warn,
+                    "action",
+                    &format!(
+                        "the operation {} was not run: {} (it would {} the files, and the selection was {})",
+                        segment.id,
+                        reason.name(),
+                        if changes { "change" } else { "leave" },
+                        self.selection.shape().name(),
+                    ),
+                );
+            }
         }
     }
 
