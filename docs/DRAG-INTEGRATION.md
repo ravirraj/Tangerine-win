@@ -189,7 +189,62 @@ leak and no input for anyone else to swallow.
    drag started in. The window is found on the press, when Explorer is idle,
    and the selection is read when the drag has begun.
 5. **The choice.** The drop arrives in the `Drop` callback, and the segment
-   under the pointer is taken.
+   under the point of the drop is taken.
+
+### The release, and the place of the wheel
+
+The release is the one moment where three things happen at once: the mouse
+comes up, Windows hands over the drop, and the wheel goes away. They have to
+come in the right order, or the wheel moves.
+
+**The wheel does not move.** It is put in one place when it opens, and it stays
+in that place until it is gone. The place comes from the gesture, which the
+controller knows. When the gesture is over the controller forgets it, and the
+wheel must not fall back on the pointer: the pointer is somewhere else by
+then, and the wheel would jump there on its way out. This was a real bug: the
+wheel shifted by the distance between its middle and the point of the drop,
+and then faded away.
+
+**The drop is handled before the end of the drag.** Windows says where the
+mouse was let go of, and that is a better answer than the pointer, which the
+drag itself may have moved about. So the drop is looked at first.
+
+**The end of the drag waits for the drop.** Windows hands the drop over a
+moment after the mouse comes up, and the application only notices the mouse
+coming up when it looks, which is up to a frame later. If the wheel hid itself
+right away, it would stop being a drop target before the drop arrived, and
+the drop would be lost. So the end of the drag waits a few frames for it. The
+drop is normally there on the very next frame.
+
+**The drop is taken once.** It has a flag of its own, and that flag is taken
+exactly once, so that a second callback cannot choose a second time. A drop
+that arrives after the wheel has gone is ignored, and the log says so.
+
+**The choice is made with the files of the drag.** The segment and the file
+list are taken before the wheel is hidden, and the action runs on the files
+that were being dragged.
+
+What the log says when a file is released over a choice:
+
+```
+[drag] the drag was dropped at (301, 130)
+[drag] the drag was dropped on the wheel
+[drag] the drop landed at Some(Point { x: 301.0, y: 130.0 }), on segment Some(0)
+[state] WheelVisible -> SelectionPending (event)
+[action] placeholder: PNG (convert.png) in the convert wheel on 1 file(s) ...
+[overlay] the overlay was hidden
+```
+
+And what it says when the file is released on the hub, where there is no
+choice:
+
+```
+[drag] the drag was dropped at (271, 225)
+[drag] the drag was dropped on the wheel
+[drag] the drop landed at Some(Point { x: 271.0, y: 225.0 }), on segment None
+```
+
+Nothing is run, and the wheel stays up and takes clicks.
 
 ### Every drag is a session
 

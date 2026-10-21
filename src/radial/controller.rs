@@ -826,4 +826,40 @@ mod tests {
         c.handle(InteractionEvent::DragPayloadResolved { paths: Vec::new() });
         assert!(c.files().is_empty());
     }
+
+    #[test]
+    fn a_drop_on_the_hub_leaves_the_wheel_up_and_runs_nothing() {
+        let mut c = controller();
+        open_wheel(&mut c);
+        // The pointer was over a segment a moment ago.
+        c.handle(InteractionEvent::SegmentEntered(Some(2)));
+        assert_eq!(c.highlighted(), Some(2));
+
+        // The drop landed on the hub, so there is no segment under it and
+        // the lit one is put out.
+        c.handle(InteractionEvent::SegmentEntered(None));
+        assert_eq!(c.highlighted(), None);
+
+        // The mouse came up, and nothing is run: the wheel stays up and takes
+        // clicks instead.
+        let effects = c.handle(InteractionEvent::DragEnded);
+        assert_eq!(c.state(), InteractionState::WheelVisible);
+        assert!(c.is_interactive());
+        assert_eq!(effects, vec![Effect::UpdateWheel]);
+    }
+
+    #[test]
+    fn a_drop_on_a_segment_chooses_it_and_runs_nothing_else() {
+        let mut c = controller();
+        open_wheel(&mut c);
+        c.handle(InteractionEvent::SegmentEntered(Some(2)));
+        c.handle(InteractionEvent::SegmentEntered(Some(4)));
+
+        // The drop landed on the segment that is lit, and the choice is made.
+        let effects = c.handle(InteractionEvent::SegmentSelected { index: 4 });
+        assert_eq!(c.state(), InteractionState::SelectionPending);
+        assert_eq!(effects.len(), 2);
+        assert_eq!(effects[0], Effect::HideWheel);
+        assert!(matches!(effects[1], Effect::Run { .. }));
+    }
 }

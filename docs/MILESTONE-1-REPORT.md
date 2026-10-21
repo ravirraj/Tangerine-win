@@ -258,6 +258,79 @@ mouse and reads what the program logged. Nothing is mocked.
 
 ---
 
+## 1d. The wheel jumped to one side as it went away
+
+This was reported after the file list was fixed: when a file is released over
+a choice, the wheel shifts slightly to one side immediately before it
+disappears.
+
+### The root cause
+
+The wheel is put in one place when it opens, and the place comes from the
+gesture. When the choice is made, the controller finishes the interaction and
+**forgets the place**: `reset()` clears the centre.
+
+The wheel is still fading out at that point, and the fading is drawn every
+frame. Every frame the wheel was put in place again, and the place came from
+the controller — which no longer knew it — so the **pointer** was used
+instead. The pointer was at the point of the drop, and the wheel was in the
+middle. So the wheel was moved there, and then it faded away.
+
+The log said so, plainly:
+
+```
+[overlay] the wheel is placed at (49, 11), 380 by 380 pixels, centre Point { x: 239.0, y: 201.0 }
+[action] placeholder: JPEG (convert.jpeg) in the convert wheel on 1 file(s) ...
+[overlay] the wheel is being placed at Point { x: 309.0, y: 143.0 } (the controller says None, ...)
+[overlay] the window was moved to (119, 0), 380 by 380 pixels, and is now at (119, 0, 499, 380)
+[overlay] the overlay was hidden
+```
+
+The wheel was in the middle at 239, 201 and was moved to 309, 143: 70 pixels
+to the right and 58 pixels up, which is where the file was let go of.
+
+There was a second fault behind it. The `Drop` callback clears the "a drag is
+over the wheel" flag, and the application looked for the drop behind that
+flag, so **the drop was never seen at all**. The choice was always made from
+the segment that was lit, and the drop was lost.
+
+And a third: the application only notices the mouse coming up when it looks,
+which is up to a frame later, and by then it had already stopped being a drop
+target. Explorer's call to `Drop` then found nothing to talk to, and the drop
+was lost for good.
+
+### What was changed
+
+- `src/app.rs` — the wheel is put in one place and stays there. The place
+  comes from the gesture; when the gesture is over, the wheel keeps the place
+  it has, and the pointer is never used to move it.
+- `src/app.rs` — the drop is handled before the end of the drag, and the
+  segment is found from the point of the drop, in screen pixels, with the
+  wheel's own geometry. The drop is taken once and only once.
+- `src/app.rs` — when the mouse comes up over the wheel, the end of the drag
+  waits a few frames for the drop, so that the wheel is still a drop target
+  when Windows hands it over. The drop is normally there on the next frame.
+- `src/app.rs` — a drop that lands on the hub lights nothing, so the end of
+  the drag cannot choose the segment that was lit before it.
+- `src/radial/controller.rs` — the choice and the file list are taken before
+  the wheel is hidden, and a drop on the hub runs nothing.
+
+### The checks
+
+`tests/windows-integration.ps1` drives a real Explorer window with a real
+mouse. Two cases were added for this:
+
+| Case | Result |
+| --- | --- |
+| A drag released over a choice | The wheel is moved **once**, when it opens, and never again; the drop chooses the segment under the point of the drop, and the action runs on the files of the drag |
+| A drag released on the hub | Nothing is run, and the wheel stays up |
+
+The whole suite was run three times: ten checks, all of them passed, and the
+fallback — taking the segment that is lit when the drop does not come — was
+never needed.
+
+---
+
 ## 2. Files created or modified
 
 Nothing existed before this milestone except `reference/Open-Tangerine-main.zip`.

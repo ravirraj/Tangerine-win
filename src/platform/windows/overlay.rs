@@ -276,6 +276,14 @@ impl Overlay {
             );
         }
         self.placed.set(true);
+        crate::diagnostics::log(
+            crate::diagnostics::Level::Info,
+            "overlay",
+            &format!(
+                "the window was moved to ({x}, {y}), {width} by {height} pixels, and is now at {:?}",
+                self.window_rect()
+            ),
+        );
     }
 
     /// Shows the window without giving it the focus.

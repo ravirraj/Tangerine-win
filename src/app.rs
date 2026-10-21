@@ -150,7 +150,27 @@ struct App {
     /// It is found while Explorer is idle, because the shell has to wait for
     /// Explorer while a drag is going.
     shell_window: Option<shellselection::Window>,
+    /// The end of a drag that is waiting for the drop.
+    ///
+    /// Windows says where the mouse was let go of a moment after the mouse
+    /// comes up, and that is a better answer than the pointer, which the drag
+    /// may have moved about. So the choice waits for the drop.
+    pending_release: Option<PendingRelease>,
 }
+
+/// The end of a drag that has not been acted on yet.
+struct PendingRelease {
+    /// How many frames it has been waiting.
+    frames: u32,
+}
+
+/// How many frames the choice waits for the drop before it takes the segment
+/// that is lit instead.
+///
+/// The drop is handed over within a frame of the mouse coming up, so this is
+/// a long wait in practice. It is only reached when the drop does not come at
+/// all.
+const RELEASE_WAIT_FRAMES: u32 = 4;
 
 impl App {
     fn new(options: Options) -> Result<Self, String> {
@@ -215,6 +235,7 @@ impl App {
             _instance: Some(instance),
             session: DragSession::new(),
             shell_window: None,
+            pending_release: None,
         })
     }
 
@@ -452,10 +473,15 @@ impl App {
         self.last_tick = now;
 
         self.handle_keys();
+        // The drop comes before the end of the drag. Windows hands over the
+        // place the mouse was let go of, and that is a better answer than the
+        // pointer, which the drag may have moved about. The end of the drag
+        // is only the end of the drag when there was no drop.
+        self.handle_drop();
         self.handle_drag();
+        self.handle_release();
         self.handle_modifiers();
         self.handle_scroll();
-        self.handle_drop();
         self.handle_hover();
         self.update_visuals(delta);
 
@@ -517,20 +543,39 @@ impl App {
             }
         }
 
-        if !state.over.get() {
+        // The drop itself. The `Drop` callback clears the "a drag is over the
+        // wheel" flag, so the drop is not looked for there: it has a flag of
+        // its own, and that flag is taken exactly once, so that a second
+        // callback cannot choose a second time.
+        if !state.take_drop() {
             return;
         }
-
-        if state.take_drop() {
-            diagnostics::log(Level::Info, "drag", "the drag was dropped on the wheel");
-            if self.controller.state() == InteractionState::WheelVisible {
-                // The drag says where the drop landed.
-                let index = self.hover_point().and_then(|point| self.segment_at(point));
-                if let Some(index) = index {
-                    self.dispatch(InteractionEvent::SegmentEntered(Some(index)));
-                    self.dispatch(InteractionEvent::SegmentSelected { index });
-                }
-            }
+        diagnostics::log(Level::Info, "drag", "the drag was dropped on the wheel");
+        // The drop is the choice, so the end of the drag no longer has to be
+        // acted on.
+        self.pending_release = None;
+        if self.controller.state() != InteractionState::WheelVisible {
+            // The wheel is not up any more. The drop was late, and there is
+            // nothing left to choose.
+            return;
+        }
+        // The drag says where the drop landed. That is the truth: the drag
+        // owns the pointer while it runs and may have moved it about, and the
+        // mouse may already be somewhere else by the time this is read.
+        let point = state.screen_point().or_else(input::cursor_position);
+        let index = point.and_then(|point| self.segment_at(point));
+        diagnostics::log(
+            Level::Info,
+            "drag",
+            &format!("the drop landed at {point:?}, on segment {index:?}"),
+        );
+        // The segment under the drop is lit, whether there is one or not, so
+        // that the end of the drag cannot choose another one.
+        self.dispatch(InteractionEvent::SegmentEntered(index));
+        if let Some(index) = index {
+            // The choice is made with the files that belong to this drag, and
+            // both are taken before the wheel is hidden.
+            self.dispatch(InteractionEvent::SegmentSelected { index });
         }
     }
 
@@ -542,6 +587,8 @@ impl App {
     /// show the files of an earlier one.
     fn begin_session(&mut self, session: u64, source: HWND) {
         self.session.begin(session, source);
+        // A new gesture makes the end of an old one irrelevant.
+        self.pending_release = None;
     }
 
     /// Asks the shell what the current drag is carrying.
@@ -581,6 +628,29 @@ impl App {
         // the files of another.
         self.session.resolve(session, resolution);
         self.session.paths().to_vec()
+    }
+
+    /// Acts on the end of a drag that has been waiting for the drop.
+    ///
+    /// The drop is handed over within a frame of the mouse coming up, so the
+    /// wait is normally over before this is reached. When the drop does not
+    /// come at all, the segment that is lit is taken instead, and the wheel
+    /// carries on as it was.
+    fn handle_release(&mut self) {
+        let Some(waiting) = &mut self.pending_release else {
+            return;
+        };
+        waiting.frames += 1;
+        if waiting.frames < RELEASE_WAIT_FRAMES {
+            return;
+        }
+        self.pending_release = None;
+        diagnostics::log(
+            Level::Debug,
+            "drag",
+            "the drop did not come, so the segment that is lit is taken",
+        );
+        self.dispatch(InteractionEvent::DragEnded);
     }
 
     /// Asks the shell once more whether the files of this drag have changed.
@@ -723,7 +793,22 @@ impl App {
             }
             DragEvent::Ended { session } => {
                 diagnostics::log(Level::Info, "drag", &format!("drag {session} ended"));
-                self.dispatch(InteractionEvent::DragEnded);
+                if self.drop_state.over.get() {
+                    // The mouse came up while the drag was over the wheel.
+                    // Windows hands the drop over a moment later, and it says
+                    // where the mouse was let go of, which is a better answer
+                    // than the pointer: the drag may have moved the pointer
+                    // about. So the end of the drag waits for the drop, and
+                    // the wheel stays a drop target until then.
+                    self.pending_release = Some(PendingRelease { frames: 0 });
+                    diagnostics::log(
+                        Level::Debug,
+                        "drag",
+                        "the end of the drag is waiting for the drop",
+                    );
+                } else {
+                    self.dispatch(InteractionEvent::DragEnded);
+                }
             }
             DragEvent::Rejected { reason } => {
                 if !was_armed && left_down && !self.press_reported {
@@ -944,12 +1029,6 @@ impl App {
         drop(timer);
     }
 
-    /// Puts the wheel on screen around the cursor, inside the monitor.
-    /// Puts the wheel on screen around the pointer, inside the monitor.
-    ///
-    /// The wheel is always placed, even when the controller has no centre yet:
-    /// a window that is never placed stays in the corner of the screen, and
-    /// `UpdateLayeredWindow` would draw the wheel there.
     /// Works out where the wheel is, and puts it there.
     ///
     /// The wheel is always placed, even when the controller has no centre yet:
@@ -959,18 +1038,34 @@ impl App {
     /// The placement holds the centre and the shape of the wheel in physical
     /// pixels. The drawing and the pointer test both use it, so that the wheel
     /// lights up under the pointer and not somewhere else.
+    ///
+    /// The wheel is put in one place and stays there. The place comes from
+    /// the gesture, which the controller knows. Once the gesture is over the
+    /// controller forgets it, and then the wheel must not move: it is on its
+    /// way out, and moving it now would make it jump to wherever the pointer
+    /// happens to be.
     fn ensure_placement(&mut self) {
-        let centre = self
-            .controller
-            .center()
-            .or_else(input::cursor_position)
-            .unwrap_or(Point::new(0.0, 0.0));
+        let Some(centre) = wheel_centre(
+            self.controller.center(),
+            input::cursor_position(),
+            self.placement.is_some(),
+        ) else {
+            return;
+        };
 
         // The wheel does not move once it has opened, so the work of placing it
         // is only done when the place really changes.
         if self.placed_centre == Some(centre) && self.placement.is_some() {
             return;
         }
+        diagnostics::log(
+            Level::Info,
+            "overlay",
+            &format!(
+                "the wheel is being placed at {centre:?}, it was at {:?}",
+                self.placed_centre,
+            ),
+        );
         self.placed_centre = Some(centre);
 
         let disc = DISC_SIZE * self.scale;
@@ -1006,6 +1101,30 @@ impl App {
                 ),
             );
         }
+    }
+}
+
+/// Where the wheel goes, and whether it may move.
+///
+/// The wheel is put in one place and stays there for as long as it is on the
+/// screen. The place comes from the gesture, which the controller knows while
+/// the gesture lasts.
+///
+/// When the gesture is over the controller forgets where the wheel was, and
+/// then the wheel must not move: it is on its way out, and moving it now would
+/// make it jump to wherever the pointer happens to be. That is why the
+/// pointer is only a guess, and only for a wheel that has never been placed.
+fn wheel_centre(
+    gesture: Option<Point>,
+    pointer: Option<Point>,
+    already_placed: bool,
+) -> Option<Point> {
+    match gesture {
+        Some(centre) => Some(centre),
+        // The gesture is over. The wheel stays where it is.
+        None if already_placed => None,
+        // The wheel has never been placed, so the pointer is the best guess.
+        None => pointer,
     }
 }
 
@@ -1182,5 +1301,46 @@ impl FrameTimer {
             let _ = CancelWaitableTimer(self.handle);
             let _ = CloseHandle(self.handle);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_wheel_follows_the_gesture_while_the_gesture_lasts() {
+        let centre = Point::new(400.0, 300.0);
+        assert_eq!(
+            wheel_centre(Some(centre), Some(Point::new(900.0, 100.0)), true),
+            Some(centre)
+        );
+    }
+
+    #[test]
+    fn the_wheel_does_not_move_when_the_gesture_is_over() {
+        // The gesture is over, so the controller has forgotten where the wheel
+        // was. The pointer has moved on, and the wheel must not follow it: it
+        // is on its way out, and moving it now would make it jump.
+        assert_eq!(
+            wheel_centre(None, Some(Point::new(900.0, 100.0)), true),
+            None
+        );
+    }
+
+    #[test]
+    fn a_wheel_that_was_never_placed_uses_the_pointer() {
+        // There is nowhere to keep the wheel yet, so the pointer is the best
+        // guess. A window that is never placed stays in the corner of the
+        // screen.
+        assert_eq!(
+            wheel_centre(None, Some(Point::new(900.0, 100.0)), false),
+            Some(Point::new(900.0, 100.0))
+        );
+    }
+
+    #[test]
+    fn a_wheel_with_nothing_to_go_by_is_not_placed() {
+        assert_eq!(wheel_centre(None, None, false), None);
     }
 }

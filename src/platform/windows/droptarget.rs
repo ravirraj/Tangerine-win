@@ -110,6 +110,11 @@ impl IDropTarget_Impl for DropTargetImpl_Impl {
         point: &POINTL,
         effect: *mut DROPEFFECT,
     ) -> windows::core::Result<()> {
+        crate::diagnostics::log(
+            crate::diagnostics::Level::Info,
+            "drag",
+            &format!("the drag was dropped at ({}, {})", point.x, point.y),
+        );
         *self.state.paths.borrow_mut() = match data.as_ref() {
             Some(object) => read_file_paths(object),
             None => Vec::new(),

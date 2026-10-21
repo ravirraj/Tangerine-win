@@ -119,6 +119,12 @@ function Stop-App($process) {
         if (-not $process.HasExited) { $process.Kill() }
     }
     Start-Sleep -Milliseconds 400
+    # Every case keeps its own log, so that one case cannot hide what
+    # another one did.
+    $err = Join-Path $root "ot-stderr.txt"
+    if (Test-Path $err) {
+        Copy-Item $err (Join-Path $root "ot-stderr-$script:CaseName.txt") -Force
+    }
 }
 
 function Get-AppLog {
@@ -201,7 +207,11 @@ function Select-Item($titlePattern, $name, [bool]$control) {
 
 # ------------------------------------------------------------------ the cases
 
+# The name of the case that is running, so that every case keeps its own log.
+$script:CaseName = "case"
+
 function Case-OneFile {
+    $script:CaseName = "one"
     Say ""
     Say "=== case 1: one file ==="
     $folder = Join-Path $root "itest-one"
@@ -271,6 +281,7 @@ function Case-OneFile {
 }
 
 function Case-MultipleFiles {
+    $script:CaseName = "many"
     Say ""
     Say "=== case 2: several files ==="
     $folder = Join-Path $root "itest-many"
@@ -322,6 +333,7 @@ function Case-MultipleFiles {
 }
 
 function Case-Consecutive {
+    $script:CaseName = "consecutive"
     Say ""
     Say "=== case 3: one drag after another, with different files ==="
     $folder = Join-Path $root "itest-consecutive"
@@ -393,6 +405,7 @@ function Case-Consecutive {
 }
 
 function Case-Cancelled {
+    $script:CaseName = "cancel"
     Say ""
     Say "=== case 4: a drag that is cancelled ==="
     $folder = Join-Path $root "itest-cancel"
@@ -454,6 +467,7 @@ function Case-Cancelled {
 }
 
 function Case-Unselected {
+    $script:CaseName = "unselected"
     Say ""
     Say "=== case 6: dragging a file that was not selected before ==="
     $folder = Join-Path $root "itest-unselected"
@@ -512,7 +526,160 @@ function Case-Unselected {
     }
 }
 
+function Case-WheelStays {
+    $script:CaseName = "stays"
+    Say ""
+    Say "=== case 7: the wheel does not move when the drag is released ==="
+    $folder = Join-Path $root "itest-stays"
+    if (Test-Path $folder) { Remove-Item -Recurse -Force $folder }
+    New-Item -ItemType Directory -Force -Path $folder | Out-Null
+    Set-Content (Join-Path $folder "stays.txt") "hello"
+
+    Get-Process explorer -ErrorAction SilentlyContinue | ForEach-Object { $_.CloseMainWindow() | Out-Null }
+    Start-Sleep -Seconds 2
+    Minimize-Terminal
+    Start-Process explorer.exe -ArgumentList "/e,`"$folder`""
+    Start-Sleep -Seconds 4
+
+    $window = Get-ExplorerWindow "itest-stays*"
+    if ($null -eq $window) { Say "FAIL: the Explorer window did not open"; return }
+    $hwnd = [IntPtr]$window.Current.NativeWindowHandle
+    [void][Native]::ShowWindow($hwnd, 3)
+    [void][Native]::SetForegroundWindow($hwnd)
+    Start-Sleep -Seconds 2
+    Minimize-Terminal
+
+    $at = Select-Item "itest-stays*" "stays.txt" $false
+    Minimize-Terminal
+    [void][Native]::SetForegroundWindow($hwnd)
+    Start-Sleep -Milliseconds 500
+
+    $process = Start-App 25
+    Minimize-Terminal
+    [void][Native]::SetForegroundWindow($hwnd)
+    Start-Sleep -Milliseconds 500
+
+    # The wheel opens, and the drag is released over a segment of it.
+    [void][Native]::SetCursorPos($at[0], $at[1])
+    Start-Sleep -Milliseconds 500
+    [Native]::mouse_event([Native]::LEFTDOWN, 0, 0, 0, [UIntPtr]::Zero)
+    Start-Sleep -Milliseconds 350
+    for ($i = 1; $i -le 10; $i++) {
+        [void][Native]::SetCursorPos(($at[0] + $i * 4), ($at[1] + $i * 3))
+        Start-Sleep -Milliseconds 45
+    }
+    [Native]::keybd_event(0x10, 0, 0, [UIntPtr]::Zero)
+    Start-Sleep -Milliseconds 900
+    for ($i = 11; $i -le 18; $i++) {
+        [void][Native]::SetCursorPos(($at[0] + $i * 4), ($at[1] + $i * 3))
+        Start-Sleep -Milliseconds 55
+    }
+    Start-Sleep -Milliseconds 700
+
+    # Onto a segment of the wheel: up and to the right of the pointer.
+    $centreX = $at[0] + 18 * 4
+    $centreY = $at[1] + 18 * 3
+    [void][Native]::SetCursorPos(($centreX + 30), ($centreY - 95))
+    Start-Sleep -Milliseconds 800
+
+    [Native]::keybd_event(0x10, 0, [Native]::KEYUP, [UIntPtr]::Zero)
+    Start-Sleep -Milliseconds 200
+    [Native]::mouse_event([Native]::LEFTUP, 0, 0, 0, [UIntPtr]::Zero)
+    Start-Sleep -Seconds 2
+    Stop-App $process
+
+    $log = Get-AppLog
+    $moves = @($log | Select-String -Pattern "the window was moved to")
+    $drop = $log | Select-String -Pattern "the drag was dropped on the wheel" | Select-Object -First 1
+    $action = $log | Select-String -Pattern "placeholder:" | Select-Object -First 1
+    foreach ($line in $moves) { Say ("the log says: " + $line.Line) }
+    if ($drop) { Say ("the log says: " + $drop.Line) } else { Say "FAIL: the drop was not seen" }
+    if ($action) { Say ("the log says: " + $action.Line) } else { Say "FAIL: no action was logged" }
+
+    # The wheel is put in one place when it opens, and it must not be moved
+    # again: not when the drag is released, and not while it fades away.
+    if ($moves.Count -eq 1) {
+        Say "PASS: the wheel was moved once, when it opened, and never again"
+    } else {
+        Say "FAIL: the wheel was moved $($moves.Count) times"
+    }
+    if ($drop -and $action) {
+        Say "PASS: the drop chose something and the action ran on it"
+    } else {
+        Say "FAIL: the release did not choose anything"
+    }
+}
+
+function Case-DropOnHub {
+    $script:CaseName = "hub"
+    Say ""
+    Say "=== case 8: a drag that is released on the hub ==="
+    $folder = Join-Path $root "itest-hub"
+    if (Test-Path $folder) { Remove-Item -Recurse -Force $folder }
+    New-Item -ItemType Directory -Force -Path $folder | Out-Null
+    Set-Content (Join-Path $folder "hub.txt") "hello"
+
+    Get-Process explorer -ErrorAction SilentlyContinue | ForEach-Object { $_.CloseMainWindow() | Out-Null }
+    Start-Sleep -Seconds 2
+    Minimize-Terminal
+    Start-Process explorer.exe -ArgumentList "/e,`"$folder`""
+    Start-Sleep -Seconds 4
+
+    $window = Get-ExplorerWindow "itest-hub*"
+    if ($null -eq $window) { Say "FAIL: the Explorer window did not open"; return }
+    $hwnd = [IntPtr]$window.Current.NativeWindowHandle
+    [void][Native]::ShowWindow($hwnd, 3)
+    [void][Native]::SetForegroundWindow($hwnd)
+    Start-Sleep -Seconds 2
+    Minimize-Terminal
+
+    $at = Select-Item "itest-hub*" "hub.txt" $false
+    Minimize-Terminal
+    [void][Native]::SetForegroundWindow($hwnd)
+    Start-Sleep -Milliseconds 500
+
+    $process = Start-App 25
+    Minimize-Terminal
+    [void][Native]::SetForegroundWindow($hwnd)
+    Start-Sleep -Milliseconds 500
+
+    # The wheel opens around the pointer, and the drag is released on the hub
+    # in the middle of it: there is no choice there.
+    [void][Native]::SetCursorPos($at[0], $at[1])
+    Start-Sleep -Milliseconds 500
+    [Native]::mouse_event([Native]::LEFTDOWN, 0, 0, 0, [UIntPtr]::Zero)
+    Start-Sleep -Milliseconds 350
+    for ($i = 1; $i -le 10; $i++) {
+        [void][Native]::SetCursorPos(($at[0] + $i * 4), ($at[1] + $i * 3))
+        Start-Sleep -Milliseconds 45
+    }
+    [Native]::keybd_event(0x10, 0, 0, [UIntPtr]::Zero)
+    Start-Sleep -Milliseconds 900
+    for ($i = 11; $i -le 18; $i++) {
+        [void][Native]::SetCursorPos(($at[0] + $i * 4), ($at[1] + $i * 3))
+        Start-Sleep -Milliseconds 55
+    }
+    Start-Sleep -Milliseconds 700
+
+    # Back to the middle of the wheel: the hub.
+    [void][Native]::SetCursorPos(($at[0] + 18 * 4), ($at[1] + 18 * 3))
+    Start-Sleep -Milliseconds 800
+
+    [Native]::keybd_event(0x10, 0, [Native]::KEYUP, [UIntPtr]::Zero)
+    Start-Sleep -Milliseconds 200
+    [Native]::mouse_event([Native]::LEFTUP, 0, 0, 0, [UIntPtr]::Zero)
+    Start-Sleep -Seconds 2
+    Stop-App $process
+
+    $log = Get-AppLog
+    $drop = $log | Select-String -Pattern "the drop landed at" | Select-Object -First 1
+    $action = $log | Select-String -Pattern "placeholder:" | Select-Object -First 1
+    if ($drop) { Say ("the log says: " + $drop.Line) } else { Say "FAIL: the drop was not seen" }
+    if ($action) { Say ("FAIL: something was run: " + $action.Line) } else { Say "PASS: nothing was run" }
+}
+
 function Case-Unsupported {
+    $script:CaseName = "unsupported"
     Say ""
     Say "=== case 5: a drag that does not come from Explorer ==="
     # Every Explorer window is closed, so that the point the drag starts at
@@ -563,6 +730,8 @@ if ($Only -eq "" -or $Only -eq "many") { Case-MultipleFiles }
 if ($Only -eq "" -or $Only -eq "consecutive") { Case-Consecutive }
 if ($Only -eq "" -or $Only -eq "cancel") { Case-Cancelled }
 if ($Only -eq "" -or $Only -eq "unselected") { Case-Unselected }
+if ($Only -eq "" -or $Only -eq "stays") { Case-WheelStays }
+if ($Only -eq "" -or $Only -eq "hub") { Case-DropOnHub }
 if ($Only -eq "" -or $Only -eq "unsupported") { Case-Unsupported }
 
 Say ""
