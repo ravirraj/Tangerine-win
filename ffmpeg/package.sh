@@ -44,9 +44,41 @@ cp "$PREFIX/bin/ffprobe.exe" "$STAGE/ffmpeg/"
 cp "$SOURCE/COPYING.LGPLv2.1" "$STAGE/licenses/ffmpeg/LGPL-2.1.txt"
 for library in $(sed -n 's/^library[[:space:]]*=[[:space:]]*\([^[:space:]]*\).*/\1/p' "$MANIFEST"); do
     for file in /c/msys64/ucrt64/share/licenses/"$library"/*; do
-        [ -f "$file" ] && cp "$file" "$STAGE/licenses/ffmpeg/" || true
+        [ -f "$file" ] || continue
+        cp "$file" "$STAGE/licenses/ffmpeg/$library-$(basename "$file")"
     done
 done
+
+# A notice of what is in the package and under what terms, made from the
+# manifest, so that it says what is actually here.
+{
+    echo "What is in this package"
+    echo
+    echo "open-tangerine.exe"
+    echo "  The application. Licensed under the MIT licence or the Apache"
+    echo "  Licence, Version 2.0, at your choice. The texts of both are in"
+    echo "  the repository of the project, in the files LICENSE-MIT and"
+    echo "  LICENSE-APACHE."
+    echo
+    echo "ffmpeg/ffmpeg.exe, ffmpeg/ffprobe.exe"
+    echo "  The FFmpeg program, version $VERSION, built from the sources of"
+    echo "  the FFmpeg project. Licensed under the GNU Lesser General Public"
+    echo "  Licence, version 2.1 or later; the licence text is in this folder."
+    echo "  The sources it was built from, and how it was built, are named in"
+    echo "  SOURCE-OFFER.txt and in licenses/ffmpeg/HOW-IT-WAS-BUILT.txt."
+    echo
+    echo "The libraries compiled into the conversion program:"
+    echo
+    sed -n 's/^library[[:space:]]*=[[:space:]]*\([^[:space:]]*\).*/\1/p' "$MANIFEST" |
+    while read -r library; do
+        licence="$(sed -n "s/^library[[:space:]]*=[[:space:]]*$library[[:space:]].*licence=\([^[:space:]]*\).*/\1/p" "$MANIFEST" | head -n 1)"
+        version="$(sed -n "s/^library[[:space:]]*=[[:space:]]*$library[[:space:]].*version=\([^[:space:]]*\).*/\1/p" "$MANIFEST" | head -n 1)"
+        echo "  $library $version - $licence"
+    done
+    echo
+    echo "The licence of each of them that is not part of Windows is in this"
+    echo "folder."
+} > "$STAGE/licenses/ffmpeg/NOTICE.txt"
 
 # How it was built, and what was changed. The licence asks for both.
 {
