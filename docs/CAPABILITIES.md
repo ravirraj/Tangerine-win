@@ -16,6 +16,7 @@ them up is how a program ends up offering an action it cannot do.
 | The eligibility | `src/radial/registry.rs` | Whether one operation may be used for one selection. |
 | The menu | `src/radial/actions.rs` | The choices of each of the three wheels. |
 | The execution | `src/radial/execution.rs` | What happens when an operation is run, and what comes of it. |
+| The conversion program | `src/media/` | Where the program is, what it can do, and how a picture is turned into another one. |
 
 They are kept apart on purpose. A **file category** says what a file is
 called. A **capability** says what a backend can do. An **operation** says
@@ -82,6 +83,39 @@ on any file, with no conversion backend behind them. They are marked by
 `Requirement::None`, and the eligibility rules let them through without
 looking for a processor.
 
+## The conversion program
+
+The backend behind the picture operations is the FFmpeg program, run as a
+child process. Nothing in this repository links it, and nothing in it knows
+how it works inside. Three things are kept apart:
+
+- **`ffmpeg/components.txt`** says which parts of the program the build
+  has, and how they fit together. The build script reads it to make the
+  configure flags and the assertions that follow the build, and the
+  application reads it to know the names of the parts. It is one file, so
+  what is built and what the program expects cannot drift apart.
+- **The probe** asks the program what it has, and turns the answer into
+  the environment the registry understands. It is asked on a worker, once,
+  at startup, and the answer is kept for the session. It starts no
+  conversion, times nothing, and writes nothing.
+- **The conversion** is one file at a time: the picture is made under a
+  name of its own in the folder the original is in, looked at, and only
+  then given its final name. The original is never opened for writing, and
+  the move never overwrites, so a file that is already there is given
+  another name rather than lost.
+
+The program is found beside the application, and in a build that is not a
+release build it may also be found along the `PATH`. A released program
+uses the program it was given, and not one that happens to be installed on
+the machine.
+
+A picture that holds more than one picture is not converted, and neither is
+one whose frames cannot be counted. The frames are counted by the program
+that inspects, and the count is of the frames that were really decoded.
+A file the demuxer that reads animations refuses is not taken for a still
+one: it has to be confirmed as a single picture first, and a file that
+cannot be confirmed is refused.
+
 ## The eligibility
 
 There is **one** path from a selection and an environment to the operations on
@@ -118,9 +152,16 @@ files it names have to be the files that were dragged, and the operation has
 to be one that may be used for them. What happens then is up to the handler
 for the operation.
 
-**There is no handler yet.** Every operation is refused, and the refusal says
-why: *not implemented*. Nothing pretends to have worked, and no success is
-reported that did not happen.
+**There is one handler now**: the picture conversions. It is asked for by
+name, and it does the work on a worker, because a conversion can take a
+while and the wheel has to keep moving while it does. What comes of it is
+reported when the next frame is drawn.
+
+Nothing pretends to have worked. The result is looked at before it is
+published — it has to be there, it has to have something in it, and it has
+to begin with the bytes the format it claims to be begins with. A
+conversion that fails leaves the original exactly as it was, and removes
+what it was making.
 
 The reasons are `Failure`, and they are safe to put in the log: a failure
 never carries a path either, so the log says what happened and not which file
@@ -128,13 +169,16 @@ it happened to.
 
 ## What is not here yet
 
-- No handler. Every operation is refused, and the registry says so.
-- No processor. The environment is empty, so nothing that needs one is
-  offered.
 - No batch work, no progress and no cancelling of work in progress. The
   `Cancelled` outcome is part of the contract, and nothing produces it yet.
 - The formats are worked out from the name of the file, not from what is in
-  it. A file called `photo.png` may hold anything at all.
+  it. A file called `photo.png` may hold anything at all. The program is
+  asked about the file before it is converted, so a file that is not what
+  its name says is refused rather than converted into something odd.
+- No audio, no video, no PDF. The picture operations are the only ones
+  that do any work.
+- No hardware acceleration, and no setting about it. The one thing the
+  conversion does is done on the processor.
 
 ## The menu
 

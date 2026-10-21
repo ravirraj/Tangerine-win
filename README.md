@@ -104,6 +104,22 @@ powershell -ExecutionPolicy Bypass -File tests\windows-integration.ps1
 They move the mouse and press keys, so they must not be run while somebody
 else is using the machine.
 
+### The conversion program
+
+The picture operations need the FFmpeg program, which is not in the
+repository: it is built from the sources by the script in `ffmpeg`, and the
+package is made from what that script builds. A developer who wants to try
+the conversions keeps the program in `vendor\ffmpeg`, which the repository
+ignores.
+
+```sh
+cargo build --features test-helper --bins   # the stand-in the tests use
+cargo test --features test-helper
+```
+
+The tests that run against the real program are marked as needing it, and
+are run with `cargo test -- --ignored` once it has been built.
+
 ## The documents
 
 - [`docs/INTERACTION.md`](docs/INTERACTION.md) - the gesture, the states, the
