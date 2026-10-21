@@ -62,7 +62,7 @@ impl Capabilities {
         let decoders = listing(runner, &tools.ffmpeg, "-decoders")?;
         let formats = listing(runner, &tools.ffmpeg, "-formats")?;
         let filters = listing(runner, &tools.ffmpeg, "-filters")?;
-        let protocols = listing(runner, &tools.ffmpeg, "-protocols")?;
+        let protocols_text = text(runner, &tools.ffmpeg, "-protocols")?;
 
         // In the encoder and decoder listings the flags say other things —
         // whether a codec draws directly, and so on — so every name in them
@@ -81,7 +81,7 @@ impl Capabilities {
             .map(|(_, name)| name.clone())
             .collect();
         capabilities.filters = filters.into_iter().map(|(_, name)| name).collect();
-        capabilities.protocols = protocols.into_iter().map(|(_, name)| name).collect();
+        capabilities.protocols = protocols(&protocols_text);
 
         // The program that inspects files is asked whether it runs.
         capabilities.ffprobe_usable = run(runner, &tools.ffprobe, &[OsString::from("-version")])
@@ -92,8 +92,15 @@ impl Capabilities {
     }
 
     /// Whether a file of this format can be read.
+    ///
+    /// The picture is written through a pipe, so a program without the pipe
+    /// protocol cannot be used for the conversion at all, whatever parts it
+    /// says it has.
     pub fn can_read(&self, format: &FormatSupport) -> bool {
-        self.demuxers.contains(&format.read.demuxer) && self.decoders.contains(&format.read.decoder)
+        self.has_pipe()
+            && self.has_file()
+            && self.demuxers.contains(&format.read.demuxer)
+            && self.decoders.contains(&format.read.decoder)
     }
 
     /// Whether the frames of this format can be counted.
@@ -125,7 +132,8 @@ impl Capabilities {
 
     /// Whether a file of this format can be produced.
     pub fn can_write(&self, format: &FormatSupport) -> bool {
-        if !self.encoders.contains(&format.write.encoder)
+        if !self.has_pipe()
+            || !self.encoders.contains(&format.write.encoder)
             || !self.muxers.contains(&format.write.muxer)
         {
             return false;
@@ -133,6 +141,20 @@ impl Capabilities {
         self.filters_needed(format)
             .iter()
             .all(|filter| self.filters.contains(*filter))
+    }
+
+    /// Whether the program can write a picture out through a pipe.
+    ///
+    /// The picture is made in a file of its own and then moved to its name,
+    /// and the program writes it to its standard output. A program without
+    /// the pipe protocol cannot do that, so nothing can be converted with it.
+    fn has_pipe(&self) -> bool {
+        self.protocols.contains("pipe")
+    }
+
+    /// Whether the program can read a file from the disk.
+    fn has_file(&self) -> bool {
+        self.protocols.contains("file")
     }
 
     /// The filters a conversion of this format needs.
@@ -181,6 +203,39 @@ fn run(
     args: &[OsString],
 ) -> io::Result<RunResult> {
     runner.run(program, args, None)
+}
+
+/// Runs the program and gives back what it printed.
+fn text(runner: &dyn ProcessRunner, program: &std::path::Path, what: &str) -> io::Result<String> {
+    let args = vec![OsString::from("-hide_banner"), OsString::from(what)];
+    let result = run(runner, program, &args)?;
+    if !result.succeeded() {
+        return Err(io::Error::other(format!(
+            "the program could not list {what}"
+        )));
+    }
+    Ok(String::from_utf8_lossy(&result.stdout).into_owned())
+}
+
+/// The protocols the program has.
+///
+/// This listing is not in the shape the others are in. It has an "Input:"
+/// and an "Output:" section, and the names of the protocols are indented
+/// under them.
+fn protocols(text: &str) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    for line in text.lines() {
+        // The headings are not indented; the names are.
+        if !line.starts_with(char::is_whitespace) {
+            continue;
+        }
+        let name = line.trim();
+        if name.is_empty() || name.ends_with(':') {
+            continue;
+        }
+        names.insert(name.to_string());
+    }
+    names
 }
 
 /// The listing the program printed, with the flags each name carries.
@@ -267,6 +322,16 @@ Encoders:
  E  webp         WebP
 ";
 
+    const PROTOCOLS: &str = "\
+Supported file protocols:
+Input:
+  file
+  pipe
+Output:
+  file
+  pipe
+";
+
     const FILTERS: &str = "\
 Filters:
   T.. = Timeline support
@@ -277,6 +342,53 @@ Filters:
  ... scale             ->V        Scale the input image.
  ... split             ->V        Pass on the source to the output.
 ";
+
+    #[test]
+    fn the_protocols_are_read() {
+        // This listing is not in the shape the other listings are in: it has
+        // an "Input:" and an "Output:" section, and the names are indented
+        // under them.
+        let listing = "\
+Supported file protocols:
+Input:
+  file
+  pipe
+Output:
+  file
+  pipe
+";
+        let names = protocols(listing);
+        assert!(names.contains("file"), "{names:?}");
+        assert!(names.contains("pipe"), "{names:?}");
+        assert_eq!(names.len(), 2, "{names:?}");
+    }
+
+    #[test]
+    fn a_program_without_the_pipe_cannot_convert_anything() {
+        let mut capabilities = Capabilities {
+            tools: Tools {
+                ffmpeg: PathBuf::from("ffmpeg"),
+                ffprobe: PathBuf::from("ffprobe"),
+            },
+            ..Capabilities::default()
+        };
+        let manifest = Manifest::get();
+        let png = manifest.format("png").expect("png is in the manifest");
+        // With no pipe, nothing can be read, whatever parts are there.
+        capabilities.encoders.insert("png".to_string());
+        capabilities.decoders.insert("png".to_string());
+        capabilities.demuxers.insert("png_pipe".to_string());
+        capabilities.muxers.insert("image2pipe".to_string());
+        capabilities.filters.insert("format".to_string());
+        capabilities.filters.insert("scale".to_string());
+        assert!(!capabilities.can_read(png));
+        assert!(!capabilities.can_write(png));
+        // With the pipe and the file, it can.
+        capabilities.protocols.insert("pipe".to_string());
+        capabilities.protocols.insert("file".to_string());
+        assert!(capabilities.can_read(png));
+        assert!(capabilities.can_write(png));
+    }
 
     #[test]
     fn the_encoders_are_read() {
@@ -373,7 +485,7 @@ Filters:
                 ("-decoders".to_string(), CODECS.to_string()),
                 ("-formats".to_string(), FORMATS.to_string()),
                 ("-filters".to_string(), FILTERS.to_string()),
-                ("-protocols".to_string(), " D  file\n DE pipe\n".to_string()),
+                ("-protocols".to_string(), PROTOCOLS.to_string()),
             ],
         };
         let capabilities = Capabilities::probe(&tools(), &runner).expect("the program answered");
@@ -410,7 +522,7 @@ Filters:
                 ("-decoders".to_string(), CODECS.to_string()),
                 ("-formats".to_string(), without_apng.to_string()),
                 ("-filters".to_string(), FILTERS.to_string()),
-                ("-protocols".to_string(), " D  file\n DE pipe\n".to_string()),
+                ("-protocols".to_string(), PROTOCOLS.to_string()),
             ],
         };
         let capabilities = Capabilities::probe(&tools(), &runner).expect("the program answered");

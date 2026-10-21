@@ -396,12 +396,22 @@ mod tests {
             .find(|library| library.name == "zlib")
             .expect("zlib is in the manifest");
         assert_eq!(zlib.licence, "zlib");
+        assert_eq!(zlib.version, "1.3.2");
         let webp = manifest
             .libraries
             .iter()
             .find(|library| library.name == "libwebp")
             .expect("libwebp is in the manifest");
         assert_eq!(webp.licence, "BSD-3-Clause");
+        assert_eq!(webp.version, "1.6.0");
+        // The libraries that are part of Windows are named too, so that a
+        // build that gained one is noticed.
+        assert!(
+            manifest
+                .libraries
+                .iter()
+                .any(|library| library.version == "system")
+        );
     }
 
     #[test]

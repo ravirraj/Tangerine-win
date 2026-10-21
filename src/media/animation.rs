@@ -89,22 +89,21 @@ pub fn judge(
     };
 
     match count(runner, program, &animation.demuxer, input) {
-        Count::Frames(frames) => {
-            // The demuxer that reads every frame read this file, so the file
-            // is one of the kind it reads. Where it reads only animations,
-            // that settles the matter: the file is an animation, whatever
-            // the number of frames it holds.
-            if format.confirm.is_some() {
-                Verdict::Animated
-            } else if frames == 1 {
-                Verdict::Still
-            } else {
-                Verdict::Animated
-            }
+        Count::Frames(1) => {
+            // The demuxer that reads every frame read this file and found
+            // one frame. That settles it: this is a still picture.
+            Verdict::Still
+        }
+        Count::Frames(_) => {
+            // More than one frame: this is an animation, and this phase does
+            // not convert animations.
+            Verdict::Animated
         }
         Count::Refused | Count::Unknown => {
-            // The file was not read as an animation. That is not proof that
-            // it is a still picture, so it has to be confirmed.
+            // The demuxer that reads every frame would not read this file.
+            // That is not proof that it is a still picture: it may be a
+            // still picture this demuxer does not accept, or a file that is
+            // broken. A still picture is confirmed by reading it as one.
             let Some(confirm) = &format.confirm else {
                 // There is nothing to confirm it with, so it cannot be
                 // converted.
