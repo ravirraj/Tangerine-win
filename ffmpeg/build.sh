@@ -69,7 +69,10 @@ configure_name() {
 }
 
 configure_names() {
-    for name in $1; do configure_name "$name"; done
+    # The names the build system knows, separated by spaces.
+    local out="" name
+    for name in $1; do out="$out $(configure_name "$name")"; done
+    echo "${out# }"
 }
 
 # The external libraries. A library whose name begins with "lib" is one
@@ -88,6 +91,8 @@ echo "encoders:   $ENCODERS"
 echo "muxers:     $MUXERS"
 echo "filters:    $FILTERS"
 echo "externals:  $EXTERNALS"
+echo "in the build system, the demuxers are called:"
+echo "            $(configure_names "$DEMUXERS")"
 
 CONFIGURE_FLAGS=(
     --disable-everything
