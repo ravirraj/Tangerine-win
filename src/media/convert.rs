@@ -339,6 +339,17 @@ mod tests {
     }
 
     #[test]
+    fn the_reason_for_a_file_that_is_already_in_that_format_is_clear() {
+        // The policy is that a file is not converted into the format it is
+        // already in. The reason for it is said in words, so that the person
+        // who asked for it is told what happened.
+        assert_eq!(
+            ConvertError::AlreadyThatFormat.name(),
+            "the file is already in that format"
+        );
+    }
+
+    #[test]
     fn a_result_that_is_not_what_it_should_be_is_removed() {
         let folder = TempFolder::new("bad-result");
         let path = folder.file("photo.png");

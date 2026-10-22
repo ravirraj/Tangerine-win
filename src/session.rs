@@ -64,6 +64,13 @@ pub struct DragSession {
     resolved: bool,
     /// Where the list of files came from.
     origin: &'static str,
+    /// The files the drop target has already told us about, in this drag.
+    ///
+    /// The drop target says what the drag carries every time the pointer
+    /// moves over the wheel, and the answer is only wanted once for a drag.
+    /// The answer belongs to the drag it was given for, so the same file may
+    /// be dragged again and the answer is taken again for the new drag.
+    reported: Option<Vec<PathBuf>>,
 }
 
 impl Default for DragSession {
@@ -81,6 +88,7 @@ impl DragSession {
             paths: Vec::new(),
             resolved: false,
             origin: "nothing yet",
+            reported: None,
         }
     }
 
@@ -112,13 +120,16 @@ impl DragSession {
     /// Starts a new session for a drag.
     ///
     /// The files of the previous session are dropped here, so that a new drag
-    /// can never be shown with the files of the drag before it.
+    /// can never be shown with the files of the drag before it. The answer of
+    /// the drop target is dropped with them: the same file may be dragged
+    /// again, and then the answer is wanted again.
     pub fn begin(&mut self, id: u64, source: HWND) {
         self.id = id;
         self.source = Some(source);
         self.paths.clear();
         self.resolved = false;
         self.origin = "nothing yet";
+        self.reported = None;
     }
 
     /// Records what the shell said about the files of this session.
@@ -162,6 +173,31 @@ impl DragSession {
         self.paths = paths;
         self.resolved = true;
         self.origin = "the drop target";
+        true
+    }
+
+    /// Takes the answer of the drop target, once for this drag.
+    ///
+    /// The drop target says what the drag carries every time the pointer
+    /// moves over the wheel. The answer is wanted once for a drag: the second
+    /// answer says the same thing again, and there is nothing to do with it.
+    ///
+    /// The answer belongs to the drag it was given for. A drag of the same
+    /// file that comes later is a drag of its own, and its answer is taken
+    /// again: the files of one drag are never the files of another.
+    ///
+    /// An answer with nothing in it is never taken. The drop target says so
+    /// when the drag carries nothing it can name, and there are no files in
+    /// that answer.
+    pub fn take_drop_target_payload(&mut self, paths: &[PathBuf]) -> bool {
+        if paths.is_empty() {
+            return false;
+        }
+        if self.reported.as_deref() == Some(paths) {
+            // The same answer, for the same drag. It says nothing new.
+            return false;
+        }
+        self.reported = Some(paths.to_vec());
         true
     }
 }
@@ -309,5 +345,67 @@ mod tests {
         assert!(!applied);
         assert!(session.paths().is_empty());
         assert!(!session.is_resolved());
+    }
+
+    #[test]
+    fn the_answer_of_the_drop_target_is_taken_once_for_a_drag() {
+        let mut session = DragSession::new();
+        session.begin(1, HWND(std::ptr::null_mut()));
+        // The drop target says what the drag carries every time the pointer
+        // moves over the wheel. The first answer is taken.
+        assert!(session.take_drop_target_payload(&[a_path("one.png")]));
+        // The second answer says the same thing again, and there is nothing
+        // to do with it.
+        assert!(!session.take_drop_target_payload(&[a_path("one.png")]));
+    }
+
+    #[test]
+    fn the_same_file_may_be_dragged_again() {
+        let mut session = DragSession::new();
+        session.begin(1, HWND(std::ptr::null_mut()));
+        assert!(session.take_drop_target_payload(&[a_path("one.png")]));
+
+        // The same file is dragged again. That is a drag of its own, and the
+        // answer of the drag before is not the answer of this one.
+        session.begin(2, HWND(std::ptr::null_mut()));
+        assert!(session.take_drop_target_payload(&[a_path("one.png")]));
+    }
+
+    #[test]
+    fn an_answer_with_nothing_in_it_is_never_taken() {
+        let mut session = DragSession::new();
+        session.begin(1, HWND(std::ptr::null_mut()));
+        assert!(!session.take_drop_target_payload(&[]));
+    }
+
+    #[test]
+    fn a_new_drag_does_not_keep_the_answer_of_the_one_before() {
+        let mut session = DragSession::new();
+        session.begin(1, HWND(std::ptr::null_mut()));
+        session.resolve_from_drop_target(1, vec![a_path("one.png")]);
+        assert!(session.take_drop_target_payload(&[a_path("one.png")]));
+
+        // The next drag has no files of its own yet.
+        session.begin(2, HWND(std::ptr::null_mut()));
+        assert!(session.paths().is_empty());
+        assert!(!session.is_resolved());
+        // The answer of the drag before is not the answer of this one.
+        assert!(session.take_drop_target_payload(&[a_path("one.png")]));
+    }
+
+    #[test]
+    fn a_drag_that_was_cancelled_leaves_nothing_behind() {
+        let mut session = DragSession::new();
+        session.begin(1, HWND(std::ptr::null_mut()));
+        session.resolve_from_drop_target(1, vec![a_path("one.png")]);
+        assert!(session.take_drop_target_payload(&[a_path("one.png")]));
+
+        // The drag is cancelled, and the number of the drag is used again.
+        session.begin(1, HWND(std::ptr::null_mut()));
+        assert!(session.paths().is_empty());
+        assert!(!session.is_resolved());
+        // The answer of the drag that was cancelled is not the answer of the
+        // new one, even though the number is the same.
+        assert!(session.take_drop_target_payload(&[a_path("one.png")]));
     }
 }

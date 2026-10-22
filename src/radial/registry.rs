@@ -922,6 +922,42 @@ mod tests {
     // ------------------------------------------------ the rules of the menu
 
     #[test]
+    fn a_conversion_into_the_format_the_file_is_already_in_is_offered() {
+        // The policy about a file that is already in the format it is to be
+        // put into is not in the wheel: the conversion is offered, and the
+        // refusal is made when the work is done, where the reason can be said
+        // in words.
+        let folder = TempFolder::new("same-format");
+        let selection = pictures(&folder, 1);
+        let same = operation_by_id("convert.png").expect("there is a conversion to PNG");
+        let other = operation_by_id("convert.jpeg").expect("there is a conversion to JPEG");
+        assert!(eligibility(same, &selection, &everything()).is_ok());
+        assert!(eligibility(other, &selection, &everything()).is_ok());
+    }
+
+    #[test]
+    fn the_wheel_has_nothing_on_it_until_the_files_are_known() {
+        let folder = TempFolder::new("not-known-yet");
+        // A drag that started on the desktop: the shell cannot say what it
+        // carries, so the wheel has nothing to offer.
+        let nothing = Selection::inspect(&[]);
+        let menu = menu_for(&nothing, &everything());
+        assert!(
+            menu.segments(RadialMode::Convert).is_empty(),
+            "the convert wheel has something on it"
+        );
+
+        // The files are known: the wheel has the operations that may really
+        // be done with them.
+        let selection = pictures(&folder, 1);
+        let menu = menu_for(&selection, &everything());
+        assert!(
+            !menu.segments(RadialMode::Convert).is_empty(),
+            "the convert wheel has nothing on it"
+        );
+    }
+
+    #[test]
     fn an_operation_that_is_not_implemented_is_never_offered() {
         let folder = TempFolder::new("not-implemented");
         let selection = pictures(&folder, 1);

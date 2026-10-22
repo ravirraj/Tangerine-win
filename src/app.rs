@@ -189,8 +189,6 @@ struct App {
     drop_target: IDropTarget,
     /// Watches the scroll wheel while the wheel is on screen.
     wheel_watcher: Option<input::WheelWatcher>,
-    /// The file list the drop target last reported.
-    reported_paths: Vec<std::path::PathBuf>,
     /// When the wheel was asked to open, to measure how long it took.
     opened_at: Option<Instant>,
     /// Whether the keyboard, rather than the pointer, chooses the segment.
@@ -315,7 +313,6 @@ impl App {
             drop_state,
             drop_target,
             wheel_watcher: None,
-            reported_paths: Vec::new(),
             opened_at: None,
             keyboard_owns_highlight: false,
             cursor_when_the_keyboard_took_over: Point::new(0.0, 0.0),
@@ -382,6 +379,9 @@ impl App {
                     // the drag owns it anyway, and the wheel has to be
                     // clickable once the drag is over.
                     self.overlay.set_mouse_through(false);
+                    // The files the drop target is told belong to the drag
+                    // that is running now, and to no other.
+                    self.drop_state.session.set(self.session.id());
                     if self.controller.is_explorer_drag()
                         && let Err(error) = self.overlay.register_drop_target(&self.drop_target)
                     {
@@ -730,25 +730,26 @@ impl App {
         // answer is only a check: the list the shell gave is the one the
         // wheel uses, so that the count cannot change halfway through.
         let paths = state.paths.borrow().clone();
-        if !paths.is_empty() && paths != self.reported_paths {
+        if !paths.is_empty() && state.session.get() != self.session.id() {
             // The files are told to the application while the drag is over the
             // window. They belong to the drag that was running when the window
             // became a drop target, so a drag that came after them is not
             // given their files.
-            if state.session.get() != self.session.id() {
-                diagnostics::log(
-                    Level::Debug,
-                    "drag",
-                    &format!(
-                        "the drop target reported {} file(s) for drag {}, but drag {} is running",
-                        paths.len(),
-                        state.session.get(),
-                        self.session.id()
-                    ),
-                );
-                return;
-            }
-            self.reported_paths = paths.clone();
+            diagnostics::log(
+                Level::Debug,
+                "drag",
+                &format!(
+                    "the drop target reported {} file(s) for drag {}, but drag {} is running",
+                    paths.len(),
+                    state.session.get(),
+                    self.session.id()
+                ),
+            );
+            return;
+        }
+        // The answer is taken once for a drag. The same file may be dragged
+        // again, and then the answer is taken again, for the new drag.
+        if self.session.take_drop_target_payload(&paths) {
             if !self.session.is_resolved() {
                 // The shell could not say what is being dragged, which is the
                 // case for a drag that started on the desktop. The drop target
@@ -836,6 +837,11 @@ impl App {
         self.session.begin(session, source);
         // A new gesture makes the end of an old one irrelevant.
         self.pending_release = None;
+        // The files the drop target told us about belong to the drag that
+        // was running then. They are dropped here, so that a drag that starts
+        // before the pointer is over the wheel is not given the files of the
+        // drag before it.
+        self.drop_state.paths.borrow_mut().clear();
     }
 
     /// Asks the shell what the current drag is carrying.
@@ -908,28 +914,48 @@ impl App {
     ///
     /// Only counts and kinds go into the log. The names of the files do not.
     fn refresh_selection(&mut self) {
-        let selection = Selection::inspect(self.session.paths());
-        let kinds: Vec<&str> = selection
+        self.selection = Selection::inspect(self.session.paths());
+        let kinds: Vec<&str> = self
+            .selection
             .categories()
             .iter()
             .map(|kind| kind.name())
             .collect();
-        diagnostics::log(
-            Level::Info,
-            "selection",
-            &format!(
-                "the selection holds {} item(s) of {} kind(s) ({})",
-                selection.len(),
-                kinds.len(),
-                kinds.join(", ")
-            ),
+        let mut line = format!(
+            "the selection holds {} item(s) of {} kind(s) ({})",
+            self.selection.len(),
+            kinds.len(),
+            kinds.join(", ")
         );
-        self.selection = selection;
+        // The formats are said as well, so that a file that is not the one
+        // that was expected can be told from a file that is. A format is a
+        // short label, and no name is written down.
+        let formats = self.selection.formats();
+        if !formats.is_empty() {
+            line.push_str(&format!(", in the format(s) {}", formats.join(", ")));
+        }
+        diagnostics::log(Level::Info, "selection", &line);
         // The wheel shows what may really be done with these files, and
         // nothing else. The registry says what that is.
         let menu = registry::menu_for(&self.selection, &self.environment());
         self.controller.set_menu(menu);
         self.report_availability();
+    }
+
+    /// Looks at the files of the drag that is starting, without saying so.
+    ///
+    /// This is used when a drag begins, so that the wheel offers the
+    /// operations of the drag that is starting and not those of the drag
+    /// before it. A drag that starts on the desktop has no files yet: the
+    /// shell cannot say what it carries, and the drop target is told when
+    /// the pointer is over the wheel. The wheel is empty until then.
+    ///
+    /// Nothing is said in the log here: the log says what the files are when
+    /// the wheel opens and when they are resolved.
+    fn refresh_selection_quietly(&mut self) {
+        self.selection = Selection::inspect(self.session.paths());
+        let menu = registry::menu_for(&self.selection, &self.environment());
+        self.controller.set_menu(menu);
     }
 
     /// What the machine can do right now.
@@ -1098,6 +1124,10 @@ impl App {
                 // shell, using the window the drag started in. The shell is
                 // the only place the payload can be read from.
                 let paths = self.resolve_payload(session, source);
+                // The operations of the drag before are dropped here, so that
+                // the wheel offers the operations of this drag and not those
+                // of the one before it.
+                self.refresh_selection_quietly();
                 diagnostics::log(
                     Level::Info,
                     "drag",

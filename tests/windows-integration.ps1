@@ -30,6 +30,7 @@ public static class Native {
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
     // The title is a real null, and not an empty string: a window that has a
     // title of its own is only found when the title is a null.
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string cls, IntPtr title);
@@ -111,9 +112,59 @@ function Minimize-Terminal {
         $_.ProcessName -match "WindowsTerminal|powershell|pwsh|cmd"
     } | Select-Object -First 1
     if ($terminal) {
-        [void][Native]::ShowWindow($terminal.MainWindowHandle, 6)
-        Start-Sleep -Milliseconds 300
+        Minimize-Window $terminal.MainWindowHandle
     }
+}
+
+# Puts a window out of the way, and remembers it.
+#
+# The windows that are put out of the way are given back afterwards, so that
+# the person who is watching does not have to bring them back by hand.
+#
+# The window the tests are run from, and the windows of the programs that
+# started it, are left alone: they are the window the person is watching,
+# and putting it away takes the run away with it.
+$script:PutAway = @()
+$script:Ancestors = $null
+
+function Get-AncestorProcessIds {
+    if ($null -ne $script:Ancestors) { return $script:Ancestors }
+    $ids = @{}
+    $id = $PID
+    for ($step = 0; $step -lt 12 -and $id -gt 0; $step++) {
+        if ($ids.ContainsKey($id)) { break }
+        $ids[$id] = $true
+        $line = Get-CimInstance Win32_Process -Filter "ProcessId=$id" -ErrorAction SilentlyContinue
+        if (-not $line) { break }
+        $id = [int]$line.ParentProcessId
+    }
+    $script:Ancestors = $ids
+    return $ids
+}
+
+function Minimize-Window($handle) {
+    if (-not $handle -or $handle -eq [IntPtr]::Zero) { return }
+    $handle = [IntPtr]$handle
+    [uint32]$owner = 0
+    [void][Native]::GetWindowThreadProcessId($handle, [ref]$owner)
+    if ((Get-AncestorProcessIds).ContainsKey([int]$owner)) {
+        # This window belongs to the program the tests are run from, or to
+        # the program that started it. It is left as it is.
+        return
+    }
+    if ($script:PutAway -contains $handle) { return }
+    $script:PutAway += $handle
+    [void][Native]::ShowWindow($handle, 6)
+    Start-Sleep -Milliseconds 200
+}
+
+# Gives the windows that were put out of the way back.
+function Restore-Windows {
+    foreach ($handle in $script:PutAway) {
+        [void][Native]::ShowWindow($handle, 9)
+    }
+    $script:PutAway = @()
+    Start-Sleep -Milliseconds 300
 }
 
 function Start-App($seconds) {
@@ -917,14 +968,15 @@ function Minimize-OtherWindows {
     # The desktop has to be visible for a drag to start on it.
     #
     # Every window that is not one of the shell's own is put out of the way,
-    # so that the icons can be reached.
+    # so that the icons can be reached. The windows are given back at the end
+    # of the case.
     $shell = @("Progman", "WorkerW", "Shell_TrayWnd", "CabinetWClass", "ExploreWClass")
     $root = [System.Windows.Automation.AutomationElement]::RootElement
     $windows = $root.FindAll([System.Windows.Automation.TreeScope]::Children,
         [System.Windows.Automation.Condition]::TrueCondition)
     foreach ($w in $windows) {
         if ($shell -notcontains $w.Current.ClassName) {
-            [void][Native]::ShowWindow([IntPtr]$w.Current.NativeWindowHandle, 6)
+            Minimize-Window ([IntPtr]$w.Current.NativeWindowHandle)
         }
     }
     Start-Sleep -Milliseconds 600
@@ -1054,19 +1106,11 @@ function Case-DesktopDrag {
     # The desktop has to be visible, or the icons cannot be reached.
     Minimize-OtherWindows
 
-    # A picture of its own on the desktop, so that the conversion can be
-    # checked afterwards. The name is one nothing else has, so the shell's
-    # list of the desktop names one file and no other.
-    $name = "0000-desktop-drag-test-$([DateTime]::Now.Ticks).png"
-    $stem = [System.IO.Path]::GetFileNameWithoutExtension($name)
-    $file = Join-Path ([Environment]::GetFolderPath("Desktop")) $name
-    $picture = New-Object System.Drawing.Bitmap 64, 64
-    for ($x = 0; $x -lt 64; $x++) {
-        for ($y = 0; $y -lt 64; $y++) { $picture.SetPixel($x, $y, [System.Drawing.Color]::Red) }
-    }
-    $picture.Save($file, [System.Drawing.Imaging.ImageFormat]::Png)
-    $picture.Dispose()
-    Start-Sleep -Seconds 4
+    # A picture of its own on the desktop, in a format that nothing else
+    # there has, so that the application says which file was dragged.
+    $made = New-DesktopPicture
+    $stem = $made.Stem
+    $file = $made.Path
 
     $list = Get-DesktopIconList
     if ($list -eq [IntPtr]::Zero) { Say "FAIL: the desktop's list of icons was not found"; return }
@@ -1075,20 +1119,26 @@ function Case-DesktopDrag {
     if (-not $empty) { Say "FAIL: no empty place was found on the desktop"; return }
     Say ("an empty place on the desktop is at ({0}, {1})" -f $empty.X, $empty.Y)
 
-    # The icon of the picture that was made. The desktop's icons are in the
-    # same order as the shell's list of the virtual desktop, so the name of
-    # the shell gives for a clicked icon is the name of that icon.
-    $first = Get-DesktopFirstFileIndex
-    $icon = Find-DesktopIcon $list $stem $first
-    if (-not $icon) { Say "FAIL: the icon of the picture was not found on the desktop"; return }
-    Say ("the icon of the picture is at ({0}, {1})" -f $icon.X, $icon.Y)
-
-    $process = Start-App 40
+    $process = Start-App 240
     Minimize-Terminal
     Start-Sleep -Milliseconds 600
 
+    # The icon of the picture that was made. It is found by dragging it: the
+    # application says what format the drag carries, and the format of the
+    # picture is one nothing else on the desktop has.
+    $found = Invoke-DesktopDragOfFormat "bmp"
+    if (-not $found) {
+        Say "FAIL: the icon of the picture was not found on the desktop"
+        Stop-App $process
+        return
+    }
+    $icon = @{ X = $found.X; Y = $found.Y }
+    Say ("the icon of the picture is at ({0}, {1})" -f $icon.X, $icon.Y)
+    Dismiss-Wheel
+
     # First the empty desktop: a click and a drag there is not a drag of a
     # file, so the wheel must not open.
+    $before = @(Get-AppLog).Count
     [void][Native]::SetCursorPos($empty.X, $empty.Y)
     Start-Sleep -Milliseconds 500
     [Native]::mouse_event([Native]::LEFTDOWN, 0, 0, 0, [UIntPtr]::Zero)
@@ -1103,7 +1153,11 @@ function Case-DesktopDrag {
     [Native]::mouse_event([Native]::LEFTUP, 0, 0, 0, [UIntPtr]::Zero)
     Start-Sleep -Seconds 2
 
-    $log = Get-AppLog
+    # Only the lines of this gesture are looked at: the lines of an earlier
+    # gesture say nothing about this one.
+    $all = @(Get-AppLog)
+    $log = @()
+    if ($all.Count -gt $before) { $log = $all[$before..($all.Count - 1)] }
     $rejected = $log | Select-String -Pattern "carries no file" | Select-Object -First 1
     $started = $log | Select-String -Pattern "drag \d+ started in the" | Select-Object -First 1
     $opened = $log | Select-String -Pattern "the wheel is opening" | Select-Object -First 1
@@ -1117,41 +1171,21 @@ function Case-DesktopDrag {
     # choice. The drop target is registered when the wheel is drawn, and the
     # shell tells it what the drag carries when the pointer is over it, so the
     # move is what brings the file list in.
-    [void][Native]::SetCursorPos($icon.X, $icon.Y)
-    Start-Sleep -Milliseconds 500
-    [Native]::mouse_event([Native]::LEFTDOWN, 0, 0, 0, [UIntPtr]::Zero)
-    Start-Sleep -Milliseconds 350
-    for ($i = 1; $i -le 10; $i++) {
-        [void][Native]::SetCursorPos(($icon.X + $i * 12), ($icon.Y + $i * 9))
-        Start-Sleep -Milliseconds 45
-    }
-    [Native]::keybd_event(0x10, 0, 0, [UIntPtr]::Zero)
-    Start-Sleep -Milliseconds 800
-    for ($i = 1; $i -le 6; $i++) {
-        [void][Native]::SetCursorPos(($icon.X + 120 + $i * 8), ($icon.Y + 90 + $i * 6))
-        Start-Sleep -Milliseconds 90
-    }
-    Start-Sleep -Milliseconds 900
-    [Native]::keybd_event(0x10, 0, [Native]::KEYUP, [UIntPtr]::Zero)
-    [Native]::mouse_event([Native]::LEFTUP, 0, 0, 0, [UIntPtr]::Zero)
-    Start-Sleep -Seconds 2
+    $lines = Invoke-DesktopDrag $icon.X $icon.Y $false
     Stop-App $process
 
-    $log = Get-AppLog
-    $started = $log | Select-String -Pattern "drag \d+ started in the" | Select-Object -First 1
-    $opened = $log | Select-String -Pattern "the wheel is opening" | Select-Object -First 1
-    $carried = $log | Select-String -Pattern "the drop target reports" | Select-Object -First 1
-    $selection = $log | Select-String -Pattern "the selection holds" | Select-Object -Last 1
+    $started = $lines | Select-String -Pattern "drag \d+ started in the" | Select-Object -First 1
+    $opened = $lines | Select-String -Pattern "the wheel is opening" | Select-Object -First 1
     if ($started) { Say ("the log says: " + $started.Line) } else { Say "FAIL: the log does not say that a drag started" }
     if ($opened) { Say ("the log says: " + $opened.Line) } else { Say "FAIL: the wheel did not open" }
-    if ($carried) { Say ("the log says: " + $carried.Line) } else { Say "FAIL: the drop target did not report what the drag carried" }
-    if ($selection) { Say ("the log says: " + $selection.Line) }
-
     if ($started -and $opened) { Say "PASS: a drag of a desktop file opened the wheel" }
     else { Say "FAIL: a drag of a desktop file did not open the wheel" }
     # The wheel knows what is being dragged. The log does not name the file,
-    # so the number of items and the kind of the file are what can be checked.
-    if ($selection -and $selection.Line -match "1 item\(s\) of 1 kind\(s\) \(image\)") {
+    # so the format of the file is what can be checked: the picture is the
+    # only file of that format on the desktop.
+    $selection = $lines | Select-String -Pattern "the selection holds" | Select-Object -Last 1
+    if ($selection) { Say ("the log says: " + $selection.Line) }
+    if ($selection -and $selection.Line -match "1 item\(s\) of 1 kind\(s\) \(image\), in the format\(s\) bmp") {
         Say "PASS: the wheel knows what is being dragged"
     } else {
         Say "FAIL: the wheel does not know what is being dragged"
@@ -1160,6 +1194,289 @@ function Case-DesktopDrag {
     Remove-Item -Force $file -ErrorAction SilentlyContinue
     # The conversion may have left a file of its own next to the picture.
     Get-ChildItem ([Environment]::GetFolderPath("Desktop")) -Filter "$stem.*" -File -ErrorAction SilentlyContinue |
+        ForEach-Object { Remove-Item -Force $_.FullName -ErrorAction SilentlyContinue }
+}
+
+# Drags a place on the desktop and lets go of it.
+#
+# When $choose is true, the pointer is moved around the wheel until it is
+# over the choice that makes a JPEG, and the file is let go of there. The
+# application says which choice the pointer is over, so the choice is found
+# from what the application says and not from an assumption about the shape
+# of the wheel.
+#
+# It gives back the lines the application wrote while the drag was going.
+function Invoke-DesktopDrag($x, $y, [bool]$choose) {
+    $before = @(Get-AppLog).Count
+    [void][Native]::SetCursorPos($x, $y)
+    Start-Sleep -Milliseconds 400
+    [Native]::mouse_event([Native]::LEFTDOWN, 0, 0, 0, [UIntPtr]::Zero)
+    Start-Sleep -Milliseconds 300
+    for ($i = 1; $i -le 8; $i++) {
+        [void][Native]::SetCursorPos(($x + $i * 14), ($y + $i * 10))
+        Start-Sleep -Milliseconds 40
+    }
+    [Native]::keybd_event(0x10, 0, 0, [UIntPtr]::Zero)
+    Start-Sleep -Milliseconds 800
+    $wheel = Get-Wheel
+    if (-not $wheel) {
+        Note "  (the application did not say where it put the wheel)"
+    } elseif ($choose) {
+        # The pointer is walked around the wheel until it is over the choice
+        # that makes a JPEG. The wheel is only a drop target a moment after
+        # it is drawn, so the walk is given time: the pointer has to move
+        # after that, or the drag is never told what it carries.
+        $radius = $wheel.Size * ($WheelInnerRatio + $WheelOuterRatio) / 2
+        for ($step = 0; $step -lt 24; $step++) {
+            $rad = ($step * 15) * [Math]::PI / 180
+            [void][Native]::SetCursorPos([int]($wheel.CentreX + $radius * [Math]::Sin($rad)),
+                                         [int]($wheel.CentreY - $radius * [Math]::Cos($rad)))
+            Start-Sleep -Milliseconds 150
+            # Only the lines of this drag are looked at: a line from an
+            # earlier drag says nothing about where the pointer is now.
+            $lines = @(Get-AppLog)
+            $over = $lines[$before..($lines.Count - 1)] |
+                Select-String -Pattern "the pointer is over (\w+)" | Select-Object -Last 1
+            if ($over -and $over.Matches[0].Groups[1].Value -eq "JPEG") { break }
+        }
+    } else {
+        # The pointer is left on the hub, so that nothing is chosen and no
+        # file of the person using the machine is changed.
+        #
+        # The pointer is moved about inside the hub for a while. Windows
+        # looks for the window under the pointer when the pointer moves, and
+        # the wheel is only a drop target a moment after it is drawn: the
+        # pointer has to move after that, or the drag is never told what it
+        # carries.
+        for ($step = 0; $step -lt 4; $step++) {
+            Move-To-Point ([int]($wheel.CentreX + 12)) ([int]($wheel.CentreY + 8))
+            Start-Sleep -Milliseconds 200
+            Move-To-Point ([int]$wheel.CentreX) ([int]$wheel.CentreY)
+            Start-Sleep -Milliseconds 200
+        }
+        Start-Sleep -Milliseconds 300
+    }
+    [Native]::keybd_event(0x10, 0, [Native]::KEYUP, [UIntPtr]::Zero)
+    [Native]::mouse_event([Native]::LEFTUP, 0, 0, 0, [UIntPtr]::Zero)
+    Start-Sleep -Seconds 2
+    $lines = @(Get-AppLog)
+    if ($lines.Count -le $before) { return @() }
+    return $lines[$before..($lines.Count - 1)]
+}
+
+# Takes the wheel away.
+#
+# A drag that chooses nothing leaves the wheel up, and the wheel would then
+# be in the way of the drag after it: the pointer would be over the wheel and
+# not over the desktop. Escape is how a person takes it away.
+function Dismiss-Wheel {
+    $before = @(Get-AppLog).Count
+    [Native]::keybd_event(0x1B, 0, 0, [UIntPtr]::Zero)
+    Start-Sleep -Milliseconds 200
+    [Native]::keybd_event(0x1B, 0, [Native]::KEYUP, [UIntPtr]::Zero)
+    # The wheel is taken away over a moment, and the desktop is only clear
+    # when the window is hidden.
+    $deadline = (Get-Date).AddSeconds(6)
+    while ((Get-Date) -lt $deadline) {
+        $lines = @(Get-AppLog)
+        if ($lines.Count -gt $before) {
+            $hidden = $lines[$before..($lines.Count - 1)] |
+                Where-Object { $_ -match "the overlay was hidden" }
+            if ($hidden) { Start-Sleep -Milliseconds 400; return }
+        }
+        Start-Sleep -Milliseconds 100
+    }
+}
+
+# The places on the desktop where an icon may be.
+#
+# The icons are in a grid in the top left corner of the desktop. The special
+# items — This PC, the Recycle Bin and the like — come first and are not
+# dragged: one of them opens a window, and the desktop is in a different
+# order afterwards.
+function Get-DesktopCells {
+    $cells = @()
+    for ($column = 1; $column -lt 6; $column++) {
+        for ($row = 0; $row -lt 12; $row++) {
+            if ($column -eq 1 -and $row -lt 3) { continue }
+            $cells += @{ X = (15 + $column * 80); Y = (15 + $row * 85) }
+        }
+    }
+    return $cells
+}
+
+# Drags the places on the desktop until one of them carries a file of the
+# given format, and gives back the drag that carried it.
+#
+# The icons on the desktop are not in the order of the shell's list of the
+# desktop, and they move when a file is added to the desktop, so the icon of
+# a file is found by dragging the icons: the application says what format
+# the drag carries, and a format that nothing else on the desktop has
+# therefore names one file and no other.
+#
+# The pointer is left on the hub, so that nothing is chosen and no file of
+# the person using the machine is changed.
+function Invoke-DesktopDragOfFormat($format) {
+    foreach ($cell in (Get-DesktopCells)) {
+        $lines = Invoke-DesktopDrag $cell.X $cell.Y $false
+        $carried = $lines | Select-String -Pattern "in the format\(s\) (\w+)" | Select-Object -First 1
+        if ($carried -and $carried.Matches[0].Groups[1].Value -eq $format) {
+            Note ("  the icon at ({0}, {1}) carries the {2} file" -f $cell.X, $cell.Y, $format)
+            return @{ X = $cell.X; Y = $cell.Y; Lines = $lines }
+        }
+        Dismiss-Wheel
+    }
+    return $null
+}
+
+# Says what the application made of a drag, and whether the wheel had
+# something to offer.
+#
+# The file list of a drag that started on the desktop comes from the drop
+# target, and it only arrives once the pointer is over the wheel. The wheel
+# must offer the operations of the file that is really being dragged, and
+# not the empty wheel that it opens with.
+#
+# $expectOperations says what the file is: a picture has operations, and a
+# file that is not a picture has none, and that is said plainly.
+function Check-DesktopDrag($lines, $label, [bool]$expectOperations = $true) {
+    $carried = $lines | Select-String -Pattern "the drop target reports" | Select-Object -First 1
+    $selection = $lines | Select-String -Pattern "the selection holds" | Select-Object -Last 1
+    $offered = $lines | Select-String -Pattern "operations of the convert wheel can be used" | Select-Object -Last 1
+    $ok = $true
+    if ($carried) {
+        Note ("  " + $label + ": the log says: " + $carried.Line)
+    } else {
+        Note ("FAIL: " + $label + ": the drop target did not report what the drag carried")
+        $ok = $false
+    }
+    if ($selection) {
+        Note ("  " + $label + ": the log says: " + $selection.Line)
+    } else {
+        Note ("FAIL: " + $label + ": the application did not say what was selected")
+        $ok = $false
+    }
+    if (-not $expectOperations) { return $ok }
+    $count = 0
+    if ($offered -and $offered.Line -match "(\d+) of the \d+ operations") { $count = [int]$Matches[1] }
+    if ($count -lt 1) {
+        Note ("FAIL: " + $label + ": the wheel had nothing to offer")
+        if ($offered) { Note ("  the log says: " + $offered.Line) }
+        $ok = $false
+    } else {
+        Note ("PASS: " + $label + ": the wheel knows what is being dragged")
+    }
+    return $ok
+}
+
+# Makes a picture on the desktop in a format that nothing else there has,
+# and gives back its name and the places of the icons that carry a file.
+#
+# The format is what names the file: the application says what format the
+# drag carries, and a format that nothing else on the desktop has therefore
+# names one file and no other.
+function New-DesktopPicture {
+    # What an earlier run of a test may have left behind is taken away
+    # first: a file of the test's own making would be found by the search
+    # for the picture, and the test would be about the wrong file.
+    Get-ChildItem ([Environment]::GetFolderPath("Desktop")) -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -like "0000-desktop-test-*" -or $_.Name -like "0000-desktop-repeat-*" } |
+        ForEach-Object { Remove-Item -Force $_.FullName -ErrorAction SilentlyContinue }
+    $stem = "0000-desktop-test-$([DateTime]::Now.Ticks)"
+    $path = Join-Path ([Environment]::GetFolderPath("Desktop")) "$stem.bmp"
+    $picture = New-Object System.Drawing.Bitmap 64, 64
+    for ($x = 0; $x -lt 64; $x++) {
+        for ($y = 0; $y -lt 64; $y++) { $picture.SetPixel($x, $y, [System.Drawing.Color]::Red) }
+    }
+    $picture.Save($path, [System.Drawing.Imaging.ImageFormat]::Bmp)
+    $picture.Dispose()
+    Start-Sleep -Seconds 4
+    return @{ Stem = $stem; Path = $path }
+}
+
+function Case-DesktopRepeat {
+    $script:CaseName = "desktoprepeat"
+    Say ""
+    Say "=== case 10: the same desktop file, dragged again ==="
+    # A file may be dragged as often as the person wants. Every drag is a
+    # drag of its own, and the wheel must offer the operations of the file
+    # that is being dragged now.
+    Get-Process explorer -ErrorAction SilentlyContinue | ForEach-Object { $_.CloseMainWindow() | Out-Null }
+    Start-Sleep -Seconds 3
+    Minimize-OtherWindows
+
+    $desktop = [Environment]::GetFolderPath("Desktop")
+    # A picture in a format that nothing else on the desktop has, so that
+    # the application says which file was dragged.
+    $made = New-DesktopPicture
+    $stem = $made.Stem
+
+    $process = Start-App 300
+    Minimize-Terminal
+    Start-Sleep -Milliseconds 600
+
+    # The icon of the picture. It is found by dragging, and the application
+    # says what format the drag carries.
+    $found = Invoke-DesktopDragOfFormat "bmp"
+    if (-not $found) {
+        Say "FAIL: the icon of the picture was not found on the desktop"
+        Stop-App $process
+        return
+    }
+    $icon = @{ X = $found.X; Y = $found.Y }
+    Dismiss-Wheel
+
+    # The first drag, and the conversion. The wheel goes away when the work
+    # is done, so the drag after it is a drag of the desktop and not of the
+    # wheel.
+    $lines = Invoke-DesktopDrag $icon.X $icon.Y $true
+    $ok = Check-DesktopDrag $lines "the first drag"
+    $made = @(Get-ChildItem $desktop -Filter "$stem.*" -File -ErrorAction SilentlyContinue)
+    if ($made.Count -ge 2) {
+        Note "PASS: the conversion made a file beside the picture"
+    } else {
+        Note "FAIL: the conversion made no file"
+        $ok = $false
+    }
+
+    # The same file again, right after the conversion. This is the case that
+    # used to come up with an empty wheel.
+    #
+    # The conversion put a file on the desktop, and the desktop moves its
+    # icons when that happens, so the icon is looked for again.
+    $found = Invoke-DesktopDragOfFormat "bmp"
+    if (-not $found) {
+        Say "FAIL: the icon of the picture was not found on the desktop"
+        Stop-App $process
+        return
+    }
+    $lines = $found.Lines
+    if (-not (Check-DesktopDrag $lines "the second drag, the same file")) { $ok = $false }
+    Dismiss-Wheel
+
+    # A different file. What it is does not matter: what matters is that the
+    # drag carries something else, and that the drag after it carries its
+    # own file again.
+    $other = Invoke-DesktopDragOfFormat "png"
+    if ($other) { $lines = $other.Lines } else { $lines = @() }
+    if (-not (Check-DesktopDrag $lines "the third drag, another file" $false)) { $ok = $false }
+    Dismiss-Wheel
+
+    # And the first file once more.
+    $found = Invoke-DesktopDragOfFormat "bmp"
+    if (-not $found) {
+        Say "FAIL: the icon of the picture was not found on the desktop"
+        Stop-App $process
+        return
+    }
+    $lines = $found.Lines
+    if (-not (Check-DesktopDrag $lines "the fourth drag, the first file again")) { $ok = $false }
+    Dismiss-Wheel
+
+    Stop-App $process
+    if ($ok) { Say "PASS: every drag of the desktop file knew what it was carrying" }
+
+    Get-ChildItem $desktop -Filter "$stem.*" -File -ErrorAction SilentlyContinue |
         ForEach-Object { Remove-Item -Force $_.FullName -ErrorAction SilentlyContinue }
 }
 
@@ -1248,15 +1565,27 @@ Get-Process open-tangerine -ErrorAction SilentlyContinue | ForEach-Object {
 }
 Start-Sleep -Milliseconds 500
 
-if ($Only -eq "" -or $Only -eq "one") { Case-OneFile }
-if ($Only -eq "" -or $Only -eq "many") { Case-MultipleFiles }
-if ($Only -eq "" -or $Only -eq "consecutive") { Case-Consecutive }
-if ($Only -eq "" -or $Only -eq "cancel") { Case-Cancelled }
-if ($Only -eq "" -or $Only -eq "unselected") { Case-Unselected }
-if ($Only -eq "" -or $Only -eq "stays") { Case-WheelStays }
-if ($Only -eq "" -or $Only -eq "hub") { Case-DropOnHub }
-if ($Only -eq "" -or $Only -eq "desktop") { Case-DesktopDrag }
-if ($Only -eq "" -or $Only -eq "devwheel") { Case-DevelopmentWheel }
+# Runs a case, and gives the windows that were put out of the way back.
+#
+# The person who is watching the tests gets their windows back after every
+# case, so that a case does not leave the machine in a state nobody expects.
+function Run-Case($case) {
+    & $case
+    Restore-Windows
+}
+
+if ($Only -eq "" -or $Only -eq "one") { Run-Case { Case-OneFile } }
+if ($Only -eq "" -or $Only -eq "many") { Run-Case { Case-MultipleFiles } }
+if ($Only -eq "" -or $Only -eq "consecutive") { Run-Case { Case-Consecutive } }
+if ($Only -eq "" -or $Only -eq "cancel") { Run-Case { Case-Cancelled } }
+if ($Only -eq "" -or $Only -eq "unselected") { Run-Case { Case-Unselected } }
+if ($Only -eq "" -or $Only -eq "stays") { Run-Case { Case-WheelStays } }
+if ($Only -eq "" -or $Only -eq "hub") { Run-Case { Case-DropOnHub } }
+if ($Only -eq "" -or $Only -eq "desktop") { Run-Case { Case-DesktopDrag } }
+if ($Only -eq "" -or $Only -eq "desktoprepeat") { Run-Case { Case-DesktopRepeat } }
+if ($Only -eq "" -or $Only -eq "devwheel") { Run-Case { Case-DevelopmentWheel } }
+
+Restore-Windows
 
 Say ""
 Say "the report is at $report"
