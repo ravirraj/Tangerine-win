@@ -29,6 +29,14 @@ pub struct DropState {
     pub paths: RefCell<Vec<PathBuf>>,
     /// Whether a drag is over the window.
     pub over: Cell<bool>,
+    /// Whether the pointer has left the window.
+    ///
+    /// The pointer leaves the window for a moment all the time: the file is
+    /// moved a little, or the wheel is pushed out of the way. The application
+    /// gives the pointer a moment to come back before it ends the
+    /// interaction, and this flag is what it watches to know that the pointer
+    /// is outside.
+    pub left: Cell<bool>,
     /// Whether the drag was dropped on the window.
     pub dropped: Cell<bool>,
     /// Where the pointer is, in **screen** pixels.
@@ -87,6 +95,7 @@ impl IDropTarget_Impl for DropTargetImpl_Impl {
             None => Vec::new(),
         };
         self.state.over.set(true);
+        self.state.left.set(false);
         self.state.point.set((point.x, point.y));
         // SAFETY: the pointer is given by the system and is valid.
         unsafe { *effect = DROPEFFECT_COPY };
@@ -99,6 +108,8 @@ impl IDropTarget_Impl for DropTargetImpl_Impl {
         point: &POINTL,
         effect: *mut DROPEFFECT,
     ) -> windows::core::Result<()> {
+        // The pointer is over the window: it is not outside any more.
+        self.state.left.set(false);
         self.state.point.set((point.x, point.y));
         // SAFETY: the pointer is given by the system and is valid.
         unsafe { *effect = DROPEFFECT_COPY };
@@ -107,6 +118,7 @@ impl IDropTarget_Impl for DropTargetImpl_Impl {
 
     fn DragLeave(&self) -> windows::core::Result<()> {
         self.state.over.set(false);
+        self.state.left.set(true);
         Ok(())
     }
 

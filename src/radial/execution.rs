@@ -71,6 +71,9 @@ pub enum Failure {
     /// The result is already there, and the policy was to stop.
     OutputCollision { path: PathBuf },
     /// Something went wrong while it ran.
+    ///
+    /// The text says what went wrong in a few words. It is never a path and
+    /// never the name of a file: the log has the detail.
     Error(String),
 }
 
@@ -87,6 +90,25 @@ impl Failure {
             Failure::InvalidInput(_) => "the files are not what the operation needs",
             Failure::OutputCollision { .. } => "the result is already there",
             Failure::Error(_) => "something went wrong while it ran",
+        }
+    }
+
+    /// The message the person sees.
+    ///
+    /// It says what happened, in as many words as the failure knows, and
+    /// nothing else: no name of a file and no path. The log has the detail.
+    pub fn message(&self) -> String {
+        match self {
+            Failure::UnknownOperation => "there is no such operation".to_string(),
+            Failure::NotImplemented => "that operation is not implemented".to_string(),
+            Failure::ProcessorMissing(_) => {
+                "the program that does the work is not there".to_string()
+            }
+            // The reason says what was wrong with the files, and it never
+            // carries a path.
+            Failure::InvalidInput(reason) => reason.clone(),
+            Failure::OutputCollision { .. } => "the result is already there".to_string(),
+            Failure::Error(reason) => reason.clone(),
         }
     }
 }
@@ -340,6 +362,53 @@ mod tests {
             Outcome::Failed {
                 reason: Failure::NotImplemented
             }
+        );
+    }
+
+    #[test]
+    fn the_message_of_a_failure_says_what_went_wrong() {
+        // Every failure has its own words, so that the person is told what
+        // happened and not that something happened.
+        assert_eq!(
+            Failure::UnknownOperation.message(),
+            "there is no such operation"
+        );
+        assert_eq!(
+            Failure::NotImplemented.message(),
+            "that operation is not implemented"
+        );
+        assert_eq!(
+            Failure::ProcessorMissing("image".to_string()).message(),
+            "the program that does the work is not there"
+        );
+        assert_eq!(
+            Failure::InvalidInput("the file is already in that format".to_string()).message(),
+            "the file is already in that format"
+        );
+        assert_eq!(
+            Failure::OutputCollision {
+                path: PathBuf::from("C:\\Users\\test\\photo.png")
+            }
+            .message(),
+            "the result is already there"
+        );
+    }
+
+    #[test]
+    fn the_message_of_a_failure_never_carries_a_path() {
+        // The result that is already there names no file: the message says
+        // what happened, not which file it happened to.
+        let message = Failure::OutputCollision {
+            path: PathBuf::from("C:\\Users\\test\\photo.png"),
+        }
+        .message();
+        assert!(
+            !message.contains('\\'),
+            "the message carries a path: {message}"
+        );
+        assert!(
+            !message.contains("photo.png"),
+            "the message names a file: {message}"
         );
     }
 

@@ -44,6 +44,12 @@ export component Wheel inherits Window {
     in property <string> fading-path: "";
     in property <float> fading: 0;
 
+    // The short message about what came of the last operation. It is drawn
+    // on its own, so that it can be shown after the wheel has gone.
+    in property <string> notice-text: "";
+    in property <bool> notice-failed: false;
+    in property <float> notice-appear: 0;
+
     background: #00000000;
 
     Rectangle {
@@ -203,6 +209,34 @@ export component Wheel inherits Window {
                 width: 130px;
                 height: 20px;
             }
+        }
+    }
+
+    // The message about what came of the last operation. It sits below the
+    // wheel, so that it can be shown on its own once the wheel has gone.
+    Rectangle {
+        visible: root.notice-appear > 0;
+        opacity: root.notice-appear;
+        x: (root.disc-size - root.disc-size * 0.78) / 2 * 1px;
+        y: (root.disc-size - root.disc-size * 0.1) * 1px;
+        width: root.disc-size * 0.78 * 1px;
+        height: root.disc-size * 0.08 * 1px;
+        border-radius: root.disc-size * 0.04 * 1px;
+        background: root.notice-failed ? #ff2a1f24 : #ff1a2a1f;
+        border-width: 1px;
+        border-color: root.notice-failed ? #ff6b3038 : #ff2f6b3a;
+
+        Text {
+            text: root.notice-text;
+            color: root.notice-failed ? #ffb9a1a4 : #ffa1c9a6;
+            font-size: root.disc-size * 0.03 * 1px;
+            font-weight: 700;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            x: 0px;
+            y: 0px;
+            width: root.disc-size * 0.78 * 1px;
+            height: root.disc-size * 0.08 * 1px;
         }
     }
 }

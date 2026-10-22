@@ -106,10 +106,16 @@ pub struct ViewModel {
     pub hub_size: f32,
     pub heading_size: f32,
     pub subtitle_size: f32,
+    /// The message about what came of the last operation.
+    pub notice_text: String,
+    /// Whether that message is bad news.
+    pub notice_failed: bool,
+    /// How much of that message is showing.
+    pub notice_appear: f32,
 }
 
 /// How the wheel is drawn at this moment.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct ViewOptions {
     /// How many device pixels there are per logical pixel.
     pub scale: f32,
@@ -123,6 +129,22 @@ pub struct ViewOptions {
     pub emphasis_index: Option<usize>,
     /// The segment that is losing the pointer.
     pub fading_index: Option<usize>,
+    /// The message about what came of the last operation.
+    pub notice: Option<Notice>,
+    /// How much of that message is showing.
+    pub notice_appear: f32,
+}
+
+/// A short message about what came of an operation.
+///
+/// The message says what happened and nothing else: no name of a file and no
+/// path. The log has the detail; this is what the person sees.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Notice {
+    /// The words.
+    pub text: String,
+    /// Whether it is bad news.
+    pub failed: bool,
 }
 
 /// Builds the view model from the controller's state.
@@ -226,6 +248,13 @@ pub fn build_view_model(
         hub_size: HUB_SIZE * scale * appear,
         heading_size: 12.0 * scale * appear,
         subtitle_size: 10.0 * scale * appear,
+        notice_text: options
+            .notice
+            .as_ref()
+            .map(|notice| notice.text.clone())
+            .unwrap_or_default(),
+        notice_failed: options.notice.as_ref().is_some_and(|notice| notice.failed),
+        notice_appear: options.notice_appear,
     }
 }
 
@@ -297,6 +326,9 @@ impl WheelUi {
         self.wheel.set_emphasis(model.emphasis);
         self.wheel.set_fading_path(model.fading_path.clone().into());
         self.wheel.set_fading(model.fading);
+        self.wheel.set_notice_text(model.notice_text.clone().into());
+        self.wheel.set_notice_failed(model.notice_failed);
+        self.wheel.set_notice_appear(model.notice_appear);
     }
 
     /// Draws the wheel if anything changed. Returns whether it did.
@@ -359,6 +391,8 @@ mod tests {
             fading: 0.0,
             emphasis_index: None,
             fading_index: None,
+            notice: None,
+            notice_appear: 0.0,
         }
     }
 

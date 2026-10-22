@@ -185,6 +185,19 @@ struct App {
     quit: bool,
     /// What the drag that is over the wheel is carrying.
     drop_state: std::rc::Rc<DropState>,
+    /// How the drag that is over the wheel is getting on.
+    ///
+    /// This is where the acceptance of a drop lives, and where the leave of
+    /// the pointer is given a moment to come back. Every delayed thing is
+    /// checked against the drag it belongs to, so that a cancellation of one
+    /// drag cannot touch another.
+    lifecycle: crate::lifecycle::DragLifecycle,
+    /// The message about what came of the last operation.
+    ///
+    /// The message is shown on the wheel's own window, so that it can be
+    /// shown after the wheel has gone: the work goes on while the wheel is
+    /// away.
+    notice: Option<crate::ui::notice::Showing>,
     /// The COM object Windows talks to when a drag passes over the wheel.
     drop_target: IDropTarget,
     /// Watches the scroll wheel while the wheel is on screen.
@@ -312,6 +325,8 @@ impl App {
             quit: false,
             drop_state,
             drop_target,
+            lifecycle: crate::lifecycle::DragLifecycle::new(),
+            notice: None,
             wheel_watcher: None,
             opened_at: None,
             keyboard_owns_highlight: false,
@@ -522,12 +537,17 @@ impl App {
     /// The work is done on a worker: a conversion can take a while, and the
     /// wheel has to keep moving while it does. What comes of it is reported
     /// when the next frame is drawn.
-    fn start_operation(&self, request: execution::Request) {
+    fn start_operation(&mut self, request: execution::Request) {
         let Some(capabilities) = self.capabilities.clone() else {
             diagnostics::log(
                 Level::Warn,
                 "action",
                 "the operation was not started: the conversion program is not there",
+            );
+            // The person is told: nothing happened, and why.
+            self.show_notice(
+                "The program that does the work is not there".to_string(),
+                true,
             );
             return;
         };
@@ -565,18 +585,29 @@ impl App {
     }
 
     /// Says what came of an operation.
-    fn report_outcome(&self, operation: &str, outcome: &execution::Outcome) {
+    fn report_outcome(&mut self, operation: &str, outcome: &execution::Outcome) {
         match outcome {
-            execution::Outcome::Succeeded { outputs } => diagnostics::log(
-                Level::Info,
-                "action",
-                &format!("the operation {operation} wrote {} file(s)", outputs.len()),
-            ),
-            execution::Outcome::Cancelled => diagnostics::log(
-                Level::Info,
-                "action",
-                &format!("the operation {operation} was cancelled"),
-            ),
+            execution::Outcome::Succeeded { outputs } => {
+                diagnostics::log(
+                    Level::Info,
+                    "action",
+                    &format!("the operation {operation} wrote {} file(s)", outputs.len()),
+                );
+                let what = registry::operation_by_id(operation)
+                    .map(|operation| operation.label.to_string())
+                    .unwrap_or_else(|| "The operation".to_string());
+                let count = outputs.len();
+                let noun = if count == 1 { "file" } else { "files" };
+                self.show_notice(format!("{what}: {count} {noun} written"), false);
+            }
+            execution::Outcome::Cancelled => {
+                diagnostics::log(
+                    Level::Info,
+                    "action",
+                    &format!("the operation {operation} was cancelled"),
+                );
+                self.show_notice("The operation was cancelled".to_string(), true);
+            }
             execution::Outcome::Failed { reason } => {
                 // What the operation would have done to the files is said as
                 // well: an operation that writes over the original is the one
@@ -594,8 +625,21 @@ impl App {
                         self.selection.shape().name(),
                     ),
                 );
+                // The message says what was wrong, and no more than that: no
+                // name of a file and no path.
+                self.show_notice(reason.message(), true);
             }
         }
+    }
+
+    /// Shows a message about what came of an operation.
+    fn show_notice(&mut self, text: String, failed: bool) {
+        diagnostics::log(Level::Info, "notice", &format!("the message is: {text}"));
+        self.notice = Some(crate::ui::notice::Showing::new(
+            text,
+            failed,
+            Instant::now(),
+        ));
     }
 
     /// The scroll wheel moves between the three wheels.
@@ -689,6 +733,7 @@ impl App {
         self.handle_drop();
         self.handle_drag();
         self.handle_release();
+        self.handle_leave(now);
         self.handle_modifiers();
         self.handle_scroll();
         self.handle_hover();
@@ -799,8 +844,8 @@ impl App {
             return;
         }
         diagnostics::log(Level::Info, "drag", "the drag was dropped on the wheel");
-        // The drop is the choice, so the end of the drag no longer has to be
-        // acted on.
+        // The end of the drag no longer has to be acted on: the drop is the
+        // choice.
         self.pending_release = None;
         if self.controller.state() != InteractionState::WheelVisible {
             // The wheel is not up any more. The drop was late, and there is
@@ -820,10 +865,37 @@ impl App {
         // The segment under the drop is lit, whether there is one or not, so
         // that the end of the drag cannot choose another one.
         self.dispatch(InteractionEvent::SegmentEntered(index));
-        if let Some(index) = index {
-            // The choice is made with the files that belong to this drag, and
-            // both are taken before the wheel is hidden.
-            self.dispatch(InteractionEvent::SegmentSelected { index });
+        match index {
+            Some(index) => {
+                // The drop was accepted. Nothing that comes afterwards may
+                // undo it: the work is started on a worker of its own, and it
+                // goes on whether the wheel is up or not.
+                self.lifecycle.accept();
+                diagnostics::log(
+                    Level::Info,
+                    "drag",
+                    &format!(
+                        "the drop of drag {} was accepted on segment {index}",
+                        self.lifecycle.session()
+                    ),
+                );
+                // The choice is made with the files that belong to this drag,
+                // and both are taken before the wheel is hidden.
+                self.dispatch(InteractionEvent::SegmentSelected { index });
+            }
+            None => {
+                // The file was let go of on the hub, or on a gap. That is a
+                // cancellation and not a choice: nothing is run, and the
+                // wheel goes away so that it is not in the way of the next
+                // drag.
+                diagnostics::log(
+                    Level::Info,
+                    "drag",
+                    "the file was let go of on the hub, so nothing is run",
+                );
+                self.lifecycle.cancel();
+                self.dispatch(InteractionEvent::DragCancelled);
+            }
         }
     }
 
@@ -837,6 +909,9 @@ impl App {
         self.session.begin(session, source);
         // A new gesture makes the end of an old one irrelevant.
         self.pending_release = None;
+        // The life of the drag before is over: nothing it left waiting may
+        // act on this drag.
+        self.lifecycle.begin(session);
         // The files the drop target told us about belong to the drag that
         // was running then. They are dropped here, so that a drag that starts
         // before the pointer is over the wheel is not given the files of the
@@ -903,7 +978,61 @@ impl App {
             "drag",
             "the drop did not come, so the segment that is lit is taken",
         );
+        // The drag is over: nothing that was waiting may act on it now.
+        self.lifecycle.cancel();
         self.dispatch(InteractionEvent::DragEnded);
+    }
+
+    /// Watches the pointer being outside the wheel.
+    ///
+    /// The pointer leaves the wheel for a moment all the time: the file is
+    /// moved a little, or the wheel is pushed out of the way. A pointer that
+    /// comes back within a moment keeps the interaction alive. A pointer that
+    /// stays outside ends it, so that the wheel is not left standing over a
+    /// drag that is going somewhere else.
+    ///
+    /// The wait is only ended for the drag it belongs to, and a drag whose
+    /// drop was already accepted is never ended by it.
+    fn handle_leave(&mut self, now: Instant) {
+        if self.drop_state.left.get() {
+            if !self.lifecycle.is_leaving() {
+                diagnostics::log(
+                    Level::Debug,
+                    "drag",
+                    &format!(
+                        "the pointer left the wheel in drag {}",
+                        self.lifecycle.session()
+                    ),
+                );
+            }
+            self.lifecycle.pointer_left(self.session.id(), now);
+        } else {
+            self.lifecycle.pointer_returned();
+        }
+        let Some(session) = self.lifecycle.leave_expired(now) else {
+            return;
+        };
+        if self.lifecycle.is_accepted() {
+            // The drop was already accepted. Nothing that comes afterwards
+            // may undo it.
+            return;
+        }
+        if session != self.session.id() {
+            // The leave belongs to a drag that is over. It may do what it
+            // likes to a drag that is not running.
+            return;
+        }
+        if self.controller.state() != InteractionState::WheelVisible {
+            // The wheel is not up: there is nothing to cancel.
+            return;
+        }
+        diagnostics::log(
+            Level::Info,
+            "drag",
+            "the pointer stayed outside the wheel, so the interaction is cancelled",
+        );
+        self.lifecycle.cancel();
+        self.dispatch(InteractionEvent::DragCancelled);
     }
 
     /// Looks at the files of the drag and says what they are.
@@ -1079,7 +1208,12 @@ impl App {
             // pointer only takes over again once it moves.
             self.keyboard_owns_highlight = true;
             match key {
-                Key::Escape => self.dispatch(InteractionEvent::EscapePressed),
+                Key::Escape => {
+                    // Escape ends the interaction, so nothing that was
+                    // waiting may act on the drag afterwards.
+                    self.lifecycle.cancel();
+                    self.dispatch(InteractionEvent::EscapePressed);
+                }
                 Key::Enter => self.dispatch(InteractionEvent::ActivatePressed),
                 Key::Left => self.dispatch(InteractionEvent::ArrowPressed { clockwise: false }),
                 Key::Right => self.dispatch(InteractionEvent::ArrowPressed { clockwise: true }),
@@ -1170,7 +1304,16 @@ impl App {
                         "the end of the drag is waiting for the drop",
                     );
                 } else {
-                    self.dispatch(InteractionEvent::DragEnded);
+                    // The file was let go of somewhere other than over the
+                    // wheel, or Windows ended the drag. Nothing is chosen: the
+                    // drag is cancelled and the wheel goes away.
+                    diagnostics::log(
+                        Level::Debug,
+                        "drag",
+                        "the drag ended outside the wheel, so it is cancelled",
+                    );
+                    self.lifecycle.cancel();
+                    self.dispatch(InteractionEvent::DragCancelled);
                 }
             }
             DragEvent::Empty { session } => {
@@ -1310,6 +1453,22 @@ impl App {
         self.animation.update(delta);
         self.animation.set_highlight(self.controller.highlighted());
 
+        // The message about the last operation goes away when its time is
+        // up.
+        let now = Instant::now();
+        if self
+            .notice
+            .as_ref()
+            .is_some_and(|notice| notice.is_over(now))
+        {
+            self.notice = None;
+        }
+        let notice = self.notice.clone();
+        let notice_appear = notice
+            .as_ref()
+            .map(|notice| notice.appear(now))
+            .unwrap_or(0.0);
+
         let visible = self.controller.state() == InteractionState::WheelVisible;
         if visible {
             self.ensure_placement();
@@ -1333,23 +1492,36 @@ impl App {
                     fading: self.animation.fading(),
                     emphasis_index: self.animation.emphasis_index(),
                     fading_index: self.animation.fading_index(),
+                    notice: notice.map(|showing| showing.notice),
+                    notice_appear,
                 },
             );
             self.last_model = Some(model.clone());
             self.ui.apply(&model);
         } else if let Some(model) = self.last_model.clone() {
-            // Keep drawing the wheel while it fades out.
+            // Keep drawing the wheel while it fades out, and the message
+            // about the last operation while it is there.
             let mut model = model;
             model.appear = self.animation.appear();
             model.emphasis = self.animation.emphasis();
             model.fading = self.animation.fading();
+            model.notice_text = notice
+                .as_ref()
+                .map(|showing| showing.notice.text.clone())
+                .unwrap_or_default();
+            model.notice_failed = notice.as_ref().is_some_and(|showing| showing.notice.failed);
+            model.notice_appear = notice_appear;
             self.ui.apply(&model);
         }
 
         // The wheel is on the screen while it is up, and while it is fading
         // away. It is placed before it is drawn, so it can never appear in
         // the wrong place, and it is shown and hidden exactly once each time.
-        let on_screen = self.animation.appear() > 0.0;
+        //
+        // The window stays on the screen a moment longer when there is a
+        // message to show: the work goes on while the wheel is away, and
+        // what came of it is said on the same window.
+        let on_screen = self.animation.appear() > 0.0 || notice_appear > 0.0;
         if on_screen {
             self.ensure_placement();
             let drawn = self.ui.render();

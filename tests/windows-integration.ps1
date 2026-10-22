@@ -919,7 +919,8 @@ function Case-DropOnHub {
 
     $log = Get-AppLog
     $drop = $log | Select-String -Pattern "the drop landed at" | Select-Object -First 1
-    $action = $log | Select-String -Pattern "placeholder:" | Select-Object -First 1
+    $action = $log | Select-String -Pattern "the operation .* was not run|the operation .* wrote" | Select-Object -First 1
+    $cancelled = $log | Select-String -Pattern "let go of on the hub" | Select-Object -First 1
     if ($drop) {
         Say ("the log says: " + $drop.Line)
     } else {
@@ -929,6 +930,90 @@ function Case-DropOnHub {
         Say "note: Windows did not hand the drop over this time, so the choice was made from the segment that was lit"
     }
     if ($action) { Say ("FAIL: something was run: " + $action.Line) } else { Say "PASS: nothing was run" }
+    # The hub is not a choice: the interaction is cancelled and the wheel goes
+    # away, so that it is not in the way of the next drag.
+    if ($cancelled) {
+        Say ("the log says: " + $cancelled.Line)
+        Say "PASS: the hub cancelled the interaction"
+    } else {
+        Say "FAIL: the hub did not cancel the interaction"
+    }
+}
+
+function Case-ReleasedOutside {
+    $script:CaseName = "outside"
+    Say ""
+    Say "=== case 11: a drag that is released outside the wheel ==="
+    # A file that is let go of away from the wheel is not a choice: the
+    # interaction is cancelled, nothing is run, and the wheel goes away.
+    $folder = Join-Path $root "itest-outside"
+    if (Test-Path $folder) { Remove-Item -Recurse -Force $folder }
+    New-Item -ItemType Directory -Force -Path $folder | Out-Null
+    Set-Content (Join-Path $folder "outside.txt") "hello"
+
+    Get-Process explorer -ErrorAction SilentlyContinue | ForEach-Object { $_.CloseMainWindow() | Out-Null }
+    Start-Sleep -Seconds 2
+    Minimize-Terminal
+    Start-Process explorer.exe -ArgumentList "/e,`"$folder`""
+    Start-Sleep -Seconds 4
+
+    $window = Get-ExplorerWindow "itest-outside*"
+    if ($null -eq $window) { Say "FAIL: the Explorer window did not open"; return }
+    $hwnd = [IntPtr]$window.Current.NativeWindowHandle
+    [void][Native]::ShowWindow($hwnd, 3)
+    [void][Native]::SetForegroundWindow($hwnd)
+    Start-Sleep -Seconds 2
+    Minimize-Terminal
+
+    $at = Select-Item "itest-outside*" "outside.txt" $false
+    Minimize-Terminal
+    [void][Native]::SetForegroundWindow($hwnd)
+    Start-Sleep -Milliseconds 500
+
+    $process = Start-App 25
+    Minimize-Terminal
+    [void][Native]::SetForegroundWindow($hwnd)
+    Start-Sleep -Milliseconds 500
+
+    # The wheel opens around the pointer, and the file is then dragged away
+    # from it and let go of there.
+    [void][Native]::SetCursorPos($at[0], $at[1])
+    Start-Sleep -Milliseconds 500
+    [Native]::mouse_event([Native]::LEFTDOWN, 0, 0, 0, [UIntPtr]::Zero)
+    Start-Sleep -Milliseconds 350
+    for ($i = 1; $i -le 10; $i++) {
+        [void][Native]::SetCursorPos(($at[0] + $i * 4), ($at[1] + $i * 3))
+        Start-Sleep -Milliseconds 45
+    }
+    [Native]::keybd_event(0x10, 0, 0, [UIntPtr]::Zero)
+    Start-Sleep -Milliseconds 900
+
+    # Away from the wheel: the pointer is moved well clear of it, so that the
+    # drag leaves the wheel before the file is let go of.
+    $wheel = Get-Wheel
+    if (-not $wheel) {
+        Say "FAIL: the application did not say where it put the wheel"
+    } else {
+        [void][Native]::SetCursorPos([int]($wheel.CentreX + 500), [int]($wheel.CentreY + 320))
+        Start-Sleep -Milliseconds 700
+    }
+
+    [Native]::keybd_event(0x10, 0, [Native]::KEYUP, [UIntPtr]::Zero)
+    Start-Sleep -Milliseconds 200
+    [Native]::mouse_event([Native]::LEFTUP, 0, 0, 0, [UIntPtr]::Zero)
+    Start-Sleep -Seconds 2
+    Stop-App $process
+
+    $log = Get-AppLog
+    $action = $log | Select-String -Pattern "the operation .* was not run|the operation .* wrote" | Select-Object -First 1
+    $cancelled = $log | Select-String -Pattern "ended outside the wheel|stayed outside the wheel" | Select-Object -First 1
+    if ($action) { Say ("FAIL: something was run: " + $action.Line) } else { Say "PASS: nothing was run" }
+    if ($cancelled) {
+        Say ("the log says: " + $cancelled.Line)
+        Say "PASS: the drag was cancelled"
+    } else {
+        Say "FAIL: the drag was not cancelled"
+    }
 }
 
 function Get-DesktopIconList {
@@ -1537,11 +1622,11 @@ function Case-DevelopmentWheel {
     Stop-App $process
 
     $log = Get-AppLog
-    $actions = @($log | Select-String -Pattern "placeholder:")
+    $actions = @($log | Select-String -Pattern "the operation .* was not run|the operation .* wrote")
     $refused = $log | Select-String -Pattern "was not run" | Select-Object -First 1
     if ($actions.Count -eq 1) {
         Say ("the log says: " + $actions[0].Line)
-        Say "PASS: the choice was made and the action ran exactly once"
+        Say "PASS: the choice was made and the operation was tried once"
     } else {
         Say "FAIL: the action ran $($actions.Count) times"
     }
@@ -1581,6 +1666,7 @@ if ($Only -eq "" -or $Only -eq "cancel") { Run-Case { Case-Cancelled } }
 if ($Only -eq "" -or $Only -eq "unselected") { Run-Case { Case-Unselected } }
 if ($Only -eq "" -or $Only -eq "stays") { Run-Case { Case-WheelStays } }
 if ($Only -eq "" -or $Only -eq "hub") { Run-Case { Case-DropOnHub } }
+if ($Only -eq "" -or $Only -eq "outside") { Run-Case { Case-ReleasedOutside } }
 if ($Only -eq "" -or $Only -eq "desktop") { Run-Case { Case-DesktopDrag } }
 if ($Only -eq "" -or $Only -eq "desktoprepeat") { Run-Case { Case-DesktopRepeat } }
 if ($Only -eq "" -or $Only -eq "devwheel") { Run-Case { Case-DevelopmentWheel } }

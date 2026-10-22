@@ -220,6 +220,13 @@ impl RadialController {
                 self.reset();
                 vec![Effect::None]
             }
+            InteractionEvent::DragCancelled => {
+                // The drag was cancelled before the wheel was even shown: the
+                // wheel goes away and nothing is run.
+                self.state = InteractionState::Cancelling;
+                self.interactive = false;
+                vec![Effect::HideWheel]
+            }
             InteractionEvent::DragPayloadResolved { paths } => {
                 // The shell's answer for this session is the list. It is set
                 // even when it is empty: a session with no files must not keep
@@ -311,6 +318,14 @@ impl RadialController {
                     }
                 }
             }
+            InteractionEvent::DragCancelled => {
+                // The drag was cancelled: the file was let go of somewhere
+                // else, or Windows ended the drag. Nothing is run, and the
+                // wheel goes away.
+                self.state = InteractionState::Cancelling;
+                self.interactive = false;
+                vec![Effect::HideWheel]
+            }
             InteractionEvent::ModeStepped(delta) => {
                 self.mode = self.mode.stepped(delta);
                 self.highlighted = None;
@@ -352,7 +367,10 @@ impl RadialController {
                 self.state = InteractionState::Cancelling;
                 vec![Effect::HideWheel]
             }
-            // A new drag while an action runs must not open a second wheel.
+            // A new drag while an action runs must not open a second wheel,
+            // and a cancellation must not stop the work that is already
+            // running: the work is on a worker of its own, and what comes of
+            // it is reported when it is done.
             _ => vec![Effect::None],
         }
     }
@@ -581,6 +599,86 @@ mod tests {
         assert_eq!(c.state(), InteractionState::Idle);
         assert!(c.files().is_empty());
         assert!(c.segments().is_empty());
+    }
+
+    #[test]
+    fn a_drop_on_a_choice_hides_the_wheel_and_runs_the_operation_once() {
+        let mut c = controller();
+        open_wheel(&mut c);
+        let effects = c.handle(InteractionEvent::SegmentSelected { index: 0 });
+        // The wheel goes away at once, and the work is started once.
+        assert!(effects.contains(&Effect::HideWheel));
+        let runs = effects
+            .iter()
+            .filter(|effect| matches!(effect, Effect::Run { .. }))
+            .count();
+        assert_eq!(runs, 1);
+    }
+
+    #[test]
+    fn a_cancelled_drag_hides_the_wheel_and_runs_nothing() {
+        let mut c = controller();
+        open_wheel(&mut c);
+        let effects = c.handle(InteractionEvent::DragCancelled);
+        assert_eq!(c.state(), InteractionState::Cancelling);
+        assert!(effects.contains(&Effect::HideWheel));
+        assert!(
+            !effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::Run { .. })),
+            "a cancelled drag ran something"
+        );
+    }
+
+    #[test]
+    fn a_cancellation_does_not_stop_the_work_that_is_running() {
+        let mut c = controller();
+        open_wheel(&mut c);
+        c.handle(InteractionEvent::SegmentSelected { index: 0 });
+        c.mark_executing();
+        assert_eq!(c.state(), InteractionState::Executing);
+        // The work is on a worker of its own: a cancellation that comes
+        // after the drop was accepted must not stop it.
+        let effects = c.handle(InteractionEvent::DragCancelled);
+        assert!(
+            !effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::Run { .. })),
+            "the work was run again"
+        );
+        assert_ne!(c.state(), InteractionState::Cancelling);
+    }
+
+    #[test]
+    fn a_new_drag_after_a_cancellation_starts_afresh() {
+        let mut c = controller();
+        open_wheel(&mut c);
+        c.handle(InteractionEvent::DragCancelled);
+        c.handle(InteractionEvent::WheelDismissed);
+        assert_eq!(c.state(), InteractionState::Idle);
+        // The next drag opens its own wheel, with its own files.
+        let effects = c.handle(InteractionEvent::DragStarted { paths: paths() });
+        assert_eq!(c.state(), InteractionState::CandidateDrag);
+        assert_eq!(effects, vec![Effect::None]);
+        assert_eq!(c.files().len(), 1);
+    }
+
+    #[test]
+    fn a_cancellation_is_safe_to_do_twice() {
+        let mut c = controller();
+        open_wheel(&mut c);
+        c.handle(InteractionEvent::DragCancelled);
+        // The same cancellation again must not run anything or wedge the
+        // interaction.
+        let effects = c.handle(InteractionEvent::DragCancelled);
+        assert!(
+            !effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::Run { .. })),
+            "a second cancellation ran something"
+        );
+        c.handle(InteractionEvent::WheelDismissed);
+        assert_eq!(c.state(), InteractionState::Idle);
     }
 
     #[test]

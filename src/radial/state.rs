@@ -64,6 +64,15 @@ pub enum InteractionEvent {
     DragPayloadResolved { paths: Vec<PathBuf> },
     /// The mouse button came up, ending the drag.
     DragEnded,
+    /// The drag was cancelled: it ended without a choice, or the pointer
+    /// left the wheel and did not come back.
+    ///
+    /// This is not the same as the drag simply ending. A drag that ends
+    /// without a drop on the wheel takes the choice that was lit, because
+    /// the person let go of the file over it. A drag that is cancelled takes
+    /// nothing: the person let go of the file somewhere else, or Windows
+    /// ended the drag.
+    DragCancelled,
     /// The modifier keys changed.
     ModifiersChanged(Modifiers),
     /// The pointer moved to a new screen position.
