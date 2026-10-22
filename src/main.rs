@@ -20,11 +20,13 @@ fn main() {
         Ok(options) => options,
         Err(message) => {
             eprintln!("{message}");
-            std::process::exit(if arguments.iter().any(|a| a == "--help" || a == "-h") {
-                0
-            } else {
-                2
+            // Asking for help or for the version is not a failure, so the
+            // program says what was asked and stops with a code that means
+            // it worked.
+            let asked = arguments.iter().any(|a| {
+                matches!(a.as_str(), "--help" | "-h" | "--version")
             });
+            std::process::exit(if asked { 0 } else { 2 });
         }
     };
 

@@ -39,22 +39,36 @@ ls -l "$APP" "$PREFIX/bin/ffmpeg.exe" "$PREFIX/bin/ffprobe.exe"
 # The tree may have changes that are not committed, and the program says so
 # with a "-dirty" ending. The two are compared on the revision itself, and the
 # changes are only reported.
-TREE_REVISION="$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
-TREE_DIRTY=""
-if [ -n "$(git -C "$ROOT" status --porcelain 2>/dev/null)" ]; then
-    TREE_DIRTY="-dirty"
+#
+# Git is not always on the path of the shell that runs this script, so the
+# tree is asked for its revision only when git can be found. The program is
+# the authority either way: it is what is being packaged.
+GIT="git"
+if ! command -v "$GIT" >/dev/null 2>&1; then
+    for candidate in "/c/Program Files/Git/cmd/git.exe" "/c/Program Files/Git/bin/git.exe"; do
+        if [ -x "$candidate" ]; then
+            GIT="$candidate"
+            break
+        fi
+    done
 fi
 APP_REVISION="$("$APP" --version 2>&1 | sed -n 's/.*revision //p')"
 APP_COMMIT="${APP_REVISION%%-dirty}"
-TREE_COMMIT="${TREE_REVISION%%-dirty}"
-if [ "$APP_COMMIT" != "$TREE_COMMIT" ]; then
-    echo "the program is from revision '$APP_REVISION', but the tree is at '$TREE_REVISION'"
-    echo "build it again: cargo build --release"
-    exit 1
-fi
-echo "the program is from revision '$APP_REVISION', and so is the tree"
-if [ "$TREE_DIRTY" != "" ] && [ "$APP_REVISION" = "$TREE_COMMIT" ]; then
-    echo "note: the tree has changes that are not committed, and the program was built without them"
+if command -v "$GIT" >/dev/null 2>&1; then
+    TREE_REVISION="$("$GIT" -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+    TREE_COMMIT="${TREE_REVISION%%-dirty}"
+    if [ "$TREE_COMMIT" != "unknown" ] && [ "$APP_COMMIT" != "$TREE_COMMIT" ]; then
+        echo "the program is from revision '$APP_REVISION', but the tree is at '$TREE_REVISION'"
+        echo "build it again: cargo build --release"
+        exit 1
+    fi
+    echo "the program is from revision '$APP_REVISION', and the tree is at '$TREE_REVISION'"
+    if [ -n "$("$GIT" -C "$ROOT" status --porcelain 2>/dev/null)" ] && [ "$APP_REVISION" = "$TREE_COMMIT" ]; then
+        echo "note: the tree has changes that are not committed, and the program was built without them"
+    fi
+else
+    echo "the program is from revision '$APP_REVISION'"
+    echo "note: git was not found, so the tree could not be compared with the program"
 fi
 
 STAGE="$DIST/$NAME"
