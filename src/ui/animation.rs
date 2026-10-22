@@ -9,9 +9,15 @@ const APPEAR_IN: f32 = 0.18;
 /// How long the wheel takes to leave, in seconds.
 const APPEAR_OUT: f32 = 0.13;
 /// How long a segment takes to light up, in seconds.
-const EMPHASIS_IN: f32 = 0.10;
+///
+/// The selection transition takes 150-200 ms; this value sits in that
+/// range so the wheel feels responsive without snapping.
+const EMPHASIS_IN: f32 = 0.15;
 /// How long a segment takes to fade out, in seconds.
-const EMPHASIS_OUT: f32 = 0.09;
+///
+/// Matches the light-up time so that entering and leaving a choice feel
+/// balanced.
+const EMPHASIS_OUT: f32 = 0.15;
 
 /// Moves `current` towards `target`, never overshooting.
 fn approach(current: f32, target: f32, speed: f32, delta: f32) -> (f32, bool) {
