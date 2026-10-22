@@ -1540,6 +1540,11 @@ impl App {
                     notice: notice.map(|showing| showing.notice),
                     notice_appear,
                     theme: self.theme,
+                    // The pointer presses a choice only when the wheel is
+                    // there to be clicked. While a file is being dragged the
+                    // button is down too, but there the pointer is choosing.
+                    preview_pressed: self.controller.is_interactive()
+                        && input::is_key_down(VK_LBUTTON),
                 },
             );
             self.last_model = Some(model.clone());

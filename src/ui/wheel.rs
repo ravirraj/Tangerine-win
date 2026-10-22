@@ -14,8 +14,7 @@ use slint::{ModelRc, PhysicalSize, VecModel};
 use crate::radial::actions::{RadialMode, Segment};
 use crate::radial::geometry::{RadialGeometry, WheelProfile};
 use crate::radial::icons;
-use crate::ui::theme::{Rgba, Theme, with_alpha};
-
+use crate::ui::theme::{Rgba, Theme};
 slint::include_modules!();
 
 /// The width of the wheel in logical pixels, before the display's own scale.
@@ -170,6 +169,13 @@ pub struct ViewOptions {
     pub notice_appear: f32,
     /// The colours the wheel is drawn with.
     pub theme: Theme,
+    /// Whether the choice the pointer is on is being pressed.
+    ///
+    /// The pointer is only pressing a choice when the wheel is there to be
+    /// clicked, which is when the wheel is interactive. While a file is being
+    /// dragged the button is down too, but there the pointer is choosing, not
+    /// pressing.
+    pub preview_pressed: bool,
 }
 
 /// A short message about what came of an operation.
@@ -204,6 +210,14 @@ pub fn build_view_model(
     let fading = options.fading;
     let disc_size = DISC_SIZE * scale;
     let theme = options.theme;
+    // The choice the pointer is on is filled with the accent of the theme,
+    // and its name and its picture are white. While it is being pressed, the
+    // accent of the pressed state is used instead.
+    let preview_accent = if options.preview_pressed {
+        theme.accent_pressed
+    } else {
+        theme.accent_hover
+    };
 
     let mut geometry = geometry;
     geometry.inner_radius *= appear;
@@ -239,7 +253,7 @@ pub fn build_view_model(
             icon_color: color(if active {
                 theme.accent_text()
             } else {
-                theme.text_secondary
+                theme.text
             }),
             icon_x: centre.x + icon_centre.x - icon_size / 2.0,
             icon_y: centre.y + icon_centre.y - icon_size / 2.0,
@@ -306,12 +320,14 @@ pub fn build_view_model(
         border_color: theme.border,
         text_color: theme.text,
         text_secondary_color: theme.text_secondary,
-        // The choice the pointer is on is the accent of the theme, and the
-        // one that is losing the pointer is the same accent, fainter.
-        emphasis_color: with_alpha(theme.accent, 0.30),
-        emphasis_border: theme.accent,
-        fading_color: with_alpha(theme.accent, 0.12),
-        fading_border: with_alpha(theme.accent, 0.50),
+        // The choice the pointer is on is filled with the accent, in one
+        // piece: there is no glow and no shadow over it. The choice that is
+        // losing the pointer goes back to being a choice, a little darker
+        // while it does.
+        emphasis_color: preview_accent,
+        emphasis_border: preview_accent,
+        fading_color: theme.hover,
+        fading_border: theme.border,
     }
 }
 
@@ -461,7 +477,25 @@ mod tests {
             notice: None,
             notice_appear: 0.0,
             theme: Theme::dark(),
+            preview_pressed: false,
         }
+    }
+
+    /// The model of a wheel of `count` choices, with one of them pointed at.
+    fn model_with(count: usize, highlighted: Option<usize>, theme: Theme) -> ViewModel {
+        let segments: Vec<Segment> = (0..count).map(segment).collect();
+        let mut options = options(1.0);
+        options.theme = theme;
+        options.emphasis_index = highlighted;
+        build_view_model(
+            &segments,
+            RadialMode::Convert,
+            highlighted,
+            count,
+            false,
+            RadialGeometry::new(count),
+            options,
+        )
     }
 
     #[test]
@@ -487,6 +521,122 @@ mod tests {
             for (index, data) in model.segments.iter().enumerate() {
                 assert_eq!(data.label, format!("Test {index}"));
             }
+        }
+    }
+
+    #[test]
+    fn a_choice_that_is_not_pointed_at_is_a_neutral_one() {
+        // Every theme has its own neutral colour for a choice, and the name
+        // and the picture on it are the primary text of the theme.
+        for theme in [Theme::light(), Theme::dark()] {
+            let model = model_with(6, None, theme);
+            for data in &model.segments {
+                assert_eq!(data.fill, color(theme.segment));
+                assert_eq!(data.label_color, color(theme.text));
+                assert_eq!(data.icon_color, color(theme.text));
+            }
+        }
+    }
+
+    #[test]
+    fn the_choice_the_pointer_is_on_is_filled_with_the_accent() {
+        // The accent is in one piece: the colour of the theme, with no
+        // transparency over it, so that there is no glow.
+        for theme in [Theme::light(), Theme::dark()] {
+            let model = model_with(6, Some(2), theme);
+            assert_eq!(model.emphasis_color, theme.accent_hover);
+            // The accent is opaque, so what is under it does not show.
+            assert_eq!(model.emphasis_color.3, 0xff);
+            assert_eq!(model.emphasis_border, theme.accent_hover);
+        }
+    }
+
+    #[test]
+    fn the_choice_the_pointer_is_on_has_white_words_on_it() {
+        for theme in [Theme::light(), Theme::dark()] {
+            let model = model_with(6, Some(2), theme);
+            let pointed = &model.segments[2];
+            assert_eq!(pointed.label_color, color(theme.accent_text()));
+            assert_eq!(pointed.icon_color, color(theme.accent_text()));
+            // And the other choices keep the colour of the theme.
+            for (index, data) in model.segments.iter().enumerate() {
+                if index == 2 {
+                    continue;
+                }
+                assert_eq!(data.label_color, color(theme.text));
+                assert_eq!(data.icon_color, color(theme.text));
+            }
+        }
+    }
+
+    #[test]
+    fn a_choice_that_is_pressed_uses_the_pressed_accent() {
+        for theme in [Theme::light(), Theme::dark()] {
+            let mut options = options(1.0);
+            options.theme = theme;
+            options.preview_pressed = true;
+            options.emphasis_index = Some(1);
+            let segments: Vec<Segment> = (0..6).map(segment).collect();
+            let model = build_view_model(
+                &segments,
+                RadialMode::Convert,
+                Some(1),
+                6,
+                false,
+                RadialGeometry::new(6),
+                options,
+            );
+            assert_eq!(model.emphasis_color, theme.accent_pressed);
+            // The words on it are still white, so that they can be read.
+            assert_eq!(model.segments[1].label_color, color(theme.accent_text()));
+        }
+    }
+
+    #[test]
+    fn moving_the_pointer_puts_the_previous_choice_back() {
+        // The choice that was pointed at is a choice again when the pointer
+        // is on another one.
+        let theme = Theme::dark();
+        let model = model_with(6, Some(3), theme);
+        assert_eq!(model.segments[3].label_color, color(theme.accent_text()));
+        for (index, data) in model.segments.iter().enumerate() {
+            if index == 3 {
+                continue;
+            }
+            assert_eq!(data.fill, color(theme.segment));
+            assert_eq!(data.label_color, color(theme.text));
+        }
+    }
+
+    #[test]
+    fn the_choice_that_is_losing_the_pointer_goes_back_to_being_a_choice() {
+        let theme = Theme::dark();
+        let model = model_with(6, Some(3), theme);
+        // It is a little darker while it does, and it keeps its own edge.
+        assert_eq!(model.fading_color, theme.hover);
+        assert_eq!(model.fading_border, theme.border);
+    }
+
+    #[test]
+    fn both_themes_draw_the_choices_the_same_way() {
+        // The same rules in both themes: a neutral choice, an accent on the
+        // one the pointer is on, and white words on it.
+        let light = model_with(6, Some(0), Theme::light());
+        let dark = model_with(6, Some(0), Theme::dark());
+        assert_eq!(light.emphasis_color, Theme::light().accent_hover);
+        assert_eq!(dark.emphasis_color, Theme::dark().accent_hover);
+        assert_eq!(
+            light.segments[0].label_color,
+            color(Theme::light().accent_text())
+        );
+        assert_eq!(
+            dark.segments[0].label_color,
+            color(Theme::dark().accent_text())
+        );
+        // The geometry is the same in both.
+        assert_eq!(light.segments.len(), dark.segments.len());
+        for (a, b) in light.segments.iter().zip(dark.segments.iter()) {
+            assert_eq!(a.path, b.path);
         }
     }
 

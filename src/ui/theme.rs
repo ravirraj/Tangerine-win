@@ -13,20 +13,6 @@
 /// alpha.
 pub type Rgba = (u8, u8, u8, u8);
 
-/// The same colour, at another opacity.
-///
-/// The opacity is a number from nothing to one. A colour that is already
-/// fainter than that keeps its own alpha.
-pub fn with_alpha(colour: Rgba, alpha: f32) -> Rgba {
-    let alpha = alpha.clamp(0.0, 1.0);
-    (
-        colour.0,
-        colour.1,
-        colour.2,
-        ((colour.3 as f32) * alpha).round() as u8,
-    )
-}
-
 /// The colours the wheel is drawn with.
 ///
 /// Every token is used somewhere: the background is behind the wheel, the

@@ -75,6 +75,8 @@ const PERSONALIZE: &[u16] = &[
     b'i' as u16,
     b'z' as u16,
     b'e' as u16,
+    // The wide string ends in a null, as Windows wants it.
+    0,
 ];
 
 /// The name of the value that says which appearance is wanted.
@@ -135,6 +137,7 @@ mod tests {
     fn the_key_is_the_one_windows_keeps_the_appearance_in() {
         let name: String = PERSONALIZE
             .iter()
+            .take_while(|letter| **letter != 0)
             .map(|letter| *letter as u8 as char)
             .collect();
         assert_eq!(
