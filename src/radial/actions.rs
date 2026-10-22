@@ -145,12 +145,13 @@ pub enum IconKind {
     Film,
     Archive,
     Folder,
-    Lines,
     Copy,
     Pencil,
     Merge,
     Scissors,
-    Gauge,
+    Compress,
+    Crop,
+    Path,
 }
 
 /// One choice on the wheel.
@@ -261,8 +262,8 @@ mod tests {
             (
                 "tools",
                 vec![
-                    "tools.compress | Compress | Make the file smaller | Gauge",
-                    "tools.crop | Crop | Trim the edges away | Scissors",
+                    "tools.compress | Compress | Make the file smaller | Compress",
+                    "tools.crop | Crop | Trim the edges away | Crop",
                     "tools.trim | Trim | Cut the beginning or the end | Scissors",
                     "tools.merge | Merge | Join several files together | Merge",
                     "tools.metadata | Metadata | Edit the file metadata | Pencil",
@@ -271,7 +272,7 @@ mod tests {
             (
                 "actions",
                 vec![
-                    "actions.copy-path | Path | Copy the full path | Lines",
+                    "actions.copy-path | Path | Copy the full path | Path",
                     "actions.duplicate | Copy | Make a duplicate | Copy",
                     "actions.rename | Rename | Give the file a new name | Pencil",
                     "actions.zip | ZIP | Put the files in an archive | Archive",
