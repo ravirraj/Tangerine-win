@@ -5,14 +5,19 @@
 //! cannot be mistaken for one that was built later, which is the whole
 //! trouble with a folder of executables.
 
+use std::path::PathBuf;
 use std::process::Command;
 
 fn main() {
     let path = "src/ui/wheel.slint";
     println!("cargo:rerun-if-changed={path}");
     // The revision is part of what the program is, so the program is made
-    // again when the revision moves.
-    println!("cargo:rerun-if-changed=.git/HEAD");
+    // again when the revision moves. The head of the repository points at the
+    // branch, and the branch is what moves.
+    println!("cargo:rerun-if-changed={}", git_directory().join("HEAD").display());
+    if let Some(reference) = reference_file() {
+        println!("cargo:rerun-if-changed={}", reference.display());
+    }
     println!("cargo:rustc-env=OPEN_TANGERINE_REVISION={}", revision());
     slint_build::compile(path).expect("the wheel markup could not be compiled");
 }
@@ -27,7 +32,11 @@ fn revision() -> String {
         return "unknown".to_string();
     };
     let dirty = git(&["status", "--porcelain"]).is_some_and(|out| !out.trim().is_empty());
-    if dirty { format!("{head}-dirty") } else { head }
+    if dirty {
+        format!("{head}-dirty")
+    } else {
+        head
+    }
 }
 
 /// Asks git something, and gives nothing back when it cannot answer.
@@ -37,4 +46,24 @@ fn git(arguments: &[&str]) -> Option<String> {
         return None;
     }
     Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// The directory the repository is in.
+fn git_directory() -> PathBuf {
+    match git(&["rev-parse", "--absolute-git-dir"]) {
+        Some(directory) => PathBuf::from(directory),
+        None => PathBuf::from(".git"),
+    }
+}
+
+/// The file the head of the repository points at.
+///
+/// The head is a name of a branch, and the branch is a file whose contents
+/// change when the branch moves. Watching that file is what makes the program
+/// be made again after a commit.
+fn reference_file() -> Option<PathBuf> {
+    let head = git_directory().join("HEAD");
+    let contents = std::fs::read_to_string(&head).ok()?;
+    let reference = contents.trim().strip_prefix("ref: ")?;
+    Some(git_directory().join(reference))
 }
