@@ -37,16 +37,75 @@ pub struct RadialGeometry {
     pub gap_degrees: f32,
     /// How many segments the wheel is cut into.
     pub count: usize,
+    /// The radius of the fillet at the corners of a segment.
+    pub corner_radius: f32,
+}
+
+/// The size of the wheel the drawing was designed at, in logical pixels.
+///
+/// The design measures its wheel at three hundred and sixty pixels across.
+/// The wheel is drawn smaller than that, and everything in it is drawn by
+/// the same factor, so that the wheel looks the same at any size.
+pub const DESIGN_SIZE: f32 = 360.0;
+
+/// The shape of the wheel, as it is designed.
+///
+/// The size is the knob: the wheel is cut into as many segments as there
+/// are choices, and every measurement of the design is scaled by it. A menu
+/// with fewer choices has wider choices, and one with more has narrower
+/// ones, and the wheel looks the same either way.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WheelProfile {
+    /// The size of the wheel's canvas, in logical pixels.
+    pub size: f32,
+    /// The gap between two neighbouring segments, in degrees.
+    pub gap_degrees: f32,
+}
+
+impl WheelProfile {
+    /// The design, drawn at the size it is drawn.
+    pub const fn design() -> Self {
+        Self {
+            size: 330.0,
+            gap_degrees: 8.0,
+        }
+    }
+
+    /// How much smaller than the design the wheel is drawn.
+    fn factor(&self) -> f32 {
+        self.size / DESIGN_SIZE
+    }
+
+    /// The radius of the empty hub in the middle.
+    pub fn inner_radius(&self) -> f32 {
+        60.0 * self.factor()
+    }
+
+    /// The radius of the outer edge of the segments.
+    pub fn outer_radius(&self) -> f32 {
+        168.0 * self.factor()
+    }
+
+    /// The radius of the fillet at the corners of a segment.
+    pub fn corner_radius(&self) -> f32 {
+        20.0 * self.factor()
+    }
 }
 
 impl RadialGeometry {
     /// The geometry the product uses for a wheel of `count` segments.
     pub fn new(count: usize) -> Self {
+        Self::with_profile(count, WheelProfile::design())
+    }
+
+    /// The geometry of a wheel of `count` segments, in a given shape.
+    pub fn with_profile(count: usize, profile: WheelProfile) -> Self {
         Self {
-            inner_radius: 64.0,
-            outer_radius: 150.0,
-            gap_degrees: 4.0,
+            inner_radius: profile.inner_radius(),
+            outer_radius: profile.outer_radius(),
+            gap_degrees: profile.gap_degrees,
             count,
+            corner_radius: profile.corner_radius(),
         }
     }
 
@@ -232,15 +291,16 @@ impl RadialGeometry {
 
     /// The corner radius used for the rounded ends of a segment.
     ///
-    /// Wider wheels with fewer segments get slightly rounder corners, but never so
-    /// round that the straight edges disappear.
+    /// The design asks for a fillet of a certain size, and the fillet is
+    /// never so round that the straight edges disappear: a wheel cut into many
+    /// segments gets a smaller fillet than one cut into few.
     pub fn corner_radius(&self) -> f32 {
         if self.count == 0 {
             return 0.0;
         }
-        let wanted: f32 = if self.count > 8 { 10.0 } else { 14.0 };
         let limit = self.inner_radius * (self.slice_degrees().to_radians() * 0.34).sin();
-        wanted.min(limit).max(4.0)
+        let wanted = self.corner_radius.min(limit);
+        wanted.max(4.0)
     }
 
     /// The outline of segment `index` as an SVG path, centred on the origin.
@@ -561,8 +621,169 @@ mod tests {
     fn the_gap_splits_the_slice() {
         let g = geometry(8);
         let (start, end) = g.segment_span(0);
-        assert!((start - 2.0).abs() < 0.001);
-        assert!((end - 43.0).abs() < 0.001);
+        // The gap is left in the middle of the slice: half of it on each
+        // side of the segment.
+        let half = g.gap_degrees / 2.0;
+        assert!(
+            (start - half).abs() < 0.001,
+            "the segment starts at {start}"
+        );
+        assert!(
+            (end - (g.slice_degrees() - half)).abs() < 0.001,
+            "the segment ends at {end}"
+        );
+    }
+
+    #[test]
+    fn the_design_leaves_the_gap_it_asks_for() {
+        // The design asks for a gap of eight degrees between two choices.
+        let profile = WheelProfile::design();
+        assert_eq!(profile.gap_degrees, 8.0);
+        let g = RadialGeometry::with_profile(6, profile);
+        // Six choices of fifty-two degrees with a gap of eight between them
+        // fill the whole circle.
+        assert!((g.slice_degrees() - 60.0).abs() < 0.001);
+        let (start, end) = g.segment_span(0);
+        assert!((start - 4.0).abs() < 0.001, "the segment starts at {start}");
+        assert!((end - 56.0).abs() < 0.001, "the segment ends at {end}");
+        // And the next one starts where the gap is.
+        let (next, _) = g.segment_span(1);
+        assert!(
+            (next - 64.0).abs() < 0.001,
+            "the next segment starts at {next}"
+        );
+    }
+
+    #[test]
+    fn the_wheel_is_drawn_smaller_than_the_design() {
+        // The wheel is drawn more compactly than the design measured it, and
+        // everything in it is smaller by the same factor: the radii, the
+        // fillet, and with them the shape of every choice.
+        let profile = WheelProfile::design();
+        assert!(profile.size < DESIGN_SIZE, "the wheel is not smaller");
+        let factor = profile.size / DESIGN_SIZE;
+        let g = RadialGeometry::with_profile(6, profile);
+        assert!((g.inner_radius - 60.0 * factor).abs() < 0.001);
+        assert!((g.outer_radius - 168.0 * factor).abs() < 0.001);
+        assert!((g.corner_radius - 20.0 * factor).abs() < 0.001);
+        // The gap is in degrees, so it does not change with the size.
+        assert_eq!(g.gap_degrees, 8.0);
+    }
+
+    #[test]
+    fn the_six_option_wheel_is_the_designs() {
+        // The reference wheel has six choices. Each one is fifty-two degrees
+        // wide, with a gap of eight degrees between two neighbours, and the
+        // radii are the design's, drawn at the size the wheel is drawn.
+        let g = RadialGeometry::new(6);
+        let profile = WheelProfile::design();
+        let factor = profile.size / DESIGN_SIZE;
+        assert!((g.inner_radius - 60.0 * factor).abs() < 0.001);
+        assert!((g.outer_radius - 168.0 * factor).abs() < 0.001);
+        assert_eq!(g.gap_degrees, 8.0);
+        assert_eq!(g.count, 6);
+
+        // Six choices of sixty degrees each, with the gaps taken out of them.
+        assert!((g.slice_degrees() - 60.0).abs() < 0.001);
+        for index in 0..6 {
+            let (start, end) = g.segment_span(index);
+            // The choice itself is fifty-two degrees wide.
+            assert!(
+                (end - start - 52.0).abs() < 0.001,
+                "choice {index} is {} degrees wide",
+                end - start
+            );
+            // And it starts four degrees after the middle of its slice,
+            // because the gap is left on both sides of it.
+            assert!(
+                (start - (index as f32 * 60.0 + 4.0)).abs() < 0.001,
+                "choice {index} starts at {start}"
+            );
+        }
+        // The last choice ends where the circle comes round again.
+        let (_, end) = g.segment_span(5);
+        assert!((end - 356.0).abs() < 0.001, "the last choice ends at {end}");
+    }
+
+    #[test]
+    fn the_six_option_wheel_is_hit_the_same_way_it_is_drawn() {
+        let g = RadialGeometry::new(6);
+        let middle = (g.inner_radius + g.outer_radius) / 2.0;
+
+        // The middle of every choice is that choice.
+        for index in 0..6 {
+            let angle = g.mid_angle(index);
+            let point = g.point_at(middle, angle);
+            assert_eq!(g.hit_test(point), Some(index), "at {angle} degrees");
+        }
+
+        // The gap between two choices is eight degrees wide, and it is the
+        // gap the patience covers: a pointer that is still in the gap keeps
+        // the choice it had, so that the choice does not flicker while the
+        // pointer is over the seam.
+        let boundary = 60.0;
+        for degrees in [
+            boundary - 3.0,
+            boundary - 1.0,
+            boundary + 1.0,
+            boundary + 3.0,
+        ] {
+            let point = g.point_at(middle, degrees);
+            assert_eq!(
+                g.hit_test_steady(point, Some(0)),
+                Some(0),
+                "at {degrees} degrees"
+            );
+            assert_eq!(
+                g.hit_test_steady(point, Some(1)),
+                Some(1),
+                "at {degrees} degrees"
+            );
+        }
+
+        // And once the pointer is clearly past the gap, the choice follows
+        // it.
+        let past_the_gap = g.point_at(middle, boundary + 6.0);
+        assert_eq!(g.hit_test_steady(past_the_gap, Some(0)), Some(1));
+
+        // The hub and the rim are not choices either, and the patience
+        // holds the choice while the pointer is on their edge.
+        assert_eq!(g.hit_test(g.point_at(g.inner_radius - 1.0, 0.0)), None);
+        assert_eq!(g.hit_test(g.point_at(g.outer_radius + 1.0, 0.0)), None);
+        let on_the_hub = g.point_at(g.inner_radius - 1.0, 0.0);
+        assert_eq!(g.hit_test_steady(on_the_hub, Some(2)), Some(2));
+    }
+
+    #[test]
+    fn the_choices_of_the_six_option_wheel_have_rounded_corners() {
+        let g = RadialGeometry::new(6);
+        // The fillet is there, and it is never so big that the straight edges
+        // of the choice disappear.
+        let profile = WheelProfile::design();
+        let wanted = 20.0 * profile.size / DESIGN_SIZE;
+        let corner = g.corner_radius();
+        assert!(corner > 4.0, "the fillet is {corner}");
+        assert!(corner <= wanted, "the fillet is {corner}");
+        assert!(corner < (g.outer_radius - g.inner_radius) / 3.0);
+        // And the outline of a choice is a closed shape with arcs in it.
+        let path = g.wedge_path(0);
+        assert!(path.starts_with("M "));
+        assert!(path.ends_with('Z'));
+        assert!(path.contains(" A "));
+    }
+
+    #[test]
+    fn the_wheel_is_cut_into_as_many_choices_as_there_are() {
+        // A menu with fewer choices has wider choices, and one with more has
+        // narrower ones, and the wheel looks the same either way.
+        for count in [3, 5, 6, 7, 8] {
+            let g = RadialGeometry::new(count);
+            assert_eq!(g.count, count);
+            assert!((g.slice_degrees() - 360.0 / count as f32).abs() < 0.001);
+            // Every choice is the same width, and the gaps take the rest.
+            let (start, end) = g.segment_span(0);
+            assert!((end - start - (g.slice_degrees() - g.gap_degrees)).abs() < 0.001);
+        }
     }
 
     #[test]
@@ -713,8 +934,8 @@ mod tests {
     #[test]
     fn the_patience_covers_the_gap_between_two_segments() {
         let g = geometry(8);
-        // The gap is four degrees wide, so the patience is two degrees.
-        assert_eq!(g.gap_degrees / 2.0, 2.0);
+        // The gap is eight degrees wide, so the patience is four.
+        assert_eq!(g.gap_degrees / 2.0, 4.0);
         // A pointer right on the line stays where it was.
         assert_eq!(g.hit_test_steady(at(45.0, 100.0), Some(0)), Some(0));
         assert_eq!(g.hit_test_steady(at(45.0, 100.0), Some(1)), Some(1));

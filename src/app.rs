@@ -35,6 +35,7 @@ use crate::radial::selection::Selection;
 use crate::radial::state::{Effect, InteractionEvent, InteractionSource, InteractionState};
 use crate::session::DragSession;
 use crate::ui::animation::WheelAnimation;
+use crate::ui::theme::Theme;
 use crate::ui::wheel::{DISC_SIZE, ViewModel, WheelUi, build_view_model};
 
 /// How often the application looks at the world, in milliseconds.
@@ -198,6 +199,8 @@ struct App {
     /// shown after the wheel has gone: the work goes on while the wheel is
     /// away.
     notice: Option<crate::ui::notice::Showing>,
+    /// The colours the wheel is drawn with.
+    theme: Theme,
     /// The COM object Windows talks to when a drag passes over the wheel.
     drop_target: IDropTarget,
     /// Watches the scroll wheel while the wheel is on screen.
@@ -294,6 +297,21 @@ impl App {
         // wheel is, and that has to be known before the window is made.
         let cursor = input::cursor_position().unwrap_or(Point::new(960.0, 540.0));
         let scale = detect_scale(cursor);
+        // The wheel is drawn in the theme of the appearance of the system: a
+        // person who has a light Windows gets a light wheel.
+        let theme = Theme::for_appearance(crate::platform::windows::appearance::prefers_dark());
+        diagnostics::log(
+            Level::Info,
+            "wheel",
+            &format!(
+                "the wheel is drawn in the {} theme",
+                if theme == Theme::dark() {
+                    "dark"
+                } else {
+                    "light"
+                }
+            ),
+        );
         let disc = (DISC_SIZE * scale).round().max(64.0) as u32;
         let overlay = Overlay::new(disc, disc).map_err(|error| error.to_string())?;
         let drop_state = std::rc::Rc::new(DropState::default());
@@ -327,6 +345,7 @@ impl App {
             drop_target,
             lifecycle: crate::lifecycle::DragLifecycle::new(),
             notice: None,
+            theme,
             wheel_watcher: None,
             opened_at: None,
             keyboard_owns_highlight: false,
@@ -1412,7 +1431,33 @@ impl App {
             }
             OverlayEvent::PointerDown { x, y } => self.handle_click(x, y),
             OverlayEvent::PointerUp { .. } => {}
+            OverlayEvent::AppearanceChanged => self.follow_the_appearance(),
         }
+    }
+
+    /// Draws the wheel in the appearance Windows is asking for now.
+    ///
+    /// The appearance can change while the program is running: the person may
+    /// turn the dark appearance on. The wheel follows, without being put
+    /// anywhere else on the screen.
+    fn follow_the_appearance(&mut self) {
+        let theme = Theme::for_appearance(crate::platform::windows::appearance::prefers_dark());
+        let name = if theme == Theme::dark() {
+            "dark"
+        } else {
+            "light"
+        };
+        diagnostics::log(
+            Level::Info,
+            "wheel",
+            &format!(
+                "the appearance of Windows changed, and the wheel is drawn in the {name} theme"
+            ),
+        );
+        if theme == self.theme {
+            return;
+        }
+        self.theme = theme;
     }
 
     fn handle_click(&mut self, x: f32, y: f32) {
@@ -1494,6 +1539,7 @@ impl App {
                     fading_index: self.animation.fading_index(),
                     notice: notice.map(|showing| showing.notice),
                     notice_appear,
+                    theme: self.theme,
                 },
             );
             self.last_model = Some(model.clone());

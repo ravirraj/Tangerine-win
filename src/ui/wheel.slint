@@ -35,7 +35,7 @@ export component Wheel inherits Window {
     in property <int> mode-index: 0;
     in property <float> appear: 1;
     in property <float> disc-size: 380;
-    in property <float> hub-size: 128;
+    in property <float> hub-size: 95;
     in property <length> heading-size: 12px;
     in property <length> subtitle-size: 10px;
     // The segment that is being pointed at, and the one that is on its way out.
@@ -43,6 +43,18 @@ export component Wheel inherits Window {
     in property <float> emphasis: 0;
     in property <string> fading-path: "";
     in property <float> fading: 0;
+
+    // The colours come from the theme, so that the wheel is drawn the same
+    // way in a light appearance and in a dark one.
+    in property <color> disc-color: #00000000;
+    in property <color> hub-color: #131317f2;
+    in property <color> border-color: #2e2e36;
+    in property <color> text-color: #f2f2f5;
+    in property <color> text-secondary-color: #8a8a95;
+    in property <color> emphasis-color: #ff8a3d4d;
+    in property <color> emphasis-border: #ff8a3d;
+    in property <color> fading-color: #ff8a3d1f;
+    in property <color> fading-border: #ff8a3d80;
 
     // The short message about what came of the last operation. It is drawn
     // on its own, so that it can be shown after the wheel has gone.
@@ -56,6 +68,16 @@ export component Wheel inherits Window {
         width: root.disc-size * 1px;
         height: root.disc-size * 1px;
         opacity: root.appear;
+
+        // The wheel itself: the circle the choices sit on.
+        Rectangle {
+            x: 0px;
+            y: 0px;
+            width: root.disc-size * 1px;
+            height: root.disc-size * 1px;
+            border-radius: root.disc-size / 2 * 1px;
+            background: root.disc-color;
+        }
 
         // The segments themselves.
         for seg in root.segments : Path {
@@ -80,8 +102,8 @@ export component Wheel inherits Window {
             viewbox-y: -root.disc-size / 2;
             viewbox-width: root.disc-size;
             viewbox-height: root.disc-size;
-            fill: #ff8a3d4d;
-            stroke: #ff8a3d;
+            fill: root.emphasis-color;
+            stroke: root.emphasis-border;
             stroke-width: 2px;
             opacity: root.emphasis;
             x: 0px;
@@ -97,8 +119,8 @@ export component Wheel inherits Window {
             viewbox-y: -root.disc-size / 2;
             viewbox-width: root.disc-size;
             viewbox-height: root.disc-size;
-            fill: #ff8a3d1f;
-            stroke: #ff8a3d80;
+            fill: root.fading-color;
+            stroke: root.fading-border;
             stroke-width: 1px;
             opacity: root.fading;
             x: 0px;
@@ -144,13 +166,13 @@ export component Wheel inherits Window {
             width: root.hub-size * 1px;
             height: root.hub-size * 1px;
             border-radius: root.hub-size / 2 * 1px;
-            background: #131317f2;
+            background: root.hub-color;
             border-width: 1px;
-            border-color: #2e2e36;
+            border-color: root.border-color;
 
             Text {
                 text: root.heading;
-                color: #f2f2f5;
+                color: root.text-color;
                 font-size: root.heading-size;
                 font-weight: 700;
                 horizontal-alignment: center;
@@ -163,7 +185,7 @@ export component Wheel inherits Window {
 
             Text {
                 text: root.subtitle;
-                color: #8a8a95;
+                color: root.text-secondary-color;
                 font-size: root.subtitle-size;
                 horizontal-alignment: center;
                 vertical-alignment: center;

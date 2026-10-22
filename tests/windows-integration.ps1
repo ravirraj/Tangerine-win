@@ -199,13 +199,16 @@ function Get-AppLog {
 }
 
 # The shape of the wheel, as the application has it. This mirrors
-# RadialGeometry in src/radial/geometry.rs: eight segments, an inner radius of
-# 64 and an outer radius of 150, with the angles measured clockwise from the
-# top. The radii are given as a part of the wheel's size, so a display that
-# is scaled comes out right without anything being assumed about it.
+# RadialGeometry in src/radial/geometry.rs and WheelProfile::design: the
+# design's wheel measures 360 pixels across, and it is drawn smaller than
+# that, with an inner radius of 60 and an outer radius of 168 in the
+# design's own terms, cut into eight segments with the angles measured
+# clockwise from the top. The radii are given as a part of the wheel's
+# size, so a display that is scaled comes out right without anything being
+# assumed about it.
 $WheelSegments = 8
-$WheelInnerRatio = 64.0 / 380.0
-$WheelOuterRatio = 150.0 / 380.0
+$WheelInnerRatio = 60.0 / 360.0
+$WheelOuterRatio = 168.0 / 360.0
 
 # Reads where the application put the wheel, and how big it is.
 #

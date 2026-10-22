@@ -12,29 +12,46 @@ use slint::platform::{Platform, PlatformError, WindowAdapter};
 use slint::{ModelRc, PhysicalSize, VecModel};
 
 use crate::radial::actions::{RadialMode, Segment};
-use crate::radial::geometry::RadialGeometry;
+use crate::radial::geometry::{RadialGeometry, WheelProfile};
 use crate::radial::icons;
+use crate::ui::theme::{Rgba, Theme, with_alpha};
 
 slint::include_modules!();
 
 /// The width of the wheel in logical pixels, before the display's own scale.
-pub const DISC_SIZE: f32 = 380.0;
+///
+/// This is the design's wheel drawn smaller: the design measures it at
+/// three hundred and sixty pixels across, and everything in it — the radii,
+/// the button in the middle, the pictures and the names — is drawn by the
+/// same factor, so that the wheel looks the same as the design.
+pub const DISC_SIZE: f32 = WheelProfile::design().size;
 
-/// The radius of the empty hub, in logical pixels.
-pub const HUB_SIZE: f32 = 128.0;
+/// The size of the design's wheel, in logical pixels.
+pub const DESIGN_SIZE: f32 = crate::radial::geometry::DESIGN_SIZE;
 
-/// The near black the wheel is drawn on.
-const SURFACE: (u8, u8, u8, u8) = (0x14, 0x14, 0x19, 0xff);
-/// The hairline between two segments.
-const HAIRLINE: (u8, u8, u8, u8) = (0x2c, 0x2c, 0x35, 0xff);
-/// The colour of a name that is not pointed at.
-const LABEL: (u8, u8, u8, u8) = (0xc4, 0xc4, 0xcf, 0xff);
-/// The colour of a name that is pointed at.
-const LABEL_ACTIVE: (u8, u8, u8, u8) = (0xff, 0xff, 0xff, 0xff);
-/// The colour of a picture that is not pointed at.
-const ICON: (u8, u8, u8, u8) = (0x76, 0x76, 0x84, 0xff);
-/// The colour of a picture that is pointed at.
-const ICON_ACTIVE: (u8, u8, u8, u8) = (0xff, 0xb2, 0x7a, 0xff);
+/// The diameter of the button in the middle, in logical pixels.
+///
+/// The design's centre button is a hundred and four across, and the hub of
+/// the wheel is sixty: the button stands inside the hub, with a ring of
+/// eight around it.
+pub fn hub_size() -> f32 {
+    104.0 * DISC_SIZE / DESIGN_SIZE
+}
+
+/// The size of the picture on a choice, in logical pixels.
+fn icon_size() -> f32 {
+    22.0 * DISC_SIZE / DESIGN_SIZE
+}
+
+/// The size of the name of a choice, in logical pixels.
+fn label_size() -> f32 {
+    13.0 * DISC_SIZE / DESIGN_SIZE
+}
+
+/// The size of the name in the middle of the wheel, in logical pixels.
+fn centre_label_size() -> f32 {
+    16.0 * DISC_SIZE / DESIGN_SIZE
+}
 
 /// A pixel in the order `UpdateLayeredWindow` wants: blue, green, red, alpha.
 #[repr(transparent)]
@@ -112,6 +129,24 @@ pub struct ViewModel {
     pub notice_failed: bool,
     /// How much of that message is showing.
     pub notice_appear: f32,
+    /// The colour behind the wheel.
+    pub disc_color: Rgba,
+    /// The colour of the hub in the middle.
+    pub hub_color: Rgba,
+    /// The colour of the line between two choices, and of the hub's edge.
+    pub border_color: Rgba,
+    /// The colour of the words in the hub.
+    pub text_color: Rgba,
+    /// The colour of the words in the hub that are not the point.
+    pub text_secondary_color: Rgba,
+    /// The colour of the choice the pointer is on.
+    pub emphasis_color: Rgba,
+    /// The colour of the edge of that choice.
+    pub emphasis_border: Rgba,
+    /// The colour of the choice that is losing the pointer.
+    pub fading_color: Rgba,
+    /// The colour of the edge of that choice.
+    pub fading_border: Rgba,
 }
 
 /// How the wheel is drawn at this moment.
@@ -133,6 +168,8 @@ pub struct ViewOptions {
     pub notice: Option<Notice>,
     /// How much of that message is showing.
     pub notice_appear: f32,
+    /// The colours the wheel is drawn with.
+    pub theme: Theme,
 }
 
 /// A short message about what came of an operation.
@@ -166,6 +203,7 @@ pub fn build_view_model(
     let emphasis = options.emphasis;
     let fading = options.fading;
     let disc_size = DISC_SIZE * scale;
+    let theme = options.theme;
 
     let mut geometry = geometry;
     geometry.inner_radius *= appear;
@@ -177,7 +215,7 @@ pub fn build_view_model(
     for (index, segment) in segments.iter().enumerate() {
         let active = highlighted == Some(index);
         let label_point = geometry.label_point(index);
-        let icon_size = 22.0 * scale * appear;
+        let icon_size = icon_size() * scale * appear;
         // The picture sits above the name, in a straight line, so that the
         // pair reads the same way on every segment.
         let icon_centre = Point::new(label_point.x, label_point.y - 15.0 * scale * appear);
@@ -185,16 +223,24 @@ pub fn build_view_model(
 
         data.push(SegmentData {
             path: geometry.wedge_path(index).into(),
-            fill: color(SURFACE),
-            stroke: color(HAIRLINE),
+            fill: color(theme.segment),
+            stroke: color(theme.border),
             label: segment.label.clone().into(),
-            label_color: color(if active { LABEL_ACTIVE } else { LABEL }),
-            label_size: (if active { 12.0 } else { 11.0 }) * scale * appear,
+            label_color: color(if active {
+                theme.accent_text()
+            } else {
+                theme.text
+            }),
+            label_size: label_size() * scale * appear,
             label_x: centre.x + text_centre.x,
             label_y: centre.y + text_centre.y,
             label_width: geometry.label_width() * scale,
             icon: icons::path_for(segment.icon).into(),
-            icon_color: color(if active { ICON_ACTIVE } else { ICON }),
+            icon_color: color(if active {
+                theme.accent_text()
+            } else {
+                theme.text_secondary
+            }),
             icon_x: centre.x + icon_centre.x - icon_size / 2.0,
             icon_y: centre.y + icon_centre.y - icon_size / 2.0,
             icon_size,
@@ -245,8 +291,8 @@ pub fn build_view_model(
         fading_path,
         fading,
         disc_size,
-        hub_size: HUB_SIZE * scale * appear,
-        heading_size: 12.0 * scale * appear,
+        hub_size: hub_size() * scale * appear,
+        heading_size: centre_label_size() * scale * appear,
         subtitle_size: 10.0 * scale * appear,
         notice_text: options
             .notice
@@ -255,6 +301,17 @@ pub fn build_view_model(
             .unwrap_or_default(),
         notice_failed: options.notice.as_ref().is_some_and(|notice| notice.failed),
         notice_appear: options.notice_appear,
+        disc_color: theme.background,
+        hub_color: theme.surface,
+        border_color: theme.border,
+        text_color: theme.text,
+        text_secondary_color: theme.text_secondary,
+        // The choice the pointer is on is the accent of the theme, and the
+        // one that is losing the pointer is the same accent, fainter.
+        emphasis_color: with_alpha(theme.accent, 0.30),
+        emphasis_border: theme.accent,
+        fading_color: with_alpha(theme.accent, 0.12),
+        fading_border: with_alpha(theme.accent, 0.50),
     }
 }
 
@@ -329,6 +386,16 @@ impl WheelUi {
         self.wheel.set_notice_text(model.notice_text.clone().into());
         self.wheel.set_notice_failed(model.notice_failed);
         self.wheel.set_notice_appear(model.notice_appear);
+        self.wheel.set_disc_color(color(model.disc_color));
+        self.wheel.set_hub_color(color(model.hub_color));
+        self.wheel.set_border_color(color(model.border_color));
+        self.wheel.set_text_color(color(model.text_color));
+        self.wheel
+            .set_text_secondary_color(color(model.text_secondary_color));
+        self.wheel.set_emphasis_color(color(model.emphasis_color));
+        self.wheel.set_emphasis_border(color(model.emphasis_border));
+        self.wheel.set_fading_color(color(model.fading_color));
+        self.wheel.set_fading_border(color(model.fading_border));
     }
 
     /// Draws the wheel if anything changed. Returns whether it did.
@@ -393,6 +460,7 @@ mod tests {
             fading_index: None,
             notice: None,
             notice_appear: 0.0,
+            theme: Theme::dark(),
         }
     }
 
@@ -419,6 +487,47 @@ mod tests {
             for (index, data) in model.segments.iter().enumerate() {
                 assert_eq!(data.label, format!("Test {index}"));
             }
+        }
+    }
+
+    #[test]
+    fn the_wheel_is_drawn_with_the_colours_of_the_theme() {
+        // The wheel is drawn in the theme it is given, so the colours of the
+        // theme are the colours that are drawn.
+        for theme in [Theme::light(), Theme::dark()] {
+            let mut options = options(1.0);
+            options.theme = theme;
+            let model = build_view_model(
+                &[segment(0)],
+                RadialMode::Convert,
+                Some(0),
+                1,
+                false,
+                RadialGeometry::new(1),
+                options,
+            );
+            assert_eq!(model.disc_color, theme.background);
+            assert_eq!(model.hub_color, theme.surface);
+            assert_eq!(model.border_color, theme.border);
+            assert_eq!(
+                model.segments[0].fill,
+                slint::Color::from_argb_u8(
+                    theme.segment.3,
+                    theme.segment.0,
+                    theme.segment.1,
+                    theme.segment.2
+                )
+            );
+            // The choice that is pointed at has the accent's words on it.
+            assert_eq!(
+                model.segments[0].label_color,
+                slint::Color::from_argb_u8(
+                    theme.accent_text().3,
+                    theme.accent_text().0,
+                    theme.accent_text().1,
+                    theme.accent_text().2
+                )
+            );
         }
     }
 

@@ -29,8 +29,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     HWND_NOTOPMOST, HWND_TOPMOST, IsWindowVisible, RegisterClassW, SW_HIDE, SW_SHOWNOACTIVATE,
     SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, SetWindowLongPtrW, SetWindowPos,
     ShowWindow, ULW_ALPHA, UpdateLayeredWindow, WM_ERASEBKGND, WM_LBUTTONDOWN, WM_LBUTTONUP,
-    WM_MOUSEWHEEL, WM_NCHITTEST, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
-    WS_EX_TRANSPARENT, WS_POPUP,
+    WM_MOUSEWHEEL, WM_NCHITTEST, WM_THEMECHANGED, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE,
+    WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT, WS_POPUP,
 };
 use windows::core::w;
 
@@ -43,6 +43,12 @@ pub enum OverlayEvent {
     PointerUp { x: f32, y: f32 },
     /// The wheel was scrolled, in screen coordinates.
     Wheel { delta: f32, x: f32, y: f32 },
+    /// The appearance of Windows changed.
+    ///
+    /// Windows says so when the person changes between the light and the
+    /// dark appearance, and the wheel is drawn in the appearance of the
+    /// system.
+    AppearanceChanged,
 }
 
 /// Why the overlay could not do something.
@@ -139,6 +145,21 @@ unsafe extern "system" fn overlay_wndproc(
             // The window is transparent to the mouse, so the system should
             // look for the window underneath.
             LRESULT(-1)
+        }
+        WM_THEMECHANGED => {
+            // The theme of Windows changed, which is what happens when the
+            // person turns the dark appearance on. The wheel is drawn in the
+            // appearance of the system, so it has to be drawn again.
+            //
+            // The message is `WM_THEMECHANGED` and not `WM_SYSCOLORCHANGE`:
+            // the number the `windows` crate gives for the latter is wrong.
+            crate::diagnostics::log(
+                crate::diagnostics::Level::Debug,
+                "wheel",
+                "the theme of Windows changed",
+            );
+            push_input(hwnd, OverlayEvent::AppearanceChanged);
+            LRESULT(0)
         }
         WM_ERASEBKGND => LRESULT(1),
         _ => unsafe { DefWindowProcW(hwnd, message, wparam, lparam) },
@@ -578,5 +599,39 @@ impl Drop for Overlay {
         unsafe {
             let _ = DeleteDC(self.memory_dc);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use windows::Win32::UI::WindowsAndMessaging::{SendMessageW, WM_THEMECHANGED};
+
+    #[test]
+    fn the_overlay_says_when_the_appearance_of_windows_changes() {
+        // Windows sends the message when the person changes between the
+        // light and the dark appearance, and the wheel is drawn in the
+        // appearance of the system.
+        let overlay = Overlay::new(64, 64).expect("the overlay could be made");
+        // SAFETY: the window is ours, and the message carries nothing.
+        unsafe {
+            let _ = SendMessageW(
+                overlay.hwnd(),
+                WM_THEMECHANGED,
+                Some(WPARAM(0)),
+                Some(LPARAM(0)),
+            );
+        }
+        let events = overlay.drain_input();
+        assert!(
+            events.contains(&OverlayEvent::AppearanceChanged),
+            "the change was not reported: {events:?}"
+        );
+    }
+
+    #[test]
+    fn the_overlay_reports_the_pointer_and_nothing_else() {
+        let overlay = Overlay::new(64, 64).expect("the overlay could be made");
+        assert!(overlay.drain_input().is_empty());
     }
 }

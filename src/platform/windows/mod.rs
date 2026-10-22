@@ -1,5 +1,6 @@
 //! Win32 specific code.
 
+pub mod appearance;
 pub mod droptarget;
 pub mod explorer;
 pub mod input;
