@@ -37,6 +37,13 @@ pub struct DropState {
     /// same coordinates the pointer is read in, so both can be used without
     /// being converted.
     pub point: Cell<(i32, i32)>,
+    /// The drag the files belong to.
+    ///
+    /// The files are told to the application while the drag is over the
+    /// window, which is after the drag has begun. The number of the drag is
+    /// put here when the window becomes a drop target, so that files that
+    /// arrive late are not taken for the files of a drag that came after.
+    pub session: Cell<u64>,
 }
 
 impl DropState {

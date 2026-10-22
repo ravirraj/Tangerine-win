@@ -26,10 +26,11 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Ole::{IDropTarget, RegisterDragDrop, RevokeDragDrop};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, GWL_EXSTYLE, GWLP_USERDATA, GetWindowLongPtrW, GetWindowRect,
-    HWND_TOPMOST, IsWindowVisible, RegisterClassW, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE,
-    SetWindowLongPtrW, SetWindowPos, ShowWindow, ULW_ALPHA, UpdateLayeredWindow, WM_ERASEBKGND,
-    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEWHEEL, WM_NCHITTEST, WNDCLASSW, WS_EX_LAYERED,
-    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT, WS_POPUP,
+    HWND_NOTOPMOST, HWND_TOPMOST, IsWindowVisible, RegisterClassW, SW_HIDE, SW_SHOWNOACTIVATE,
+    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, SetWindowLongPtrW, SetWindowPos,
+    ShowWindow, ULW_ALPHA, UpdateLayeredWindow, WM_ERASEBKGND, WM_LBUTTONDOWN, WM_LBUTTONUP,
+    WM_MOUSEWHEEL, WM_NCHITTEST, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    WS_EX_TRANSPARENT, WS_POPUP,
 };
 use windows::core::w;
 
@@ -299,6 +300,18 @@ impl Overlay {
         unsafe {
             let _ = ShowWindow(self.hwnd, SW_SHOWNOACTIVATE);
         }
+        // The window is put at the top of the z-order *after* it is shown.
+        //
+        // Placing it while it is still hidden does not put it in the topmost
+        // band: a window that has never been shown is put in the band it
+        // belongs to, and the window that the drag comes from is raised
+        // while the drag runs. The wheel was measured behind an Explorer
+        // window that was in the topmost band, so the topmost is asked for
+        // once the window is on the screen.
+        //
+        // The window is not moved and not activated: it stays where it was
+        // put, and the focus stays where the user left it.
+        self.set_topmost(true);
         crate::diagnostics::log(
             crate::diagnostics::Level::Info,
             "overlay",
@@ -316,11 +329,38 @@ impl Overlay {
         unsafe {
             let _ = ShowWindow(self.hwnd, SW_HIDE);
         }
+        // The window is taken out of the topmost band while it is not on the
+        // screen, so that it does not stay above other programs for as long
+        // as the program is running.
+        self.set_topmost(false);
         crate::diagnostics::log(
             crate::diagnostics::Level::Info,
             "overlay",
             "the overlay was hidden",
         );
+    }
+
+    /// Puts the window in the topmost band, or takes it out of it.
+    ///
+    /// The window is not moved and not activated, and the size is not
+    /// changed: only the band it belongs to.
+    fn set_topmost(&self, topmost: bool) {
+        // SAFETY: the window handle is ours.
+        unsafe {
+            let _ = SetWindowPos(
+                self.hwnd,
+                Some(if topmost {
+                    HWND_TOPMOST
+                } else {
+                    HWND_NOTOPMOST
+                }),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER,
+            );
+        }
     }
 
     /// Whether the window is on screen.

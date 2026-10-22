@@ -931,28 +931,92 @@ function Minimize-OtherWindows {
 }
 
 function Find-DesktopIcon {
-    # Finds a point on one of the desktop's icons.
+    # Finds the point on the desktop's icon with the given name.
     #
     # The icons are in a grid in the top left corner of the desktop. A point
-    # is tried by clicking it: a click on an icon selects it, and a click on
-    # the empty desktop does not, so the selection says which it was.
-    param($list)
-    for ($row = 0; $row -lt 5; $row++) {
-        for ($column = 0; $column -lt 4; $column++) {
-            $x = 30 + $column * 80
-            $y = 30 + $row * 85
+    # is tried by clicking it: a click on an icon selects it, and the shell
+    # says which icon it was. The shell's list of the virtual desktop is in
+    # the same order as the icons, so the name of the item at the place the
+    # selection gives is the name of the icon.
+    #
+    # The special items — This PC, the Recycle Bin and the like — are not
+    # clicked: clicking one of them opens it, and the desktop is in a
+    # different order afterwards.
+    param($list, [string]$wanted, [int]$first)
+    $shell = New-Object -ComObject Shell.Application
+    $virtual = $shell.Namespace(0).Items()
+    for ($row = 0; $row -lt 12; $row++) {
+        for ($column = 0; $column -lt 6; $column++) {
+            $x = 15 + $column * 80
+            $y = 15 + $row * 85
             [void][Native]::SetCursorPos($x, $y)
-            Start-Sleep -Milliseconds 250
+            Start-Sleep -Milliseconds 220
             [Native]::mouse_event([Native]::LEFTDOWN, 0, 0, 0, [UIntPtr]::Zero)
-            Start-Sleep -Milliseconds 120
+            Start-Sleep -Milliseconds 110
             [Native]::mouse_event([Native]::LEFTUP, 0, 0, 0, [UIntPtr]::Zero)
-            Start-Sleep -Milliseconds 350
-            if ((Get-DesktopSelection $list) -ge 0) {
+            Start-Sleep -Milliseconds 320
+            $selected = Get-DesktopSelection $list
+            if ($selected -lt 0) { continue }
+            if ($selected -lt $first) { continue }
+            if ($selected -lt $virtual.Count -and $virtual.Item($selected).Name -eq $wanted) {
                 return @{ X = $x; Y = $y }
             }
         }
     }
     return $null
+}
+
+function Get-DesktopFileIndex {
+    # The place of a file in the desktop's own list of items.
+    #
+    # The shell's list of the *virtual* desktop holds the same items as the
+    # icons on the screen, in the same order: the special items first, and
+    # then the files of the desktop's folder. So the place of a file in that
+    # list is the place of its icon.
+    param([string]$name)
+    $shell = New-Object -ComObject Shell.Application
+    $items = $shell.Namespace(0).Items()
+    for ($i = 0; $i -lt $items.Count; $i++) {
+        if ($items.Item($i).Name -eq $name) { return $i }
+    }
+    return -1
+}
+
+function Get-DesktopFirstFileIndex {
+    # The place of the first file of the desktop's folder.
+    #
+    # The items before it are the special ones — This PC, the Recycle Bin and
+    # the like — and clicking on one of them opens it, which puts the desktop
+    # in a different order. The test stays away from them.
+    $shell = New-Object -ComObject Shell.Application
+    $files = $shell.Namespace([Environment]::GetFolderPath("Desktop")).Items()
+    if ($files.Count -eq 0) { return 0 }
+    $first = $files.Item(0).Name
+    $virtual = $shell.Namespace(0).Items()
+    for ($i = 0; $i -lt $virtual.Count; $i++) {
+        if ($virtual.Item($i).Name -eq $first) { return $i }
+    }
+    return 0
+}
+
+function Get-UnusedExtension {
+    # An extension that no file on the desktop has.
+    #
+    # The application does not write file names in its log, so the kind of the
+    # file is what says which file it was. A kind that nothing else on the
+    # desktop has therefore names one file and no other.
+    $taken = @{}
+    $shell = New-Object -ComObject Shell.Application
+    foreach ($folder in @([Environment]::GetFolderPath("Desktop"), "C:\Users\Public\Desktop")) {
+        if (-not (Test-Path $folder)) { continue }
+        Get-ChildItem $folder -File -ErrorAction SilentlyContinue | ForEach-Object {
+            if ($_.Extension) { $taken[$_.Extension.TrimStart(".").ToLower()] = $true }
+        }
+    }
+    foreach ($extension in @("csv", "xlsx", "pptx", "epub", "zip", "yaml", "toml", "md")) {
+        if (-not $taken.ContainsKey($extension)) { return $extension }
+    }
+    return "txt"
 }
 
 function Find-EmptyDesktop {
@@ -990,10 +1054,18 @@ function Case-DesktopDrag {
     # The desktop has to be visible, or the icons cannot be reached.
     Minimize-OtherWindows
 
-    # A file whose name comes before every other one, so that it is the first
-    # icon of the desktop.
-    $file = Join-Path ([Environment]::GetFolderPath("Desktop")) "0000-desktop-drag-test.txt"
-    Set-Content $file "hello"
+    # A picture of its own on the desktop, so that the conversion can be
+    # checked afterwards. The name is one nothing else has, so the shell's
+    # list of the desktop names one file and no other.
+    $name = "0000-desktop-drag-test-$([DateTime]::Now.Ticks).png"
+    $stem = [System.IO.Path]::GetFileNameWithoutExtension($name)
+    $file = Join-Path ([Environment]::GetFolderPath("Desktop")) $name
+    $picture = New-Object System.Drawing.Bitmap 64, 64
+    for ($x = 0; $x -lt 64; $x++) {
+        for ($y = 0; $y -lt 64; $y++) { $picture.SetPixel($x, $y, [System.Drawing.Color]::Red) }
+    }
+    $picture.Save($file, [System.Drawing.Imaging.ImageFormat]::Png)
+    $picture.Dispose()
     Start-Sleep -Seconds 4
 
     $list = Get-DesktopIconList
@@ -1003,9 +1075,13 @@ function Case-DesktopDrag {
     if (-not $empty) { Say "FAIL: no empty place was found on the desktop"; return }
     Say ("an empty place on the desktop is at ({0}, {1})" -f $empty.X, $empty.Y)
 
-    $icon = Find-DesktopIcon $list
-    if (-not $icon) { Say "FAIL: no icon was found on the desktop"; return }
-    Say ("an icon of the desktop is at ({0}, {1})" -f $icon.X, $icon.Y)
+    # The icon of the picture that was made. The desktop's icons are in the
+    # same order as the shell's list of the virtual desktop, so the name of
+    # the shell gives for a clicked icon is the name of that icon.
+    $first = Get-DesktopFirstFileIndex
+    $icon = Find-DesktopIcon $list $stem $first
+    if (-not $icon) { Say "FAIL: the icon of the picture was not found on the desktop"; return }
+    Say ("the icon of the picture is at ({0}, {1})" -f $icon.X, $icon.Y)
 
     $process = Start-App 40
     Minimize-Terminal
@@ -1036,8 +1112,28 @@ function Case-DesktopDrag {
     if ($opened) { Say ("FAIL: the wheel opened anyway: " + $opened.Line) } else { Say "PASS: the wheel did not open" }
 
     # And now the icon: a drag of a file on the desktop must open the wheel.
-    $before = @(Get-AppLog).Count
-    Invoke-Gesture $icon.X $icon.Y $true $false 120 60
+    #
+    # The pointer is moved once the wheel is up, the way a user moves onto a
+    # choice. The drop target is registered when the wheel is drawn, and the
+    # shell tells it what the drag carries when the pointer is over it, so the
+    # move is what brings the file list in.
+    [void][Native]::SetCursorPos($icon.X, $icon.Y)
+    Start-Sleep -Milliseconds 500
+    [Native]::mouse_event([Native]::LEFTDOWN, 0, 0, 0, [UIntPtr]::Zero)
+    Start-Sleep -Milliseconds 350
+    for ($i = 1; $i -le 10; $i++) {
+        [void][Native]::SetCursorPos(($icon.X + $i * 12), ($icon.Y + $i * 9))
+        Start-Sleep -Milliseconds 45
+    }
+    [Native]::keybd_event(0x10, 0, 0, [UIntPtr]::Zero)
+    Start-Sleep -Milliseconds 800
+    for ($i = 1; $i -le 6; $i++) {
+        [void][Native]::SetCursorPos(($icon.X + 120 + $i * 8), ($icon.Y + 90 + $i * 6))
+        Start-Sleep -Milliseconds 90
+    }
+    Start-Sleep -Milliseconds 900
+    [Native]::keybd_event(0x10, 0, [Native]::KEYUP, [UIntPtr]::Zero)
+    [Native]::mouse_event([Native]::LEFTUP, 0, 0, 0, [UIntPtr]::Zero)
     Start-Sleep -Seconds 2
     Stop-App $process
 
@@ -1054,14 +1150,17 @@ function Case-DesktopDrag {
     if ($started -and $opened) { Say "PASS: a drag of a desktop file opened the wheel" }
     else { Say "FAIL: a drag of a desktop file did not open the wheel" }
     # The wheel knows what is being dragged. The log does not name the file,
-    # so the number of items is what can be checked.
-    if ($selection -and $selection.Line -match "1 item\(s\) of 1 kind\(s\)") {
+    # so the number of items and the kind of the file are what can be checked.
+    if ($selection -and $selection.Line -match "1 item\(s\) of 1 kind\(s\) \(image\)") {
         Say "PASS: the wheel knows what is being dragged"
     } else {
         Say "FAIL: the wheel does not know what is being dragged"
     }
 
     Remove-Item -Force $file -ErrorAction SilentlyContinue
+    # The conversion may have left a file of its own next to the picture.
+    Get-ChildItem ([Environment]::GetFolderPath("Desktop")) -Filter "$stem.*" -File -ErrorAction SilentlyContinue |
+        ForEach-Object { Remove-Item -Force $_.FullName -ErrorAction SilentlyContinue }
 }
 
 function Case-DevelopmentWheel {

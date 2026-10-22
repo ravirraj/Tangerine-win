@@ -40,6 +40,14 @@ use crate::ui::wheel::{DISC_SIZE, ViewModel, WheelUi, build_view_model};
 /// How often the application looks at the world, in milliseconds.
 const TICK_INTERVAL: u32 = 16;
 
+/// The revision this program was built from.
+///
+/// It is put in the program when it is built, so that a copy of it can say
+/// where it came from.
+pub fn revision() -> &'static str {
+    env!("OPEN_TANGERINE_REVISION")
+}
+
 /// What the application was asked to do on the command line.
 #[derive(Clone, Debug)]
 pub struct Options {
@@ -82,9 +90,15 @@ pub fn parse_options(arguments: &[String]) -> Result<Options, String> {
                     .map_err(|_| "--exit-after needs a number of seconds")?;
                 options.exit_after = Some(Duration::from_secs_f64(seconds));
             }
+            "--version" => {
+                return Err(format!(
+                    "Open Tangerine for Windows, revision {}",
+                    revision()
+                ));
+            }
             "--help" | "-h" => {
                 return Err(
-                    "Open Tangerine for Windows\n\n  --dev-wheel          open the wheel straight away\n  --advanced-modifiers  also let Ctrl and Alt open their wheels\n  --exit-after <s>     quit after so many seconds\n"
+                    "Open Tangerine for Windows\n\n  --dev-wheel          open the wheel straight away\n  --advanced-modifiers  also let Ctrl and Alt open their wheels\n  --exit-after <s>     quit after so many seconds\n  --version            say which revision this program is\n"
                         .to_string(),
                 );
             }
@@ -717,6 +731,23 @@ impl App {
         // wheel uses, so that the count cannot change halfway through.
         let paths = state.paths.borrow().clone();
         if !paths.is_empty() && paths != self.reported_paths {
+            // The files are told to the application while the drag is over the
+            // window. They belong to the drag that was running when the window
+            // became a drop target, so a drag that came after them is not
+            // given their files.
+            if state.session.get() != self.session.id() {
+                diagnostics::log(
+                    Level::Debug,
+                    "drag",
+                    &format!(
+                        "the drop target reported {} file(s) for drag {}, but drag {} is running",
+                        paths.len(),
+                        state.session.get(),
+                        self.session.id()
+                    ),
+                );
+                return;
+            }
             self.reported_paths = paths.clone();
             if !self.session.is_resolved() {
                 // The shell could not say what is being dragged, which is the
@@ -1307,6 +1338,9 @@ impl App {
                     self.overlay.show();
                     if self.pending_drop_target {
                         self.pending_drop_target = false;
+                        // The files that the drop target is told belong to the
+                        // drag that is running now, and to no other.
+                        self.drop_state.session.set(self.session.id());
                         if let Err(error) = self.overlay.register_drop_target(&self.drop_target) {
                             diagnostics::error(
                                 "drag",
@@ -1513,8 +1547,9 @@ pub fn run(options: Options) -> Result<(), String> {
         Level::Info,
         "start",
         &format!(
-            "started in {:.1} ms, scale {:.2}, timer {TICK_INTERVAL} ms, modifier map {:?}",
+            "started in {:.1} ms, revision {}, scale {:.2}, timer {TICK_INTERVAL} ms, modifier map {:?}",
             started.elapsed().as_secs_f64() * 1000.0,
+            revision(),
             app.scale,
             app.controller.modifier_map()
         ),

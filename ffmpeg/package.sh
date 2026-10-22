@@ -31,6 +31,32 @@ echo "=== what goes in ==="
 [ -f "$PREFIX/bin/ffprobe.exe" ] || { echo "the program that inspects was not built"; exit 1; }
 ls -l "$APP" "$PREFIX/bin/ffmpeg.exe" "$PREFIX/bin/ffprobe.exe"
 
+# The program says which revision it was built from, and the tree says which
+# revision it is at. A program that is not from this tree is not put in the
+# package: a package that is made from an older build is the reason a copy of
+# the program can be found that does not do what the source says.
+#
+# The tree may have changes that are not committed, and the program says so
+# with a "-dirty" ending. The two are compared on the revision itself, and the
+# changes are only reported.
+TREE_REVISION="$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+TREE_DIRTY=""
+if [ -n "$(git -C "$ROOT" status --porcelain 2>/dev/null)" ]; then
+    TREE_DIRTY="-dirty"
+fi
+APP_REVISION="$("$APP" --version 2>&1 | sed -n 's/.*revision //p')"
+APP_COMMIT="${APP_REVISION%%-dirty}"
+TREE_COMMIT="${TREE_REVISION%%-dirty}"
+if [ "$APP_COMMIT" != "$TREE_COMMIT" ]; then
+    echo "the program is from revision '$APP_REVISION', but the tree is at '$TREE_REVISION'"
+    echo "build it again: cargo build --release"
+    exit 1
+fi
+echo "the program is from revision '$APP_REVISION', and so is the tree"
+if [ "$TREE_DIRTY" != "" ] && [ "$APP_REVISION" = "$TREE_COMMIT" ]; then
+    echo "note: the tree has changes that are not committed, and the program was built without them"
+fi
+
 STAGE="$DIST/$NAME"
 rm -rf "$STAGE"
 mkdir -p "$STAGE/ffmpeg" "$STAGE/licenses/ffmpeg"
