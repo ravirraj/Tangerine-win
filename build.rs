@@ -21,6 +21,10 @@ fn main() {
     if let Some(reference) = reference_file() {
         println!("cargo:rerun-if-changed={}", reference.display());
     }
+    // A caller can say which revision the program is of, and the program is
+    // then made again when that answer changes. This is how the packaging
+    // script asks for a program of the tree it is packaging.
+    println!("cargo:rerun-if-env-changed=OPEN_TANGERINE_REVISION");
     println!("cargo:rustc-env=OPEN_TANGERINE_REVISION={}", revision());
     slint_build::compile(path).expect("the wheel markup could not be compiled");
 }
@@ -31,6 +35,14 @@ fn main() {
 /// program that says so is more useful than one that names a revision that
 /// may be wrong.
 fn revision() -> String {
+    // What the caller says comes first: the packaging script knows the
+    // revision of the tree it is packaging, and asking it means the program
+    // is made again when the tree moves.
+    if let Ok(given) = std::env::var("OPEN_TANGERINE_REVISION")
+        && !given.trim().is_empty()
+    {
+        return given.trim().to_string();
+    }
     let Some(head) = git(&["rev-parse", "--short", "HEAD"]) else {
         return "unknown".to_string();
     };
