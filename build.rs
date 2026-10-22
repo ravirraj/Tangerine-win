@@ -14,7 +14,10 @@ fn main() {
     // The revision is part of what the program is, so the program is made
     // again when the revision moves. The head of the repository points at the
     // branch, and the branch is what moves.
-    println!("cargo:rerun-if-changed={}", git_directory().join("HEAD").display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        git_directory().join("HEAD").display()
+    );
     if let Some(reference) = reference_file() {
         println!("cargo:rerun-if-changed={}", reference.display());
     }
@@ -32,11 +35,7 @@ fn revision() -> String {
         return "unknown".to_string();
     };
     let dirty = git(&["status", "--porcelain"]).is_some_and(|out| !out.trim().is_empty());
-    if dirty {
-        format!("{head}-dirty")
-    } else {
-        head
-    }
+    if dirty { format!("{head}-dirty") } else { head }
 }
 
 /// Asks git something, and gives nothing back when it cannot answer.
