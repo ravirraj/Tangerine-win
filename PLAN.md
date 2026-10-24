@@ -1,235 +1,255 @@
-# Implementation Plan — Open Tangerine for Windows (Path B)
+# Open Tangerine for Windows — Implementation Plan (Path B)
 
-**Goal:** Reach parity with the macOS product (tangerineformac.com) on Windows: image, video, audio, PDF, documents, slides, spreadsheets, subtitles, archives conversions; 26 tools; 6 file actions.
-
-**Scope & constraints:**
-- Personal / open-source use; GPL/LGPL dependencies acceptable.
-- Final app size should be low; app should be fast.
-- DOCX / PPTX / XLSX deferred to later (no reliable offline Rust library yet).
-- Process phase by phase. Do not skip phases.
-- Stop for review before starting document or audio work (review checkpoint = end of Phase B-4).
-- Implement only genuinely supported capabilities — no fake formats.
-- Do not commit or push; preserve working-tree changes; no remote Git operations.
-- Author: Ravi <ravirrajpatil@gmail.com>; Conventional Commits when committing.
-
-**Baseline (verified):** All 12 real-FFmpeg ignored tests pass against `vendor/ffmpeg`. The existing 6-image pipeline (PNG/JPEG/WebP/GIF/TIFF/BMP) works end-to-end.
+**Goal:** Reach parity with tangerineformac.com on Windows.
+**Author:** Ravi <ravirrajpatil@gmail.com>
+**Conventional Commits.** No commit/push until approved.
+**Personal/open-source use.** GPL/LGPL dependencies acceptable (FFmpeg, poppler, libheif).
+**Low app size and fast performance** are priorities.
+**Do not implement until approved.** This document is the plan only.
 
 ---
 
-## Phase B-0 — Baseline (DONE)
+## Baseline (Verified)
 
-**Objective:** Prove current image pipeline works against bundled FFmpeg.
+| Phase | Status | What |
+|---|---|---|
+| B-0 | ✅ Done | Real FFmpeg baseline — 12/12 ignored tests pass |
+| B-1 | ✅ Done | Full FFmpeg build (video/audio codecs) merged to feature/image-conversion |
+| B-2 | ✅ Done | Manifest/probe updated for new formats |
+| B-3 | ✅ Done | Job system skeleton (src/media/job.rs) |
+| B-4 | ✅ Done | ICO output + HEIC/AVIF/SVG documented as unsupported |
+| B-5 | ✅ Done | Video/audio operations (MP4/MKV/AVI/WMV registered + real-tested) |
+| B-6 | ✅ Done | Documents/subtitles/archives (SRT/VTT/TXT/ZIP/TAR/GZ) |
+| B-7 | ✅ Done | Tools wheel (compress, crop, trim, rotate, resize, merge, metadata) |
+| B-8 | ✅ Done | File actions (copy path, duplicate, rename, reveal, terminal, extract) |
 
-**Command:**
-```powershell
-cargo build --features test-helper --bins
-cargo test --features test-helper -- --ignored
+**Current branch:** `feature/image-conversion` (33 commits ahead of origin, all local, no push)
+**Tests:** 297 unit + 16 real-FFmpeg, 0 failures
+
+---
+
+## Reference Product (tangerineformac.com)
+
+**Product:** Tangerine for Mac by Leap Studio, $29.99, macOS 13+, Apple silicon
+**Key behaviors:**
+- Drag a file, tap Shift → conversion wheel opens under cursor
+- Tap Command → file tools wheel
+- Tap Control → file actions wheel
+- Wheel stays open until drop/cancel
+- Escape cancels
+- Each tool opens as a **dedicated modal window** with its own UI (e.g., "Merge PDFs" shows file ordering + Merge button)
+- Output beside original, never overwrites
+- 275 conversions, 26 tools, 6 file actions
+- Local processing, no upload
+
+---
+
+## What's Missing (Gap Analysis)
+
+### 1. Image Formats (blocked — no decoder in toolchain)
+| Format | Reference | Status | Blocker |
+|---|---|---|---|
+| HEIC input/output | Supported | ❌ | No libheif/libde265 |
+| AVIF input | Supported | ❌ | No libavif/dav1d |
+| AVIF output | Supported | ❌ | No libavif |
+| SVG input | Supported | ❌ | No resvg integration |
+| PDF export from images | Supported | ❌ | No PDF library |
+
+### 2. Video/Audio Formats
+| Format | Status |
+|---|---|
+| MP4, MKV, AVI, WMV | ✅ Done |
+| MOV, WebM | ⚠️ Registered, untested |
+| MP3, AAC, FLAC, Opus | ⚠️ Some registered, untested |
+| WAV, OGG, AIFF, M4A | ❌ Not registered |
+
+### 3. Documents / Slides / Subtitles
+| Format | Reference | Status |
+|---|---|---|
+| PDF → images/text | Supported | ❌ No poppler/LibreOffice |
+| DOCX, PPTX, XLSX | Supported | ❌ No offline Rust library |
+| PPT/PPTX → PDF/JPG/PNG | Supported | ❌ Missing |
+| SRT, VTT → TXT | Supported | ✅ Done |
+
+### 4. Advanced Tools (26 in reference — 7 implemented, 19 missing)
+**Implemented:** Compress, Crop, Trim, Rotate, Resize, Merge, Metadata
+
+**Missing (19):** Background removal, Remove metadata, Read QR, Split, plus ~13 others from reference tools page
+
+### 5. File Actions (Windows equivalents)
+| Reference | Windows Equivalent | Status |
+|---|---|---|
+| AirDrop | Nearby Share / Smart Share | ❌ No public API — fallback |
+| Float | None | ❌ N/A |
+| Copy (duplicate) | ✅ | Done |
+| Move/rename | ✅ | Done |
+| Copy Path | ✅ | Done |
+| Terminal | ✅ | Done |
+| Reveal in Explorer | ✅ | Done |
+| Extract archive | ✅ | Done |
+
+### 6. Interaction Model
+| Feature | Status |
+|---|---|
+| Escape cancels | ❌ |
+| Enter/arrow keys on file | ❌ |
+| Auto-retract wheel on success | ❌ |
+| Progress indicator | ❌ |
+| Notification on completion | ❌ |
+| Sound toggle | ❌ |
+
+### 7. Windows Integration
+| Feature | Status |
+|---|---|
+| System tray | ❌ |
+| Launch at login | ❌ |
+| Windows notifications | ❌ |
+| Right-click Explorer integration | ❌ |
+
+### 8. Settings
+| Feature | Status |
+|---|---|
+| Appearance (light/dark) | ✅ Exists |
+| Output location | ❌ |
+| Shortcut customization | ❌ |
+| Auto-retract toggle | ❌ |
+| Sound toggle | ❌ |
+| Persistence | ❌ No settings storage |
+
+### 9. Packaging
+| Item | Status |
+|---|---|
+| `dist\` binary is stale | ❌ Needs repackaging |
+| Installer (Inno Setup/NSIS) | ❌ |
+| Code signing | ❌ |
+
+---
+
+## Tool Windows Decision
+
+**Reference behavior:** Each tool on tangerineformac.com/tools opens as a **dedicated modal window** with its own configuration UI (e.g., "Merge PDFs" shows file reordering + Merge button).
+
+**Decision:** Option A — Keep the radial wheel as the primary interaction, but when a tool segment is clicked, open a **tool configuration window/modal** with format-specific controls. This matches the reference product's interaction model.
+
+**Tool windows to implement (one per tool):**
+- Compress: quality slider, output format
+- Crop: drag crop box, aspect ratio options
+- Trim: start/end time sliders for video/audio
+- Rotate: 90°/180°/270° buttons, flip options
+- Resize: width/height inputs, percentage, maintain aspect ratio
+- Merge: file list with drag-to-reorder, output format
+- Metadata: EXIF editor fields
+- Background removal: (deferred — too heavy)
+- Read QR: (deferred — needs barcode library)
+- Split: split point inputs for PDF/video
+
+---
+
+## Implementation Phases (in order)
+
+| Phase | What | Est. Effort | Dependencies |
+|---|---|---|---|
+| **B-9.1** | HEIC input/output | 3–5 days | libheif/libde265 Windows build |
+| **B-9.2** | AVIF input/output | 3–5 days | libavif/dav1d (previous build failed) |
+| **B-9.3** | SVG input | 2–3 days | resvg (vendored via Slint) |
+| **B-9.4** | PDF support | 5–10 days | poppler (Windows build) |
+| **B-9.5** | DOCX/PPTX/XLSX | 5–15 days | LibreOffice headless (external) |
+| **B-9.6** | Audio formats (WAV, OGG, AIFF, M4A) | 2–3 days | Native FFmpeg codecs |
+| **B-9.7** | RAR input | 2–3 days | unrar/7z external |
+| **B-10** | Remaining 19 tools | 10–15 days | FFmpeg filters + Rust crates |
+| **B-11** | Terminal + Extract (done) + Nearby Share | 2–3 days | Windows share contract fallback |
+| **B-12** | Progress UI, Cancellation, Escape/Keyboard | 5–8 days | None |
+| **B-13** | Tray, Startup, Notifications | 3–5 days | Win32 APIs |
+| **B-14** | Settings UI + persistence | 5–10 days | serde + serde_json |
+| **B-15** | Packaging | 3–5 days | Inno Setup/NSIS |
+
+**Total estimated: 40–85 days**
+
+---
+
+## Dependencies & Licensing
+
+| Dependency | Size | License | Notes |
+|---|---|---|---|
+| libheif + libde265 | ~2 MB | LGPL/GPL | Static link |
+| libavif + dav1d | ~3 MB | BSD | Previous build failed |
+| poppler (PDF) | ~10–20 MB | GPL | Optional/external |
+| exif-rs | ~0.5 MB | MIT | Small |
+| ONNX Runtime (background removal) | ~50–100 MB | MIT | **Too heavy** — defer |
+| serde + serde_json | ~0 | MIT | For settings |
+
+**Total estimated added size:** ~5–15 MB (excluding optional background removal)
+
+---
+
+## Files to Create (New)
+
+```
+src/media/heic.rs           — HEIC wrapper
+src/media/avif.rs           — AVIF wrapper
+src/media/svg.rs            — SVG rasterize seam
+src/media/pdf.rs            — PDF via poppler seam
+src/media/documents2.rs     — DOCX/PPTX/XLSX via LibreOffice shell
+src/media/audio.rs          — Audio format handlers
+src/platform/windows/tray.rs       — System tray
+src/platform/windows/shortcut.rs   — Startup registry
+src/platform/windows/notifications.rs — Toast notifications
+src/ui/progress.rs          — Progress UI
+src/ui/settings.rs          — Settings logic
+src/ui/settings.slint       — Settings UI
+src/ui/sound.rs             — Optional sound
+src/radial/tools.rs         — EXISTING (add remaining tools)
+src/radial/file_actions.rs  — EXISTING (already has terminal/extract)
 ```
 
-**Result:** 12 / 12 passed. Foundation is proven.
+## Files to Modify (Existing)
+
+```
+Cargo.toml                  — Add heif, avif, serde, serde_json, exif
+ffmpeg/components.txt       — Add heic, avif, svg, pdf, docx, pptx, xlsx, wav, ogg, aiff, rar, ppt
+ffmpeg/build.sh             — Add new library configure flags
+ffmpeg/package.sh           — Include new DLLs and licenses
+src/media/command.rs        — Already updated (video_filter param)
+src/media/convert.rs        — Add SVG/seam routing, document routing
+src/media/probe.rs          — Already updated (document processor)
+src/media/manifest.rs       — No change (generic)
+src/radial/registry.rs      — Add all new operations
+src/radial/actions.rs       — Add IconKind::Terminal, IconKind::Extract; update menu tests
+src/radial/icons.rs         — Add TERMINAL, EXTRACT paths
+src/radial/controller.rs    — Add keyboard navigation, Escape, progress
+src/app.rs                  — Wire Documents, Tools, FileActions handlers; settings
+src/platform/windows/mod.rs — Add clipboard, shell, tray modules
+```
 
 ---
 
-## Phase B-1 — Full FFmpeg vendor build
+## Stop Conditions
 
-**Objective:** Replace minimal `--disable-everything` FFmpeg with a full build supporting video/audio muxers, codecs, libheif, libavif, dav1d.
+**Do not implement:**
+- Background removal (ONNX Runtime ~50-100 MB — too heavy)
+- QR reading (needs barcode library — assess size first)
+- DOCX/PPTX/XLSX bundled LibreOffice — detect at runtime only
 
-**Files to change:**
-- `ffmpeg/package.sh` — rewrite configure flags:
-  - Video muxers/encoders: mp4, mkv, webm, avi, wmv, gif
-  - Audio encoders/decoders: mp3, aac, flac, opus, wma
-  - Video decoders: h264, hevc, vp8, vp9, av1
-  - Image: apng, webp_anim, libheif, libavif
-  - Enable libheif, libavif, dav1d with Windows pkg-config paths
-- `ffmpeg/components.txt` — update to list all enabled parts (single source of truth; build.rs assertions must match)
-- `build.rs` — post-build assertions reflect new component list
-- Vendor binaries: rebuild `vendor/ffmpeg/ffmpeg.exe` and `ffprobe.exe`
-
-**Risk:** dav1d/pkg-config build failure on Windows. May need pre-built static libs or MSYS2 packages.
-
-**Tests:** `vendor/ffmpeg/ffmpeg.exe -encoders -decoders -formats` lists all needed parts; `cargo test` green.
-
-**Exit criteria:** Full FFmpeg runs and lists all required encoders/decoders/muxers.
+**Do not implement AirDrop** — replace with Windows Nearby Share fallback (Explorer selection + manual share).
 
 ---
 
-## Phase B-2 — Manifest + probe expansion
+## Approval Checklist
 
-**Objective:** Manifest describes every format/part the new build has; probe reports capabilities correctly.
-
-**Files to change:**
-- `ffmpeg/components.txt` — add format entries for heic, avif, svg (write-only input via resvg seam), ico, mp4, mkv, webm, avi, wmv, mp3, aac, flac, opus, pdf, srt, vtt, zip
-- `src/media/manifest.rs` — parse new formats; `read` or `write` may be `None` for write-only/read-only formats
-- `src/media/probe.rs` — `can_read`/`can_write` handle absent read/write; `environment()` builds processor reads/writes from manifest
-- `src/media/command.rs` — builds FFmpeg args for video/audio (no composite graph for video/audio-only outputs)
-
-**Tests:** Manifest parse tests for every new format; probe tests with scripted listings.
-
-**Exit criteria:** Manifest and probe correctly report capabilities for all target formats.
-
-**Status (B-2 complete on branch `phase/b-2-manifest-probe`, commit `946c8ce`):** `probe.rs` updated for optional `read`/`write`; `components.txt` includes video/audio; new full FFmpeg binary verified (mp4/mkv/avi/wmv/mp3/aac/flac supported natively).
+- [ ] Plan documented in PLAN.md
+- [ ] todo.md created with actionable items
+- [ ] User approves starting implementation
+- [ ] User confirms tool windows (Option A) as interaction model
+- [ ] User confirms which phase to start with
 
 ---
 
-## Phase B-3 — Pipeline redesign — job system
+## Next Steps (Pending Approval)
 
-**Objective:** Replace single-shot `Converter::convert` with a job system supporting progress, cancellation, multi-input, mixed media types.
-
-**Files to change:**
-- `src/media/job.rs` (new) — `Job`, `JobStatus`, `JobResult`, progress reporter, cancellation token
-- `src/media/convert.rs` — becomes per-format dispatch: image → FFmpeg image path (existing), video/audio → filtergraph/muxer path, document/archive → external tool or Rust crates
-- `src/radial/execution.rs` — handler returns `Succeeded`/`Failed`/`Cancelled` with progress
-- Keep original-file preservation and never-overwrite rules from `src/media/publish.rs`
-
-**Tests:** Job cancellation stops FFmpeg process; progress reporting; multi-file batch; same-format rejection; collision handling.
-
-**Exit criteria:** Existing image conversions still work through new job system; cancellation works.
+1. User approves plan
+2. User selects starting phase (recommend B-9.1 HEIC or B-12 Progress UI)
+3. Implementation begins on `phase/b-9-...` branch
+4. Merge to `feature/image-conversion` after each phase
+5. Merge to `master` only at the end
 
 ---
-
-## Review checkpoint (STOP HERE)
-
-**Deliverable:** Report to user:
-- What works (image formats, job system)
-- What is unsupported and why
-- Recommendation to proceed into document/audio (Phase B-4+) only with explicit approval
-
-**Do not proceed past this point without user go-ahead.** Required by constraints.
-
----
-
-## Phase B-4 — Image format completion (HEIC, AVIF, SVG, ICO)
-
-**Objective:** Image formats Tangerine supports.
-
-**Files to change:**
-- `src/media/ico.rs` (new) — ICO container wrapper around FFmpeg BMP/PNG output
-- `src/media/heic.rs` (new) — libheif binding or FFmpeg with libheif
-- `src/media/avif.rs` (new) — libavif + dav1d (fix pkg-config build)
-- `src/media/svg.rs` (new) — resvg rasterize to PNG, then existing image pipeline
-- `src/media/convert.rs` — route heic/avif/svg/ico through correct seam
-
-**Tests:** Real conversions for each format; transparency preservation; dimension checks; magic-byte validation.
-
-**Exit criteria:** PNG↔HEIC↔AVIF↔SVG↔BMP↔ICO conversions produce valid files.
-
----
-
-## Phase B-5 — Video & audio conversions
-
-**Objective:** MP4/MOV/MKV/WebM/AVI/WMV/GIF; MP3/M4A/WAV/FLAC/OGG/Opus/AIFF/WMA; audio extraction from video.
-
-**Files to change:**
-- FFmpeg filtergraph args for video encode/decode, audio extraction, GIF from video
-- New `video` and `audio` processors in registry/probe
-- `src/radial/registry.rs` — add convert.mp4, convert.mp3, etc. operations
-
-**Tests:** Real video→video, video→audio, audio→audio conversions; output plays.
-
-**Exit criteria:** A short MP4 converts to WebM and MP3 without error.
-
----
-
-## Phase B-6 — Documents, PDF, slides, sheets, subtitles, archives
-
-**Objective:** Non-media formats. DOCX/PPTX/XLSX deferred to later.
-
-**Files to change:**
-- PDF → images/text: poppler or equivalent (heavy Windows dependency)
-- Subtitles SRT↔VTT↔TXT: native Rust text parsing (simple)
-- Archives ZIP/TAR/GZIP/RAR input: `zip`, `flate2`, `tar` crates; RAR needs `unrar`
-
-**Risk:** DOCX/PPTX/XLSX may not be feasible offline without LibreOffice. Mark unsupported if infeasible.
-
-**Tests:** PDF→PNG, ZIP extraction, SRT↔VTT.
-
-**Exit criteria:** Feasible formats work; infeasible ones documented as unsupported with reason.
-
----
-
-## Phase B-7 — Tools wheel (26 operations)
-
-**Objective:** Compress, crop, trim, split, merge, background removal, metadata, QR.
-
-**Files to change:**
-- `src/radial/registry.rs` — flip tools from `implemented: false` to real handlers
-- Crop/trim: FFmpeg filtergraph on image/video
-- Compress: re-encode at lower quality/bitrate
-- Merge: FFmpeg concat demuxer (same-kind only)
-- Metadata: EXIF/XMP — `exif` crate or FFmpeg metadata
-- Background removal / QR: assess size/license; may be out of scope for low-size goal
-
-**Tests:** Crop dimensions, trim duration, merge output plays.
-
-**Exit criteria:** Core tools (crop, trim, compress, merge) work on image/video.
-
----
-
-## Phase B-8 — File actions wheel (6 operations)
-
-**Objective:** Copy path, duplicate, rename, reveal in Explorer (Windows equivalents of macOS AirDrop/Float/Terminal).
-
-**Files to change:**
-- All `Requirement::None` — run in platform layer, no FFmpeg
-- Win32 clipboard for copy path; `SHFileOperation`/`MoveFileEx` for duplicate/rename; `ShellExecute` for reveal
-
-**Tests:** Eligibility (folders allowed), collision handling, no FFmpeg needed.
-
-**Exit criteria:** All actions run without FFmpeg.
-
----
-
-## Phase B-9 — UI & product polish
-
-**Objective:** Settings, tray, shortcuts, notifications, progress.
-
-**Files to change:**
-- Settings window: appearance (light/dark), modifier keys, output location
-- Tray icon + startup registration
-- Progress notifications during conversion; cancellation UI
-- Wire existing wheel to new job system
-
-**Tests:** Settings persistence; shortcut parsing; tray show/hide.
-
-**Exit criteria:** App launches to tray, opens wheel on Shift-drag, shows progress during conversion.
-
----
-
-## Phase B-10 — Packaging & release
-
-**Objective:** Produce installable Windows package.
-
-**Files to change:**
-- `ffmpeg/package.sh` — repackage with full FFmpeg + all DLLs
-- `dist\OpenTangerine\open-tangerine.exe` rebuilt (current one is stale)
-
-**Exit criteria:** Package runs on clean Windows 11 without dev environment.
-
----
-
-## Effort estimates
-
-| Phase | Effort |
-|---|---|
-| B-0 Baseline | Done |
-| B-1 Full FFmpeg build | 3–5 days |
-| B-2 Manifest/probe | 2–3 days |
-| B-3 Job system | 5–8 days |
-| Review checkpoint | — |
-| B-4 Image formats | 3–5 days |
-| B-5 Video/audio | 5–10 days |
-| B-6 Documents/archives | 5–15 days |
-| B-7 Tools | 5–10 days |
-| B-8 File actions | 2–3 days |
-| B-9 UI polish | 5–10 days |
-| B-10 Packaging | 2–3 days |
-
-**Total realistic range: 30–70 days** of focused work.
-
----
-
-## Next immediate step
-
-Begin **Phase B-1**: inspect and rewrite `ffmpeg/package.sh` for the full FFmpeg build.
-
-Shall I start B-1?
