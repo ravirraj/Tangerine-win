@@ -83,7 +83,7 @@ impl FileKind {
             "mp3" | "wav" | "flac" | "aac" | "m4a" | "ogg" | "oga" | "opus" | "wma" | "aiff"
             | "mid" => FileKind::Audio,
             "pdf" => FileKind::Pdf,
-            "doc" | "docx" | "odt" | "rtf" | "pages" | "epub" | "djvu" => FileKind::Document,
+            "doc" | "docx" | "odt" | "rtf" | "pages" | "epub" | "djvu" | "srt" | "vtt" => FileKind::Document,
             "xls" | "xlsx" | "xlsm" | "ods" | "csv" | "tsv" | "numbers" => FileKind::Spreadsheet,
             "ppt" | "pptx" | "odp" | "key" => FileKind::Presentation,
             "zip" | "rar" | "7z" | "tar" | "gz" | "bz2" | "xz" | "zst" | "tgz" | "cab" => {

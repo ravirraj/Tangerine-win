@@ -265,13 +265,20 @@ fn every_picture_is_converted_into_every_format() {
     // A picture of every format the program can read.
     let mut pictures = Vec::new();
     for source in &manifest.formats {
-        // Only image formats can be made from raw video pixels.
+        // Only image formats can be made from raw video pixels and read back.
         let ext = source.extensions.first().cloned().unwrap_or_default().to_lowercase();
         if matches!(
             ext.as_str(),
             "mp3" | "aac" | "flac" | "opus" | "wav" | "ogg" | "wma" | "m4a" | "aiff"
                 | "mp4" | "mkv" | "avi" | "wmv"
         ) {
+            continue;
+        }
+        // Formats with no FFmpeg read/write parts (ICO, documents) can't be used here.
+        if source.read.demuxer.is_empty()
+            || source.write.encoder.is_empty()
+            || source.write.muxer.is_empty()
+        {
             continue;
         }
         let Some(extension) = source.extensions.first() else {
@@ -301,6 +308,13 @@ fn every_picture_is_converted_into_every_format() {
                 "mp3" | "aac" | "flac" | "opus" | "wav" | "ogg" | "wma" | "m4a" | "aiff"
                     | "mp4" | "mkv" | "avi" | "wmv"
             ) {
+                continue;
+            }
+            // Formats with no FFmpeg read/write parts (ICO, documents) can't be used here.
+            if target.read.demuxer.is_empty()
+                || target.write.encoder.is_empty()
+                || target.write.muxer.is_empty()
+            {
                 continue;
             }
             // A picture that is already in that format is not converted.

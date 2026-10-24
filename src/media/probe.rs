@@ -20,6 +20,10 @@ use crate::radial::registry::{Environment, Processor};
 /// The name of the processor the image operations ask for.
 const IMAGE_PROCESSOR: &str = "image";
 
+/// The name of the processor for document/archive/subtitle conversions,
+/// handled in Rust without FFmpeg.
+const DOCUMENT_PROCESSOR: &str = "document";
+
 /// What the program says it can do.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Capabilities {
@@ -174,24 +178,48 @@ impl Capabilities {
     /// What the registry should be told the machine can do.
     pub fn environment(&self) -> Environment {
         let manifest = Manifest::get();
-        let mut reads = Vec::new();
-        let mut writes = Vec::new();
+        let mut image_reads = Vec::new();
+        let mut image_writes = Vec::new();
+        let mut doc_reads = Vec::new();
+        let mut doc_writes = Vec::new();
 
         for format in &manifest.formats {
+            // Formats with no reader (write-only, like ICO) skip reading.
+            if format.read.demuxer.is_empty() {
+                // Document/archive formats with no FFmpeg parts are handled
+                // by the document processor in Rust.
+                if !format.write.encoder.is_empty() || !format.write.muxer.is_empty() {
+                    // Write-only FFmpeg format (ICO): image processor can write.
+                    image_writes.push(format.format.clone());
+                } else {
+                    // Pure document format (SRT, VTT, TXT, ZIP, TAR, GZ):
+                    // document processor can read and write.
+                    doc_reads.extend(format.extensions.iter().cloned());
+                    doc_writes.push(format.format.clone());
+                }
+                continue;
+            }
             if self.can_read(format) && self.can_count_frames(format) {
-                reads.extend(format.extensions.iter().cloned());
+                image_reads.extend(format.extensions.iter().cloned());
             }
             if self.can_write(format) {
-                writes.push(format.format.clone());
+                image_writes.push(format.format.clone());
             }
         }
 
         Environment {
-            processors: vec![Processor {
-                name: IMAGE_PROCESSOR.to_string(),
-                reads,
-                writes,
-            }],
+            processors: vec![
+                Processor {
+                    name: IMAGE_PROCESSOR.to_string(),
+                    reads: image_reads,
+                    writes: image_writes,
+                },
+                Processor {
+                    name: DOCUMENT_PROCESSOR.to_string(),
+                    reads: doc_reads,
+                    writes: doc_writes,
+                },
+            ],
         }
     }
 }

@@ -258,6 +258,12 @@ mod tests {
                     "convert.bmp | BMP | Convert to BMP | Picture",
                     "convert.ico | ICO | Convert to ICO | Picture",
                     "convert.mp4 | MP4 | Convert to MP4 | Film",
+                    "convert.srt | SRT | Convert to SRT | Document",
+                    "convert.vtt | VTT | Convert to VTT | Document",
+                    "convert.txt | TXT | Convert to TXT | Document",
+                    "convert.zip | ZIP | Convert to ZIP | Archive",
+                    "convert.tar | TAR | Convert to TAR | Archive",
+                    "convert.gz | GZ | Convert to GZ | Archive",
                 ],
             ),
             (

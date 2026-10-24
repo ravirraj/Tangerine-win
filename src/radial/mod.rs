@@ -2,6 +2,7 @@
 
 pub mod actions;
 pub mod controller;
+pub mod documents;
 pub mod execution;
 pub mod geometry;
 pub mod icons;
