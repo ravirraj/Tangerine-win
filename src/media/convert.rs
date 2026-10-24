@@ -163,16 +163,33 @@ impl<'a> Converter<'a> {
         target: &FormatSupport,
         temporary: &Path,
     ) -> Result<(), ConvertError> {
-        let file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(temporary)
-            .map_err(|_| ConvertError::CouldNotPublish)?;
+        // Some muxers (mov, matroska, avi, asf) need a seekable output file
+        // and cannot write to a pipe. For those, pass the temporary file
+        // path as the output instead of writing to stdout.
+        let needs_file = crate::media::command::muxer_needs_file(&target.write.muxer);
 
-        let arguments = convert_arguments(input, source, target);
+        let arguments = if needs_file {
+            convert_arguments(input, source, target, Some(temporary))
+        } else {
+            let file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(temporary)
+                .map_err(|_| ConvertError::CouldNotPublish)?;
+            let args = convert_arguments(input, source, target, None);
+            let result = self
+                .runner
+                .run(&self.tools.ffmpeg, &args, Some(&file))
+                .map_err(|_| ConvertError::ProgramFailed)?;
+            if !result.succeeded() {
+                return Err(ConvertError::ProgramFailed);
+            }
+            return Ok(());
+        };
+
         let result = self
             .runner
-            .run(&self.tools.ffmpeg, &arguments, Some(&file))
+            .run(&self.tools.ffmpeg, &arguments, None)
             .map_err(|_| ConvertError::ProgramFailed)?;
 
         if !result.succeeded() {

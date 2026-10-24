@@ -30,6 +30,7 @@ use crate::radial::controller::RadialController;
 use crate::radial::execution;
 use crate::radial::geometry::{Point, RadialGeometry, WheelPlacement};
 use crate::radial::images;
+use crate::radial::documents;
 use crate::radial::registry::{self, Environment};
 use crate::radial::selection::Selection;
 use crate::radial::state::{Effect, InteractionEvent, InteractionSource, InteractionState};
@@ -572,14 +573,26 @@ impl App {
         };
         let selection = self.selection.clone();
         let environment = self.environment();
-        let handler = images::Pictures {
-            tools: capabilities.tools,
-            publisher: crate::platform::windows::publish::WindowsPublisher,
-        };
         let sender = self.sender.clone();
         let operation = request.operation.clone();
+        // Document conversions (subtitles, archives) run in Rust without FFmpeg.
+        let is_document = matches!(
+            operation.as_str(),
+            "convert.srt" | "convert.vtt" | "convert.txt" | "convert.zip" | "convert.tar" | "convert.gz"
+        );
         std::thread::spawn(move || {
-            let outcome = execution::run(&request, &selection, &environment, &handler);
+            let outcome = if is_document {
+                let handler = documents::Documents {
+                    publisher: crate::platform::windows::publish::WindowsPublisher,
+                };
+                execution::run(&request, &selection, &environment, &handler)
+            } else {
+                let handler = images::Pictures {
+                    tools: capabilities.tools,
+                    publisher: crate::platform::windows::publish::WindowsPublisher,
+                };
+                execution::run(&request, &selection, &environment, &handler)
+            };
             let _ = sender.send(Message::Finished(operation, outcome));
         });
     }

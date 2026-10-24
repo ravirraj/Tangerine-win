@@ -239,11 +239,14 @@ fn the_program_has_the_parts_the_manifest_asks_for() {
             "{} cannot be checked for animation",
             format.format
         );
-        assert!(
-            capabilities.can_write(format),
-            "{} cannot be written",
-            format.format
-        );
+        // Only assert write for formats with a writer configured.
+        if !format.write.encoder.is_empty() && !format.write.muxer.is_empty() {
+            assert!(
+                capabilities.can_write(format),
+                "{} cannot be written",
+                format.format
+            );
+        }
     }
 }
 
@@ -330,6 +333,162 @@ fn every_picture_is_converted_into_every_format() {
             );
         }
     }
+}
+
+#[test]
+#[ignore = "needs the conversion program"]
+fn a_picture_is_converted_to_mp4() {
+    let Some(tools) = programs() else {
+        eprintln!("the program is not there; this test needs it");
+        return;
+    };
+    let folder = TempFolder::new("to-mp4");
+    let manifest = Manifest::get();
+    let runner = SystemRunner;
+    let publisher = TestPublisher;
+
+    let picture = make_picture(
+        &tools.ffmpeg,
+        &folder.path,
+        "source.png",
+        "png",
+        "image2pipe",
+        1,
+        false,
+    );
+
+    let target = manifest.format("mp4").expect("mp4 is in the manifest");
+    let converter = Converter {
+        tools: &tools,
+        runner: &runner,
+        publisher: &publisher,
+    };
+    let result = converter
+        .convert(&picture, target)
+        .unwrap_or_else(|reason| panic!("png could not be converted to mp4: {}", reason.name()));
+    assert!(result.is_file(), "the mp4 was not made");
+    let result_bytes = std::fs::read(&result).expect("the mp4 is there");
+    assert!(
+        target.matches(&result_bytes),
+        "the mp4 output does not start with mp4 magic bytes"
+    );
+}
+
+#[test]
+#[ignore = "needs the conversion program"]
+fn a_picture_is_converted_to_mkv() {
+    let Some(tools) = programs() else {
+        eprintln!("the program is not there; this test needs it");
+        return;
+    };
+    let folder = TempFolder::new("to-mkv");
+    let manifest = Manifest::get();
+    let runner = SystemRunner;
+    let publisher = TestPublisher;
+
+    let picture = make_picture(
+        &tools.ffmpeg,
+        &folder.path,
+        "source.png",
+        "png",
+        "image2pipe",
+        1,
+        false,
+    );
+
+    let target = manifest.format("mkv").expect("mkv is in the manifest");
+    let converter = Converter {
+        tools: &tools,
+        runner: &runner,
+        publisher: &publisher,
+    };
+    let result = converter
+        .convert(&picture, target)
+        .unwrap_or_else(|reason| panic!("png could not be converted to mkv: {}", reason.name()));
+    assert!(result.is_file(), "the mkv was not made");
+    let result_bytes = std::fs::read(&result).expect("the mkv is there");
+    assert!(
+        target.matches(&result_bytes),
+        "the mkv output does not start with mkv magic bytes"
+    );
+}
+
+#[test]
+#[ignore = "needs the conversion program"]
+fn a_picture_is_converted_to_avi() {
+    let Some(tools) = programs() else {
+        eprintln!("the program is not there; this test needs it");
+        return;
+    };
+    let folder = TempFolder::new("to-avi");
+    let manifest = Manifest::get();
+    let runner = SystemRunner;
+    let publisher = TestPublisher;
+
+    let picture = make_picture(
+        &tools.ffmpeg,
+        &folder.path,
+        "source.png",
+        "png",
+        "image2pipe",
+        1,
+        false,
+    );
+
+    let target = manifest.format("avi").expect("avi is in the manifest");
+    let converter = Converter {
+        tools: &tools,
+        runner: &runner,
+        publisher: &publisher,
+    };
+    let result = converter
+        .convert(&picture, target)
+        .unwrap_or_else(|reason| panic!("png could not be converted to avi: {}", reason.name()));
+    assert!(result.is_file(), "the avi was not made");
+    let result_bytes = std::fs::read(&result).expect("the avi is there");
+    assert!(
+        target.matches(&result_bytes),
+        "the avi output does not start with avi magic bytes"
+    );
+}
+
+#[test]
+#[ignore = "needs the conversion program"]
+fn a_picture_is_converted_to_wmv() {
+    let Some(tools) = programs() else {
+        eprintln!("the program is not there; this test needs it");
+        return;
+    };
+    let folder = TempFolder::new("to-wmv");
+    let manifest = Manifest::get();
+    let runner = SystemRunner;
+    let publisher = TestPublisher;
+
+    let picture = make_picture(
+        &tools.ffmpeg,
+        &folder.path,
+        "source.png",
+        "png",
+        "image2pipe",
+        1,
+        false,
+    );
+
+    let target = manifest.format("wmv").expect("wmv is in the manifest");
+    let converter = Converter {
+        tools: &tools,
+        runner: &runner,
+        publisher: &publisher,
+    };
+    let result = converter
+        .convert(&picture, target)
+        .unwrap_or_else(|reason| panic!("png could not be converted to wmv: {}", reason.name()));
+    assert!(result.is_file(), "the wmv was not made");
+    let result_bytes = std::fs::read(&result).expect("the wmv is there");
+    assert!(
+        target.matches(&result_bytes),
+        "the wmv output does not start with wmv magic bytes"
+    );
 }
 
 #[test]

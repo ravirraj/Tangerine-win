@@ -20,6 +20,7 @@
 pub mod animation;
 pub mod command;
 pub mod convert;
+pub mod documents;
 pub mod ico;
 pub mod locator;
 pub mod manifest;
