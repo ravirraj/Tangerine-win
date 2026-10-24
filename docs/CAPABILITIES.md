@@ -83,6 +83,18 @@ on any file, with no conversion backend behind them. They are marked by
 `Requirement::None`, and the eligibility rules let them through without
 looking for a processor.
 
+## What is not here yet — verified unsupported
+
+The following formats from the macOS reference are **not supported** because no decoder/encoder exists in the Windows toolchain (bundled FFmpeg 9.0.2, minimal build):
+
+- **HEIC / HEIF input/output** — requires `libheif` / `libde265`. Not in FFmpeg.
+- **AVIF read** — requires `avif-native` / `dav1d` via pkg-config. Build fails; no pure-Rust decoder available.
+- **AVIF write** — `libavif` needed; not in current build.
+- **SVG input** — FFmpeg is not an SVG rasterizer. `resvg` is available via Slint vendoring, but integration requires a dedicated pipeline seam.
+- **ICO output** — added in Phase B-4 via a custom ICO-container wrapper around FFmpeg BMP/PNG output (no FFmpeg encoder for ICO).
+
+These are reported as unsupported rather than faked.
+
 ## The conversion program
 
 The backend behind the picture operations is the FFmpeg program, run as a

@@ -67,6 +67,8 @@ cargo test --features test-helper -- --ignored
 
 **Exit criteria:** Manifest and probe correctly report capabilities for all target formats.
 
+**Status (B-2 complete on branch `phase/b-2-manifest-probe`, commit `946c8ce`):** `probe.rs` updated for optional `read`/`write`; `components.txt` includes video/audio; new full FFmpeg binary verified (mp4/mkv/avi/wmv/mp3/aac/flac supported natively).
+
 ---
 
 ## Phase B-3 — Pipeline redesign — job system

@@ -76,6 +76,15 @@ animation  = demuxer=gif decoder=gif
 confirm    = -
 magic      = 0:47 49 46 38 37 61 | 0:47 49 46 38 39 61
 
+format     = ico
+extensions = ico
+read       = -
+write      = encoder=bmp muxer=image2pipe
+alpha      = matte
+animation  = -
+confirm    = -
+magic      = 0:00 00 01 00
+
 format     = webp
 extensions = webp
 read       = demuxer=webp_pipe decoder=webp
