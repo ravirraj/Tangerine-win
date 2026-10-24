@@ -280,6 +280,20 @@ pub const OPERATIONS: &[Operation] = &[
         implemented: true,
         requires: Requirement::Processor("image"),
     },
+    Operation {
+        id: "convert.mp4",
+        label: "MP4",
+        detail: "Convert to MP4",
+        icon: IconKind::Film,
+        mode: RadialMode::Convert,
+        categories: &[FileKind::Video],
+        batch: Batch::Several,
+        folders: false,
+        output: Output::Beside("mp4"),
+        collision: Collision::Rename,
+        implemented: true,
+        requires: Requirement::Processor("video"),
+    },
     // --------------------------------------------------------------- tools
     Operation {
         id: "tools.compress",
