@@ -261,7 +261,6 @@ mod tests {
                     "convert.tiff | TIFF | Convert to TIFF | Picture",
                     "convert.bmp | BMP | Convert to BMP | Picture",
                     "convert.ico | ICO | Convert to ICO | Picture",
-                    "convert.svg | SVG | Convert to SVG | Picture",
                     "convert.mp4 | MP4 | Convert to MP4 | Film",
                     "convert.srt | SRT | Convert to SRT | Document",
                     "convert.vtt | VTT | Convert to VTT | Document",

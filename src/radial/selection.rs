@@ -77,7 +77,7 @@ impl FileKind {
         match extension.to_ascii_lowercase().as_str() {
             "jpg" | "jpeg" | "jpe" | "jfif" | "png" | "gif" | "bmp" | "dib" | "tif" | "tiff"
             | "webp" | "heic" | "heif" | "avif" | "ico" | "tga" | "psd" | "raw" | "cr2" | "nef"
-            | "arw" | "dng" => FileKind::Image,
+            | "arw" | "dng" | "svg" => FileKind::Image,
             "mp4" | "m4v" | "mov" | "qt" | "avi" | "mkv" | "webm" | "wmv" | "flv" | "mpg"
             | "mpeg" | "3gp" | "ts" => FileKind::Video,
             "mp3" | "wav" | "flac" | "aac" | "m4a" | "ogg" | "oga" | "opus" | "wma" | "aiff"
@@ -406,6 +406,7 @@ mod tests {
     #[test]
     fn the_known_extensions_are_recognised() {
         assert_eq!(FileKind::from_extension("png"), FileKind::Image);
+        assert_eq!(FileKind::from_extension("svg"), FileKind::Image);
         assert_eq!(FileKind::from_extension("mp4"), FileKind::Video);
         assert_eq!(FileKind::from_extension("mp3"), FileKind::Audio);
         assert_eq!(FileKind::from_extension("pdf"), FileKind::Pdf);
