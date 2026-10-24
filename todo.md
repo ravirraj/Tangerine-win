@@ -136,13 +136,26 @@ availability at runtime; wheel never shows a conversion it cannot run.
 
 ### B-9.6 Audio Formats
 Reference audio set (homepage): MP3 M4A WAV FLAC OGG Opus AIFF WMA.
-- [ ] Add wav, ogg, aiff, m4a, opus, wma to ffmpeg/components.txt
-- [ ] Add to ffmpeg/build.sh configure flags (wmav2 decoder, libopus if needed)
-- [ ] Add registry operations (convert.wav, convert.ogg, etc.)
-- [ ] Video -> MP3 export (audio extraction; reference lists it under Video)
-- [ ] MOV and WebM are registered but UNTESTED — add real-FFmpeg tests
-- [ ] Add real-FFmpeg ignored tests (audio->audio, video->mp3)
-- [ ] Manual verification: audio files convert correctly
+- [x] Add wav, ogg, aiff, m4a, opus, wma to ffmpeg/components.txt (+webm
+      as video input; mp3 write filled with libmp3lame) — FFmpeg rebuilt
+      from source with lame 3.100 / libopus 1.6.1 / libvorbis 1.3.7
+      (MSYS2 ucrt64) and ALL build assertions pass; exe 13 MB
+- [x] aresample filter added — audio encoders open only after the sound
+      is put in the shape they take (found by running the real command)
+- [x] Registry ops: convert.mp3 (Video AND Audio categories — video sound
+      extraction), convert.wav/.ogg/.opus/.aiff/.m4a/.wma; new Music icon
+- [x] probe: processors divided by kind (image/video/audio) — also FIXED
+      phantom ops: convert.mp4 required a "video" processor and
+      convert.webp a "webp" processor that never existed, so video/webp
+      conversions were never offered by the wheel until now; svg added to
+      image reads (svg drags were never offered either)
+- [x] command.rs: audio detected by ENCODER not muxer (asf holds wmv and
+      wma); no white-matte filter on audio conversions; ipod muxer
+      writes to a file
+- [x] Real-FFmpeg tests green: hand-crafted WAV -> mp3/ogg/opus/aiff/m4a/
+      wma/flac/aac (magic verified, incl. ID3-headed mp3), and m4a -> mp3
+      as the sound-extraction path. 308 unit + 27 real, 0 failures.
+- [x] Manual verification passed (2026-10-24): audio drags offer targets, video offers MP3
 
 ### B-9.7 RAR Input
 - [ ] Assess unrar/7z feasibility
