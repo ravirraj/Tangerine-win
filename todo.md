@@ -155,7 +155,7 @@ Reference audio set (homepage): MP3 M4A WAV FLAC OGG Opus AIFF WMA.
 - [x] Real-FFmpeg tests green: hand-crafted WAV -> mp3/ogg/opus/aiff/m4a/
       wma/flac/aac (magic verified, incl. ID3-headed mp3), and m4a -> mp3
       as the sound-extraction path. 308 unit + 27 real, 0 failures.
-- [ ] Manual verification: drag audio files, wheel offers the targets
+- [x] Manual verification passed (2026-10-24): audio drags offer targets, video offers MP3
 
 ### B-9.7 RAR Input
 - [ ] Assess unrar/7z feasibility
