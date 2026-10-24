@@ -19,14 +19,21 @@
 - [x] Assess libavif/dav1d Windows static build feasibility — previous build failed, no MSYS2 packages
 - [ ] Decision: Document as blocked until pre-built libs available
 
-### B-9.3 SVG Input (IN PROGRESS)
+### B-9.3 SVG Input (DONE 2026-10-24, corrected after 0ac9064)
 - [x] Assess resvg integration (vendored via Slint 1.18)
-- [ ] Add svg to ffmpeg/components.txt (read = -)
-- [ ] Create src/media/svg.rs (resvg rasterize to PNG seam)
-- [ ] Add convert.svg registry operation
-- [ ] Add registry test
-- [ ] Add real test: SVG→PNG→JPEG chain
-- [ ] Manual verification: SVG rasterizes correctly
+- [x] Add svg to ffmpeg/components.txt (read = -, input-only seam)
+- [x] Create src/media/svg.rs (resvg rasterise to PNG seam)
+- [x] Fix: SVG is INPUT ONLY — removed bogus "convert.svg" target op
+      (nothing can write SVG; registry/controller/actions tests reverted to 15)
+- [x] Fix: rasterised PNG staged in its own `.staging.png` file, never the
+      same path as FFmpeg input and output; staging removed on all paths
+- [x] Fix: `.svg` classified as FileKind::Image in selection.rs — the wheel
+      now offers PNG/JPEG/… for SVG drags (previously classified Unknown,
+      so SVG input never reached the converter at all)
+- [x] Unit test: an_svg_is_rasterised_and_converted (convert.rs)
+- [x] Real test: SVG→PNG and SVG→JPEG with real FFmpeg (real.rs)
+- [ ] Manual verification: drag a real .svg in Explorer, wheel offers image
+      conversions, output looks right (needs the running app)
 
 ### B-9.4 PDF Support
 - [ ] Assess poppler Windows build feasibility
@@ -37,12 +44,46 @@
 - [ ] Add real test: PDF→PNG multi-page
 - [ ] Manual verification: PDF pages render correctly
 
-### B-9.5 DOCX/PPTX/XLSX
-- [ ] Assess LibreOffice headless feasibility (user-installed, not bundled)
-- [ ] Add docx/pptx/xlsx to ffmpeg/components.txt (read = -)
-- [ ] Create src/media/documents2.rs (LibreOffice shell invocation)
-- [ ] Add registry operations (implemented: false until LibreOffice detected)
-- [ ] Document as optional/external dependency
+### B-9.5 Documents / Slides / Spreadsheets (REVISED 2026-10-24)
+Replaces the old "LibreOffice headless" plan. Engine chain, resolved at runtime
+in this order — every engine behind one seam in `src/media/documents2.rs`:
+
+    Word/Excel/PowerPoint COM  ->  LibreOffice (if installed)  ->
+    office2pdf (optional ~20 MB download)  ->  clear "how to enable" message
+
+**Engine A — Office COM (zero bytes shipped, perfect fidelity):**
+- [ ] Create src/media/documents2.rs with the engine-chain seam
+- [ ] Word COM: Documents.Open -> SaveAs2 wdFormatPDF (DOCX->PDF)
+- [ ] Excel COM: XLSX->PDF; PowerPoint COM: PPTX->PDF + slide export JPG/PNG
+- [ ] Runtime detection (registry lookup of Office install, graceful absence)
+
+**Engine B — LibreOffice (detected, never required, never bundled):**
+- [ ] Detect soffice.exe in standard locations; reuse chain seam
+
+**Engine C — office2pdf for users with no MS Office (optional download):**
+- [ ] Evaluate output quality on real DOCX/PPTX/XLSX test set (v0.9.1, young)
+- [ ] If good: optional in-app download (~20 MB, user consent), store under
+      %LOCALAPPDATA%\OpenTangerine\engines\; base installer stays small
+- [ ] PPTX->JPG/PNG without Office = office2pdf->PDF then poppler render (B-9.4)
+
+**Native routes (always available, no engine, milliseconds):**
+- [ ] DOCX->TXT: zip + XML walk of word/document.xml (zip crate already a dep)
+- [ ] XLSX/XLS/ODS -> CSV/TSV: calamine (~1.5 MB)
+- [ ] CSV/TSV/XLSX/ODS interconversion via calamine
+- [ ] MD/TXT -> PDF via markdown->HTML->PDF (small crates)
+- [ ] DOCX->HTML (approximate styling) and -> EPUB (zip of HTML) — later
+
+**Related cheap wins from the website matrix:**
+- [ ] Images->PDF via pdf-writer crate (fills the "PDF export" row)
+- [ ] PDF->TXT via poppler text layer (free once B-9.4 lands)
+
+**Registry operations:** convert.docx (PDF/TXT targets), convert.pptx
+(PDF/JPG/PNG), convert.xlsx (PDF/CSV) — `implemented` reflects engine
+availability at runtime; wheel never shows a conversion it cannot run.
+
+**Descoped (registered implemented: false, reason stated):**
+- PDF -> DOCX/PPTX/XLSX: layout reconstruction, no lightweight offline engine
+- PAGES input: Apple-only format, N/A on Windows
 
 ### B-9.6 Audio Formats
 - [ ] Add wav, ogg, aiff, m4a to ffmpeg/components.txt
@@ -220,7 +261,10 @@
 |---|---|
 | Background removal | ~50-100 MB ONNX Runtime — too heavy |
 | QR reading | Needs barcode library — assess size first |
-| DOCX/PPTX/XLSX bundled LibreOffice | Too large — detect at runtime only |
+| PDF -> DOCX/PPTX/XLSX | Layout reconstruction — no lightweight offline engine |
+| PAGES input | Apple-only format, irrelevant on Windows |
+| Bundling LibreOffice | ~700 MB — detect if present, never bundle (B-9.5 chain) |
+| Bundling office2pdf in installer | Optional ~20 MB download instead, user consent |
 | AirDrop | No Windows API — use Nearby Share fallback |
 | Code signing | Optional for personal use |
 
