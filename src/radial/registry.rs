@@ -564,6 +564,36 @@ pub const OPERATIONS: &[Operation] = &[
         // The program does this one itself: no backend is needed.
         requires: Requirement::None,
     },
+    Operation {
+        id: "actions.terminal",
+        label: "Terminal",
+        detail: "Open in Terminal",
+        icon: IconKind::Terminal,
+        mode: RadialMode::Actions,
+        categories: &FileKind::FILES,
+        batch: Batch::Several,
+        folders: true,
+        output: Output::Nothing,
+        collision: Collision::Ask,
+        implemented: true,
+        // The program does this one itself: no backend is needed.
+        requires: Requirement::None,
+    },
+    Operation {
+        id: "actions.extract",
+        label: "Extract",
+        detail: "Extract archive contents",
+        icon: IconKind::Extract,
+        mode: RadialMode::Actions,
+        categories: &[FileKind::Archive],
+        batch: Batch::Several,
+        folders: false,
+        output: Output::Nothing,
+        collision: Collision::Rename,
+        implemented: true,
+        // The program does this one itself: no backend is needed.
+        requires: Requirement::None,
+    },
 ];
 
 /// What the machine can do right now.
@@ -1213,6 +1243,8 @@ mod tests {
             "actions.duplicate",
             "actions.rename",
             "actions.reveal",
+            "actions.terminal",
+            "actions.extract",
         ];
         for entry in OPERATIONS {
             assert_eq!(

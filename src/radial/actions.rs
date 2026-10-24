@@ -153,6 +153,8 @@ pub enum IconKind {
     Crop,
     Rotate,
     Resize,
+    Terminal,
+    Extract,
     Path,
 }
 
@@ -288,6 +290,8 @@ mod tests {
                     "actions.rename | Rename | Give the file a new name | Pencil",
                     "actions.zip | ZIP | Put the files in an archive | Archive",
                     "actions.reveal | Show | Reveal in Explorer | Folder",
+                    "actions.terminal | Terminal | Open in Terminal | Terminal",
+                    "actions.extract | Extract | Extract archive contents | Extract",
                 ],
             ),
         ];
