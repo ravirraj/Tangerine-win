@@ -471,7 +471,7 @@ mod tests {
         open_wheel(&mut c);
         assert_eq!(c.state(), InteractionState::WheelVisible);
         assert_eq!(c.mode(), RadialMode::Convert);
-        assert_eq!(c.segments().len(), 8);
+        assert_eq!(c.segments().len(), 9);
     }
 
     #[test]
@@ -1012,7 +1012,7 @@ mod tests {
     fn the_choices_of_the_wheel_follow_what_may_be_offered() {
         let mut c = controller();
         open_wheel(&mut c);
-        assert_eq!(c.segments().len(), 8);
+        assert_eq!(c.segments().len(), 9);
 
         // The files change, and less may be done with them.
         let mut smaller = Menu::empty();
@@ -1041,7 +1041,7 @@ mod tests {
     fn switching_wheels_does_not_keep_the_choices_of_the_last_one() {
         let mut c = controller();
         open_wheel(&mut c);
-        assert_eq!(c.segments().len(), 8);
+        assert_eq!(c.segments().len(), 9);
 
         // The tools wheel has five choices of its own.
         c.handle(InteractionEvent::ModifiersChanged(Modifiers {

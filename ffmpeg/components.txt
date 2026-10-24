@@ -87,7 +87,7 @@ magic      = 0:52 49 46 46 8:57 45 42 50
 
 format     = mp4
 extensions = mp4 m4v
-read       = demuxer=mov decoder=h264
+read       = demuxer=mov,mp4,m4a,3gp,3g2,mj2 decoder=h264
 write      = encoder=mpeg4 muxer=mov
 alpha      = matte
 animation  = -
@@ -96,7 +96,7 @@ magic      = 0:00 00 00 18 66 74 79 70 | 0:00 00 00 20 66 74 79 70
 
 format     = mkv
 extensions = mkv
-read       = demuxer=matroska decoder=h264
+read       = demuxer=matroska,webm decoder=h264
 write      = encoder=mpeg4 muxer=matroska
 alpha      = matte
 animation  = -

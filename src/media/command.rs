@@ -35,13 +35,40 @@ pub fn composite_graph() -> String {
     )
 }
 
+/// Whether a muxer needs a seekable output file (cannot write to pipe).
+///
+/// Some muxers (mov, matroska, avi, asf) need to seek back to write the
+/// header, so they cannot write to a pipe. Image muxers (image2pipe, gif,
+/// webp) and audio muxers (adts, flac, mp3) can write to pipe.
+pub fn muxer_needs_file(muxer: &str) -> bool {
+    matches!(
+        muxer,
+        "mov" | "matroska" | "avi" | "asf" | "mp4" | "mkv"
+    )
+}
+
+/// Whether a format is audio-only (no video stream).
+pub fn is_audio_format(muxer: &str) -> bool {
+    matches!(
+        muxer,
+        "adts" | "flac" | "mp3" | "ogg" | "opus"
+    )
+}
+
 /// The arguments that convert one file into another.
 ///
 /// The demuxer is always named, so that the program never has to guess
 /// what a file is from its name — a name that holds a percent sign is not
-/// a picture sequence to it. The result is written to the program's
-/// standard output, which the caller gives it as a file of its own.
-pub fn convert(input: &Path, source: &FormatSupport, target: &FormatSupport) -> Vec<OsString> {
+/// a picture sequence to it. By default the result is written to the
+/// program's standard output; when `output_path` is given, the result is
+/// written to that file instead (needed for muxers that require seekable
+/// output).
+pub fn convert(
+    input: &Path,
+    source: &FormatSupport,
+    target: &FormatSupport,
+    output_path: Option<&Path>,
+) -> Vec<OsString> {
     let mut args = vec![
         OsString::from("-hide_banner"),
         // The program must not wait for anything typed at it.
@@ -59,14 +86,25 @@ pub fn convert(input: &Path, source: &FormatSupport, target: &FormatSupport) -> 
         args.push(OsString::from(composite_graph()));
     }
 
-    args.push(OsString::from("-frames:v"));
-    args.push(OsString::from("1"));
-    args.push(OsString::from("-c:v"));
-    args.push(OsString::from(&target.write.encoder));
+    if is_audio_format(&target.write.muxer) {
+        // Audio-only output: encode audio, no video frame limit.
+        args.push(OsString::from("-c:a"));
+        args.push(OsString::from(&target.write.encoder));
+    } else {
+        // Video or image output: one frame, encode video.
+        args.push(OsString::from("-frames:v"));
+        args.push(OsString::from("1"));
+        args.push(OsString::from("-c:v"));
+        args.push(OsString::from(&target.write.encoder));
+    }
+
     args.push(OsString::from("-f"));
     args.push(OsString::from(&target.write.muxer));
-    // The picture is written to the program's standard output.
-    args.push(OsString::from("-"));
+
+    match output_path {
+        Some(path) => args.push(path.as_os_str().to_os_string()),
+        None => args.push(OsString::from("-")),
+    }
     args
 }
 
@@ -108,7 +146,7 @@ mod tests {
         let manifest = Manifest::get();
         let source = manifest.format("png").expect("png is in the manifest");
         let target = manifest.format("jpeg").expect("jpeg is in the manifest");
-        let args = words(&convert(Path::new("photo.png"), source, target));
+        let args = words(&convert(Path::new("photo.png"), source, target, None));
         let demuxer = args
             .iter()
             .position(|word| word == "-f")
@@ -127,7 +165,7 @@ mod tests {
         let manifest = Manifest::get();
         let source = manifest.format("png").expect("png is in the manifest");
         let target = manifest.format("jpeg").expect("jpeg is in the manifest");
-        let args = words(&convert(Path::new("photo.png"), source, target));
+        let args = words(&convert(Path::new("photo.png"), source, target, None));
         let graph = args
             .iter()
             .position(|word| word == "-filter_complex")
@@ -143,7 +181,7 @@ mod tests {
         let manifest = Manifest::get();
         let source = manifest.format("png").expect("png is in the manifest");
         let target = manifest.format("png").expect("png is in the manifest");
-        let args = words(&convert(Path::new("photo.png"), source, target));
+        let args = words(&convert(Path::new("photo.png"), source, target, None));
         assert!(!args.iter().any(|word| word == "-filter_complex"));
     }
 
@@ -153,7 +191,7 @@ mod tests {
         let source = manifest.format("png").expect("png is in the manifest");
         let target = manifest.format("png").expect("png is in the manifest");
         let path = Path::new("C:\\odd folder\\100% photo.png");
-        let args = convert(path, source, target);
+        let args = convert(path, source, target, None);
         let input = args
             .iter()
             .position(|word| word == "-i")

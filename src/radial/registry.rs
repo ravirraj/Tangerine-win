@@ -225,20 +225,6 @@ pub const OPERATIONS: &[Operation] = &[
         requires: Requirement::Processor("document"),
     },
     Operation {
-        id: "convert.mp4",
-        label: "MP4",
-        detail: "Convert to MP4",
-        icon: IconKind::Film,
-        mode: RadialMode::Convert,
-        categories: &[FileKind::Video],
-        batch: Batch::Several,
-        folders: false,
-        output: Output::Beside("mp4"),
-        collision: Collision::Rename,
-        implemented: false,
-        requires: Requirement::Processor("video"),
-    },
-    Operation {
         id: "convert.gif",
         label: "GIF",
         detail: "Convert to GIF",
@@ -276,6 +262,20 @@ pub const OPERATIONS: &[Operation] = &[
         batch: Batch::Several,
         folders: false,
         output: Output::Beside("bmp"),
+        collision: Collision::Rename,
+        implemented: true,
+        requires: Requirement::Processor("image"),
+    },
+    Operation {
+        id: "convert.ico",
+        label: "ICO",
+        detail: "Convert to ICO",
+        icon: IconKind::Picture,
+        mode: RadialMode::Convert,
+        categories: &[FileKind::Image],
+        batch: Batch::Several,
+        folders: false,
+        output: Output::Beside("ico"),
         collision: Collision::Rename,
         implemented: true,
         requires: Requirement::Processor("image"),
@@ -1083,6 +1083,8 @@ mod tests {
             "convert.bmp",
             "convert.tiff",
             "convert.gif",
+            "convert.ico",
+            "convert.mp4",
         ];
         for entry in OPERATIONS {
             assert_eq!(
@@ -1400,10 +1402,11 @@ mod tests {
                 "convert.jpeg",
                 "convert.webp",
                 "convert.pdf",
-                "convert.mp4",
                 "convert.gif",
                 "convert.tiff",
                 "convert.bmp",
+                "convert.ico",
+                "convert.mp4",
             ]
         );
     }
