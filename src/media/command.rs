@@ -62,12 +62,15 @@ pub fn is_audio_format(muxer: &str) -> bool {
 /// a picture sequence to it. By default the result is written to the
 /// program's standard output; when `output_path` is given, the result is
 /// written to that file instead (needed for muxers that require seekable
-/// output).
+/// output). When `video_filter` is given, it is inserted as a `-vf`
+/// filter before the encoder (used by tools like crop, trim, resize,
+/// rotate).
 pub fn convert(
     input: &Path,
     source: &FormatSupport,
     target: &FormatSupport,
     output_path: Option<&Path>,
+    video_filter: Option<&str>,
 ) -> Vec<OsString> {
     let mut args = vec![
         OsString::from("-hide_banner"),
@@ -80,6 +83,11 @@ pub fn convert(
         OsString::from("-i"),
         input.as_os_str().to_os_string(),
     ];
+
+    if let Some(filter) = video_filter {
+        args.push(OsString::from("-vf"));
+        args.push(OsString::from(filter));
+    }
 
     if target.alpha == Alpha::Matte {
         args.push(OsString::from("-filter_complex"));
@@ -146,7 +154,7 @@ mod tests {
         let manifest = Manifest::get();
         let source = manifest.format("png").expect("png is in the manifest");
         let target = manifest.format("jpeg").expect("jpeg is in the manifest");
-        let args = words(&convert(Path::new("photo.png"), source, target, None));
+        let args = words(&convert(Path::new("photo.png"), source, target, None, None));
         let demuxer = args
             .iter()
             .position(|word| word == "-f")
@@ -165,7 +173,7 @@ mod tests {
         let manifest = Manifest::get();
         let source = manifest.format("png").expect("png is in the manifest");
         let target = manifest.format("jpeg").expect("jpeg is in the manifest");
-        let args = words(&convert(Path::new("photo.png"), source, target, None));
+        let args = words(&convert(Path::new("photo.png"), source, target, None, None));
         let graph = args
             .iter()
             .position(|word| word == "-filter_complex")
@@ -181,7 +189,7 @@ mod tests {
         let manifest = Manifest::get();
         let source = manifest.format("png").expect("png is in the manifest");
         let target = manifest.format("png").expect("png is in the manifest");
-        let args = words(&convert(Path::new("photo.png"), source, target, None));
+        let args = words(&convert(Path::new("photo.png"), source, target, None, None));
         assert!(!args.iter().any(|word| word == "-filter_complex"));
     }
 
@@ -191,7 +199,7 @@ mod tests {
         let source = manifest.format("png").expect("png is in the manifest");
         let target = manifest.format("png").expect("png is in the manifest");
         let path = Path::new("C:\\odd folder\\100% photo.png");
-        let args = convert(path, source, target, None);
+        let args = convert(path, source, target, None, None);
         let input = args
             .iter()
             .position(|word| word == "-i")

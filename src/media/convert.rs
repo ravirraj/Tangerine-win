@@ -169,14 +169,14 @@ impl<'a> Converter<'a> {
         let needs_file = crate::media::command::muxer_needs_file(&target.write.muxer);
 
         let arguments = if needs_file {
-            convert_arguments(input, source, target, Some(temporary))
+            convert_arguments(input, source, target, Some(temporary), None)
         } else {
             let file = OpenOptions::new()
                 .write(true)
                 .create_new(true)
                 .open(temporary)
                 .map_err(|_| ConvertError::CouldNotPublish)?;
-            let args = convert_arguments(input, source, target, None);
+            let args = convert_arguments(input, source, target, None, None);
             let result = self
                 .runner
                 .run(&self.tools.ffmpeg, &args, Some(&file))
