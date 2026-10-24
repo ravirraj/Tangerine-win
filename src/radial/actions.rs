@@ -257,6 +257,7 @@ mod tests {
                     "convert.gif | GIF | Convert to GIF | Film",
                     "convert.tiff | TIFF | Convert to TIFF | Picture",
                     "convert.bmp | BMP | Convert to BMP | Picture",
+                    "convert.ico | ICO | Convert to ICO | Picture",
                 ],
             ),
             (
