@@ -1083,6 +1083,7 @@ mod tests {
             "convert.bmp",
             "convert.tiff",
             "convert.gif",
+            "convert.ico",
         ];
         for entry in OPERATIONS {
             assert_eq!(
@@ -1404,6 +1405,7 @@ mod tests {
                 "convert.gif",
                 "convert.tiff",
                 "convert.bmp",
+                "convert.ico",
             ]
         );
     }
