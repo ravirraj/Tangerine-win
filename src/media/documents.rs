@@ -28,6 +28,10 @@ pub enum DocError {
     WriteError,
     /// The file is not a valid archive.
     InvalidArchive,
+    /// The PDF reader is not installed.
+    PdfLibraryMissing,
+    /// A page of a PDF could not be rendered.
+    RenderFailed,
 }
 
 impl DocError {
@@ -38,6 +42,8 @@ impl DocError {
             DocError::ReadError => "the source file could not be read",
             DocError::WriteError => "the result could not be written",
             DocError::InvalidArchive => "the file is not a valid archive",
+            DocError::PdfLibraryMissing => "the PDF reader is not installed",
+            DocError::RenderFailed => "a page could not be rendered",
         }
     }
 }
@@ -306,7 +312,68 @@ pub fn convert(source: &Path, target_path: &Path, from: &str, to: &str) -> Resul
         "zip" | "tar" | "gz" => {
             archives::convert(source, target_path, from, to)
         }
+        "pdf" => convert_pdf(source, target_path, to),
         _ => Err(DocError::UnsupportedSource),
+    }
+}
+
+/// Converts a PDF into pictures or text, beside the original.
+///
+/// Every page becomes a picture of its own. The first page takes the
+/// target path, and each page after it takes the same name with a number.
+/// A name that is already taken is not used — the next number is tried —
+/// so nothing that is there already is ever overwritten.
+fn convert_pdf(source: &Path, target_path: &Path, to: &str) -> Result<(), DocError> {
+    use crate::media::pdf;
+
+    if to == "txt" {
+        let text = pdf::extract_text(source).map_err(pdf_error)?;
+        std::fs::write(target_path, text).map_err(|_| DocError::WriteError)?;
+        return Ok(());
+    }
+    let Some(encoding) = pdf::Encoding::of_format(to) else {
+        return Err(DocError::UnsupportedTarget);
+    };
+    // The pages are rendered at 300 dots to the inch, the way the
+    // reference product renders them.
+    let pages = pdf::render_pages(source, 300, encoding).map_err(pdf_error)?;
+
+    let folder = target_path.parent().unwrap_or_else(|| Path::new("."));
+    let stem = target_path
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "converted".to_string());
+    let extension = target_path
+        .extension()
+        .map(|extension| extension.to_string_lossy().into_owned())
+        .unwrap_or_default();
+
+    let mut number = 1usize;
+    for page in &pages {
+        let name = loop {
+            let candidate = if number == 1 {
+                target_path.to_path_buf()
+            } else {
+                folder.join(format!("{stem} ({number}).{extension}"))
+            };
+            if !candidate.exists() {
+                break candidate;
+            }
+            number += 1;
+        };
+        std::fs::write(&name, page).map_err(|_| DocError::WriteError)?;
+        number += 1;
+    }
+    Ok(())
+}
+
+/// Says a PDF failure the way the documents say theirs.
+fn pdf_error(reason: crate::media::pdf::PdfError) -> DocError {
+    match reason {
+        crate::media::pdf::PdfError::LibraryMissing => DocError::PdfLibraryMissing,
+        crate::media::pdf::PdfError::NotAPdf => DocError::ReadError,
+        crate::media::pdf::PdfError::RenderFailed
+        | crate::media::pdf::PdfError::TextFailed => DocError::RenderFailed,
     }
 }
 

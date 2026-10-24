@@ -106,6 +106,18 @@ cp "$APP" "$STAGE/"
 cp "$PREFIX/bin/ffmpeg.exe" "$STAGE/ffmpeg/"
 cp "$PREFIX/bin/ffprobe.exe" "$STAGE/ffmpeg/"
 
+# The PDF reader, when it has been fetched to the vendor folder. It goes
+# beside the program, which is where the program looks for it, and it is
+# not required: a package without it simply does not read PDF files.
+if [ -f "$SOURCE/vendor/pdfium/pdfium.dll" ]; then
+    cp "$SOURCE/vendor/pdfium/pdfium.dll" "$STAGE/"
+    mkdir -p "$STAGE/licenses/pdfium"
+    cp "$SOURCE/vendor/pdfium/LICENSE" "$STAGE/licenses/pdfium/LICENSE.txt"
+    if [ -d "$SOURCE/vendor/pdfium/licenses" ]; then
+        cp "$SOURCE/vendor/pdfium/licenses/"* "$STAGE/licenses/pdfium/" 2>/dev/null || true
+    fi
+fi
+
 # The licence of the conversion program, and the licence of everything
 # that is compiled into it.
 cp "$SOURCE/COPYING.LGPLv2.1" "$STAGE/licenses/ffmpeg/LGPL-2.1.txt"
@@ -146,6 +158,19 @@ done
     echo "The licence of each of them that is not part of Windows is in this"
     echo "folder."
 } > "$STAGE/licenses/ffmpeg/NOTICE.txt"
+
+# The notice of the PDF reader, when it is in the package.
+if [ -f "$STAGE/pdfium.dll" ]; then
+    {
+        echo "What pdfium.dll is"
+        echo
+        echo "The PDF reader of this package, built from the PDFium project"
+        echo "(https://github.com/google/pdfium) and published as a binary by"
+        echo "https://github.com/bblanchon/pdfium-binaries. It is licensed"
+        echo "under the Apache Licence, Version 2.0, and the BSD 3-Clause"
+        echo "Licence; the licence texts are in this folder."
+    } > "$STAGE/licenses/pdfium/NOTICE.txt"
+fi
 
 # How it was built, and what was changed. The licence asks for both.
 {
