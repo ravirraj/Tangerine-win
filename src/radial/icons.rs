@@ -68,6 +68,16 @@ const CROP: &str = "M 4 4 H 10 M 4 4 V 10 M 20 4 H 14 M 20 4 V 10 M 4 20 H 10 M 
 /// A curved path line.
 const PATH: &str = "M 4 4 L 12 12 L 20 4 M 12 12 L 16 8 M 12 12 L 16 16";
 
+/// A rotate icon.
+///
+/// A curved arrow.
+const ROTATE: &str = "M 4 12 L 10 4 L 12 12 L 10 20 M 12 12 L 20 12 M 20 12 L 16 8 M 20 12 L 16 16";
+
+/// A resize icon.
+///
+/// Diagonal arrows pointing outward.
+const RESIZE: &str = "M 6 6 L 10 10 M 6 10 L 10 6 M 14 14 L 18 18 M 14 18 L 18 14";
+
 /// The path of the picture for a kind of choice.
 pub fn path_for(kind: IconKind) -> &'static str {
     match kind {
@@ -82,6 +92,8 @@ pub fn path_for(kind: IconKind) -> &'static str {
         IconKind::Scissors => SCISSORS,
         IconKind::Compress => COMPRESS,
         IconKind::Crop => CROP,
+        IconKind::Rotate => ROTATE,
+        IconKind::Resize => RESIZE,
         IconKind::Path => PATH,
     }
 }
@@ -104,6 +116,8 @@ mod tests {
             IconKind::Scissors,
             IconKind::Compress,
             IconKind::Crop,
+            IconKind::Rotate,
+            IconKind::Resize,
             IconKind::Path,
         ] {
             let path = path_for(kind);
@@ -126,6 +140,8 @@ mod tests {
             IconKind::Scissors,
             IconKind::Compress,
             IconKind::Crop,
+            IconKind::Rotate,
+            IconKind::Resize,
             IconKind::Path,
         ] {
             let path = path_for(kind);

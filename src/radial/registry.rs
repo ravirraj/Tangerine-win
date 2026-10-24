@@ -397,7 +397,7 @@ pub const OPERATIONS: &[Operation] = &[
         folders: false,
         output: Output::BesideAsInput,
         collision: Collision::Rename,
-        implemented: false,
+        implemented: true,
         requires: Requirement::Processor("compress"),
     },
     Operation {
@@ -411,7 +411,7 @@ pub const OPERATIONS: &[Operation] = &[
         folders: false,
         output: Output::BesideAsInput,
         collision: Collision::Rename,
-        implemented: false,
+        implemented: true,
         requires: Requirement::Processor("image"),
     },
     Operation {
@@ -425,7 +425,35 @@ pub const OPERATIONS: &[Operation] = &[
         folders: false,
         output: Output::BesideAsInput,
         collision: Collision::Rename,
-        implemented: false,
+        implemented: true,
+        requires: Requirement::Processor("image"),
+    },
+    Operation {
+        id: "tools.rotate",
+        label: "Rotate",
+        detail: "Turn the image 90 degrees",
+        icon: IconKind::Rotate,
+        mode: RadialMode::Tools,
+        categories: &[FileKind::Image],
+        batch: Batch::Several,
+        folders: false,
+        output: Output::BesideAsInput,
+        collision: Collision::Rename,
+        implemented: true,
+        requires: Requirement::Processor("image"),
+    },
+    Operation {
+        id: "tools.resize",
+        label: "Resize",
+        detail: "Change the image size",
+        icon: IconKind::Resize,
+        mode: RadialMode::Tools,
+        categories: &[FileKind::Image],
+        batch: Batch::Several,
+        folders: false,
+        output: Output::BesideAsInput,
+        collision: Collision::Rename,
+        implemented: true,
         requires: Requirement::Processor("image"),
     },
     Operation {
@@ -441,7 +469,7 @@ pub const OPERATIONS: &[Operation] = &[
         folders: false,
         output: Output::BesideAsInput,
         collision: Collision::Rename,
-        implemented: false,
+        implemented: true,
         requires: Requirement::Processor("merge"),
     },
     Operation {
@@ -456,7 +484,7 @@ pub const OPERATIONS: &[Operation] = &[
         // This one changes the file it is given.
         output: Output::InPlace,
         collision: Collision::Ask,
-        implemented: false,
+        implemented: true,
         requires: Requirement::Processor("metadata"),
     },
     // ------------------------------------------------------ file actions
@@ -930,18 +958,20 @@ mod tests {
         let selection = pictures(&folder, 1);
         let menu = menu_for(&selection, &everything());
         // The picture conversions are implemented, so the convert wheel has
-        // something on it. The other two wheels have nothing implemented in
-        // them, and must show nothing.
-        for mode in [RadialMode::Tools, RadialMode::Actions] {
-            assert!(
-                menu.segments(mode).is_empty(),
-                "the {} wheel has something on it",
-                mode.name()
-            );
-        }
+        // something on it. The tools conversions are also implemented, so the
+        // tools wheel has something on it. The actions wheel has nothing
+        // implemented, so it shows nothing.
+        assert!(
+            menu.segments(RadialMode::Actions).is_empty(),
+            "the actions wheel has something on it"
+        );
         assert!(
             !menu.segments(RadialMode::Convert).is_empty(),
             "the convert wheel has nothing on it"
+        );
+        assert!(
+            !menu.segments(RadialMode::Tools).is_empty(),
+            "the tools wheel has nothing on it"
         );
     }
 
@@ -1175,6 +1205,13 @@ mod tests {
             "convert.zip",
             "convert.tar",
             "convert.gz",
+            "tools.compress",
+            "tools.crop",
+            "tools.trim",
+            "tools.rotate",
+            "tools.resize",
+            "tools.merge",
+            "tools.metadata",
         ];
         for entry in OPERATIONS {
             assert_eq!(

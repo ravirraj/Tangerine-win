@@ -31,6 +31,7 @@ use crate::radial::execution;
 use crate::radial::geometry::{Point, RadialGeometry, WheelPlacement};
 use crate::radial::images;
 use crate::radial::documents;
+use crate::radial::tools;
 use crate::radial::registry::{self, Environment};
 use crate::radial::selection::Selection;
 use crate::radial::state::{Effect, InteractionEvent, InteractionSource, InteractionState};
@@ -580,9 +581,17 @@ impl App {
             operation.as_str(),
             "convert.srt" | "convert.vtt" | "convert.txt" | "convert.zip" | "convert.tar" | "convert.gz"
         );
+        // Tool operations (compress, crop, trim, etc.) run with the Tools handler.
+        let is_tools = operation.as_str().starts_with("tools.");
         std::thread::spawn(move || {
             let outcome = if is_document {
                 let handler = documents::Documents {
+                    publisher: crate::platform::windows::publish::WindowsPublisher,
+                };
+                execution::run(&request, &selection, &environment, &handler)
+            } else if is_tools {
+                let handler = tools::Tools {
+                    ffmpeg_tools: capabilities.tools,
                     publisher: crate::platform::windows::publish::WindowsPublisher,
                 };
                 execution::run(&request, &selection, &environment, &handler)

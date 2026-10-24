@@ -151,6 +151,8 @@ pub enum IconKind {
     Scissors,
     Compress,
     Crop,
+    Rotate,
+    Resize,
     Path,
 }
 
@@ -272,6 +274,8 @@ mod tests {
                     "tools.compress | Compress | Make the file smaller | Compress",
                     "tools.crop | Crop | Trim the edges away | Crop",
                     "tools.trim | Trim | Cut the beginning or the end | Scissors",
+                    "tools.rotate | Rotate | Turn the image 90 degrees | Rotate",
+                    "tools.resize | Resize | Change the image size | Resize",
                     "tools.merge | Merge | Join several files together | Merge",
                     "tools.metadata | Metadata | Edit the file metadata | Pencil",
                 ],
