@@ -499,7 +499,7 @@ pub const OPERATIONS: &[Operation] = &[
         folders: true,
         output: Output::Nothing,
         collision: Collision::Ask,
-        implemented: false,
+        implemented: true,
         // The program does this one itself: no backend is needed.
         requires: Requirement::None,
     },
@@ -514,7 +514,7 @@ pub const OPERATIONS: &[Operation] = &[
         folders: true,
         output: Output::BesideAsInput,
         collision: Collision::Rename,
-        implemented: false,
+        implemented: true,
         // The program does this one itself: no backend is needed.
         requires: Requirement::None,
     },
@@ -531,7 +531,7 @@ pub const OPERATIONS: &[Operation] = &[
         // This one changes the file it is given.
         output: Output::InPlace,
         collision: Collision::Ask,
-        implemented: false,
+        implemented: true,
         // The program does this one itself: no backend is needed.
         requires: Requirement::None,
     },
@@ -560,7 +560,7 @@ pub const OPERATIONS: &[Operation] = &[
         folders: true,
         output: Output::Nothing,
         collision: Collision::Ask,
-        implemented: false,
+        implemented: true,
         // The program does this one itself: no backend is needed.
         requires: Requirement::None,
     },
@@ -957,14 +957,7 @@ mod tests {
         let folder = TempFolder::new("empty-menu");
         let selection = pictures(&folder, 1);
         let menu = menu_for(&selection, &everything());
-        // The picture conversions are implemented, so the convert wheel has
-        // something on it. The tools conversions are also implemented, so the
-        // tools wheel has something on it. The actions wheel has nothing
-        // implemented, so it shows nothing.
-        assert!(
-            menu.segments(RadialMode::Actions).is_empty(),
-            "the actions wheel has something on it"
-        );
+        // All three wheels have implemented operations, so none are empty.
         assert!(
             !menu.segments(RadialMode::Convert).is_empty(),
             "the convert wheel has nothing on it"
@@ -972,6 +965,10 @@ mod tests {
         assert!(
             !menu.segments(RadialMode::Tools).is_empty(),
             "the tools wheel has nothing on it"
+        );
+        assert!(
+            !menu.segments(RadialMode::Actions).is_empty(),
+            "the actions wheel has nothing on it"
         );
     }
 
@@ -1212,6 +1209,10 @@ mod tests {
             "tools.resize",
             "tools.merge",
             "tools.metadata",
+            "actions.copy-path",
+            "actions.duplicate",
+            "actions.rename",
+            "actions.reveal",
         ];
         for entry in OPERATIONS {
             assert_eq!(

@@ -31,6 +31,7 @@ use crate::radial::execution;
 use crate::radial::geometry::{Point, RadialGeometry, WheelPlacement};
 use crate::radial::images;
 use crate::radial::documents;
+use crate::radial::file_actions;
 use crate::radial::tools;
 use crate::radial::registry::{self, Environment};
 use crate::radial::selection::Selection;
@@ -583,6 +584,8 @@ impl App {
         );
         // Tool operations (compress, crop, trim, etc.) run with the Tools handler.
         let is_tools = operation.as_str().starts_with("tools.");
+        // File actions (copy path, duplicate, rename, reveal) run with the FileActions handler.
+        let is_file_actions = operation.as_str().starts_with("actions.");
         std::thread::spawn(move || {
             let outcome = if is_document {
                 let handler = documents::Documents {
@@ -592,6 +595,11 @@ impl App {
             } else if is_tools {
                 let handler = tools::Tools {
                     ffmpeg_tools: capabilities.tools,
+                    publisher: crate::platform::windows::publish::WindowsPublisher,
+                };
+                execution::run(&request, &selection, &environment, &handler)
+            } else if is_file_actions {
+                let handler = file_actions::FileActions {
                     publisher: crate::platform::windows::publish::WindowsPublisher,
                 };
                 execution::run(&request, &selection, &environment, &handler)
