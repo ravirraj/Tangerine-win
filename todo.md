@@ -57,8 +57,8 @@ Engine decision (2026-10-24): **PDFium, not poppler** — verified.
       text extraction, not-a-pdf refused, page naming with collision
 - [ ] convert.pdf output side (images -> PDF): PDFium can create PDFs, or
       pdf-writer (~0.5 MB) — pick when B-9.5 touches it
-- [ ] Manual verification: drag a real .pdf in Explorer, wheel offers
-      PNG/JPG/TXT, pages land beside it correctly
+- [x] Manual verification: PDF drag works — wheel offers PNG/JPG/TXT, pages
+      render correctly (verified 2026-10-24 on the release build)
 
 ### B-9.5 Documents / Slides / Spreadsheets (REVISED 2026-10-24)
 Replaces the old "LibreOffice headless" plan. Engine chain, resolved at runtime
