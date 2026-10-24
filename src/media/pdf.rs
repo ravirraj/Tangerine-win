@@ -58,23 +58,29 @@ impl Encoding {
 
 /// Where the library is, if it is there.
 ///
-/// It is looked for beside the program first, because that is where a
-/// release puts it, and then in the places a developer keeps it: beside
-/// the working folder, and in the vendor folder of the repository.
+/// It is looked for the way the conversion program is looked for: beside
+/// the program first, because that is where a release puts it, and then in
+/// the vendor folder of the repository, which is where a developer keeps
+/// it. A program built by cargo sits in target/debug or target/release,
+/// so the repository is two folders above it.
 pub fn library() -> Option<PathBuf> {
     let dll = if cfg!(windows) { "pdfium.dll" } else { "libpdfium.so" };
-    let beside_program = std::env::current_exe()
-        .ok()
-        .and_then(|program| program.parent().map(|folder| folder.join(dll)));
-    let candidates = [
-        beside_program,
-        Some(PathBuf::from(dll)),
-        Some(PathBuf::from("vendor").join("pdfium").join(dll)),
-    ];
-    candidates
-        .into_iter()
-        .flatten()
-        .find(|path| path.is_file())
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Some(program) = std::env::current_exe().ok()
+        && let Some(folder) = program.parent()
+    {
+        candidates.push(folder.join(dll));
+        if folder
+            .file_name()
+            .is_some_and(|name| name == "debug" || name == "release")
+            && let Some(root) = folder.parent().and_then(Path::parent)
+        {
+            candidates.push(root.join("vendor").join("pdfium").join(dll));
+        }
+    }
+    candidates.push(PathBuf::from(dll));
+    candidates.push(PathBuf::from("vendor").join("pdfium").join(dll));
+    candidates.into_iter().find(|path| path.is_file())
 }
 
 /// The bound library, made once and shared by everything after.
