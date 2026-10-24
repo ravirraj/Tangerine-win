@@ -72,6 +72,8 @@ in this order — every engine behind one seam in `src/media/documents2.rs`:
 - [ ] CSV/TSV/XLSX/ODS interconversion via calamine
 - [ ] MD/TXT -> PDF via markdown->HTML->PDF (small crates)
 - [ ] DOCX->HTML (approximate styling) and -> EPUB (zip of HTML) — later
+- [ ] RTF input: assess a Rust RTF reader (reference accepts RTF input;
+      RTFD is an Apple bundle, skip)
 
 **Related cheap wins from the website matrix:**
 - [ ] Images->PDF via pdf-writer crate (fills the "PDF export" row)
@@ -86,10 +88,13 @@ availability at runtime; wheel never shows a conversion it cannot run.
 - PAGES input: Apple-only format, N/A on Windows
 
 ### B-9.6 Audio Formats
-- [ ] Add wav, ogg, aiff, m4a to ffmpeg/components.txt
-- [ ] Add to ffmpeg/build.sh configure flags
+Reference audio set (homepage): MP3 M4A WAV FLAC OGG Opus AIFF WMA.
+- [ ] Add wav, ogg, aiff, m4a, opus, wma to ffmpeg/components.txt
+- [ ] Add to ffmpeg/build.sh configure flags (wmav2 decoder, libopus if needed)
 - [ ] Add registry operations (convert.wav, convert.ogg, etc.)
-- [ ] Add real-FFmpeg ignored tests (audio→audio conversion)
+- [ ] Video -> MP3 export (audio extraction; reference lists it under Video)
+- [ ] MOV and WebM are registered but UNTESTED — add real-FFmpeg tests
+- [ ] Add real-FFmpeg ignored tests (audio->audio, video->mp3)
 - [ ] Manual verification: audio files convert correctly
 
 ### B-9.7 RAR Input
@@ -100,36 +105,52 @@ availability at runtime; wheel never shows a conversion it cannot run.
 
 ---
 
-## Phase B-10: Remaining Tools (19 of 26)
+## Phase B-10: Tool Windows (the reference product IS its windows)
 
-### B-10.1 Background Removal
-- [ ] Assess ONNX Runtime/rembg size impact (~50-100 MB)
-- [ ] Decision: defer or implement
-- [ ] If implement: add tools.background-remove registry operation
-- [ ] Add ONNX Runtime dependency
+Verified against tangerineformac.com/tools: every one of the 21 tools opens
+as a DEDICATED CONFIGURATION WINDOW (preview, controls, Cancel/action).
+Our tools currently run immediately with hardcoded defaults — without this
+phase there is no tool parity, whatever the operations can do.
 
-### B-10.2 Remove Metadata (EXIF strip)
-- [ ] Add exif crate dependency
-- [ ] Create metadata strip implementation
-- [ ] Add tools.metadata-strip registry operation
-- [ ] Add real test: strip EXIF from JPEG
+### B-10.0 Tool window shell (TW-1)
+- [ ] Create src/ui/tool_window.slint — shared chrome: title, file strip,
+      preview area, controls column, Cancel + action footer
+- [ ] Controller effect: OpenToolWindow(op, files) instead of immediate Run
+- [ ] First window: Compress or Resize (image preview, no timeline)
 
-### B-10.3 Read QR
-- [ ] Assess qr2/barcode crate size
-- [ ] Decision: defer or implement
-- [ ] If implement: add tools.read-qr registry operation
+### B-10.1 Time-range template (TW-2) — the Trim video window
+- [ ] Frame preview via ffmpeg -ss seek (~50-150 ms per scrub update)
+- [ ] Timeline with trim handles, timecodes, frame-step buttons
+- [ ] Template reused by: Trim audio, Split video, Save frames, Bleep
 
-### B-10.4 Split
-- [ ] Implement split for video/images using FFmpeg
-- [ ] Add tools.split registry operation
-- [ ] Add real test: split video at timestamp
+### B-10.2 FFmpeg-backed windows (1-3 days each once template exists)
+- [ ] Change video speed (setpts/atempo, preserve pitch)
+- [ ] Split video (custom points or equal parts, one output folder)
+- [ ] Save video frames (frame-step picker -> full-resolution PNGs)
+- [ ] Join videos (file list reorder -> single MP4; our merge, windowed)
+- [ ] Crop video (exact dimensions, keep audio)
+- [ ] Crop images (pixel dims + aspect presets; replaces hardcoded center-crop)
+- [ ] Compress (target exact file size, resize while compressing)
+- [ ] Edit metadata (inspect/change/remove; search by file/track/chapter)
+- [ ] Normalize volume (loudness range + true peak, in/out comparison)
+- [ ] Convert audio channels (mono/stereo, per-channel volume + preview)
+- [ ] Trim audio (waveform via showwavespic, trim silence at ends)
+- [ ] Merge PDFs (file list reorder) — gated on B-9.4 poppler
+- [ ] Windows for our own Rotate/Resize ops (not in reference set, keep)
 
-### B-10.5 Remaining ~14 Tools
-- [ ] Review reference tools page (tangerineformac.com/tools)
-- [ ] List all missing tools
-- [ ] Implement FFmpeg-filter-based ones (flip, grayscale, etc.)
-- [ ] Mark unsupported ones as implemented: false with reason
-- [ ] Add registry tests for all implemented tools
+### B-10.3 Heavy/custom windows (assess each before committing)
+- [ ] Edit photos (live preview: dehaze, clarity, grain, denoise, light/
+      color/detail — FFmpeg eq curves get partway; assess fidelity)
+- [ ] Add background (canvas, blur, rounded corners, shadow — pad+gblur)
+- [ ] Create collage (grid/row/column/featured layouts — Rust compositing)
+- [ ] Audio visualizer (animated waveform -> MP4, orientation options)
+- [ ] Bleep audio (movable time ranges, original-vs-bleep comparison)
+- [ ] Redact photos / Redact video (movable solid/blur/pixelate boxes)
+- [ ] Organize PDF pages (rotate/duplicate/remove pages — poppler)
+
+### Reference notes
+Headline says "26 file tools" but /tools documents 21 windows. Old todo's
+"19 of 26 missing" count was wrong; this section is the verified list.
 
 ---
 
@@ -259,8 +280,8 @@ availability at runtime; wheel never shows a conversion it cannot run.
 
 | Item | Reason |
 |---|---|
-| Background removal | ~50-100 MB ONNX Runtime — too heavy |
-| QR reading | Needs barcode library — assess size first |
+| Background removal | Not in the reference tool set, and ONNX ~50-100 MB too heavy |
+| QR reading | Not in the reference tool set, and needs a barcode library |
 | PDF -> DOCX/PPTX/XLSX | Layout reconstruction — no lightweight offline engine |
 | PAGES input | Apple-only format, irrelevant on Windows |
 | Bundling LibreOffice | ~700 MB — detect if present, never bundle (B-9.5 chain) |
