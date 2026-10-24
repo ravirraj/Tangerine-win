@@ -104,6 +104,14 @@ impl<'a> Converter<'a> {
             return Err(reason);
         }
 
+        // If the target is ICO, wrap the image in an ICO container.
+        if target.format == "ico" {
+            let image_bytes = std::fs::read(&temporary).map_err(|_| ConvertError::BadResult)?;
+            let ico_bytes = crate::media::ico::wrap(&image_bytes, false)
+                .ok_or(ConvertError::BadResult)?;
+            std::fs::write(&temporary, ico_bytes).map_err(|_| ConvertError::BadResult)?;
+        }
+
         // What came out has to be what was asked for, or it is not the
         // result of anything.
         if !self.is_what_it_should_be(&temporary, target) {

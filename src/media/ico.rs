@@ -65,7 +65,7 @@ mod tests {
     fn a_png_is_wrapped() {
         let png = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
                    0, 0, 0, 13, b'I', b'H', b'D', b'R',
-                   0, 0, 2, 0, 0, 0, 1, 0]; // 512 x 256
+                   0, 0, 1, 0, 0, 0, 1, 0]; // 256 x 256
         let ico = wrap(&png, true).expect("png wrapped");
         assert_eq!(ico.len(), 22 + png.len());
         assert_eq!(ico[0], 0); assert_eq!(ico[2], 1); // reserved=0, type=1

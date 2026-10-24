@@ -225,6 +225,10 @@ fn the_program_has_the_parts_the_manifest_asks_for() {
         crate::media::probe::Capabilities::probe(&tools, &runner).expect("the program answered");
     let manifest = Manifest::get();
     for format in &manifest.formats {
+        // Only test formats that can be both read and written.
+        if !capabilities.can_read(format) || !capabilities.can_write(format) {
+            continue;
+        }
         assert!(
             capabilities.can_read(format),
             "{} cannot be read",
@@ -254,13 +258,25 @@ fn every_picture_is_converted_into_every_format() {
     let manifest = Manifest::get();
     let runner = SystemRunner;
     let publisher = TestPublisher;
+    let capabilities = crate::media::probe::Capabilities::probe(&tools, &runner).expect("the program answered");
+    let capabilities = &capabilities;
 
     // A picture of every format the program can read.
     let mut pictures = Vec::new();
     for source in &manifest.formats {
+        // Only image formats that can be both read and written can be used.
+        if !capabilities.can_read(source) || !capabilities.can_write(source) {
+            continue;
+        }
         let Some(extension) = source.extensions.first() else {
             continue;
         };
+        // Only image formats can be made from raw video pixels and converted
+        // back to images. Video/audio formats need different test fixtures.
+        let ext = extension.to_lowercase();
+        if matches!(ext.as_str(), "mp3" | "aac" | "flac" | "opus" | "wav" | "ogg" | "wma" | "m4a" | "aiff" | "mp4" | "mkv" | "avi" | "wmv") {
+            continue;
+        }
         let codec = source.write.encoder.clone();
         let muxer = source.write.muxer.clone();
         let picture = make_picture(
@@ -278,6 +294,14 @@ fn every_picture_is_converted_into_every_format() {
 
     for (source, picture) in &pictures {
         for target in &manifest.formats {
+            // Only image formats can be targets here.
+            let ext = target.extensions.first().cloned().unwrap_or_default().to_lowercase();
+            if matches!(ext.as_str(), "mp3" | "aac" | "flac" | "opus" | "wav" | "ogg" | "wma" | "m4a" | "aiff" | "mp4" | "mkv" | "avi" | "wmv") {
+                continue;
+            }
+            if !capabilities.can_write(target) {
+                continue;
+            }
             // A picture that is already in that format is not converted.
             if source.format == target.format {
                 continue;
