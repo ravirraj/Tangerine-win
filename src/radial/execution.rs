@@ -270,8 +270,8 @@ mod tests {
         let path = folder.file("one.png");
         let selection = Selection::inspect(std::slice::from_ref(&path));
         let request = Request {
-            // Converting to a PDF is not something that is implemented.
-            operation: "convert.pdf".to_string(),
+            // Putting files in an archive is not something that is implemented.
+            operation: "actions.zip".to_string(),
             inputs: vec![path],
         };
         let outcome = run(&request, &selection, &Environment::none(), &NotImplemented);

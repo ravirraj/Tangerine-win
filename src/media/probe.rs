@@ -214,6 +214,22 @@ impl Capabilities {
             }
         }
 
+        // The document processor also reads the office documents that are
+        // converted in Rust alone — the words of a DOCX, the sheets of a
+        // spreadsheet — and those need nothing but the program itself, so
+        // they are always offered. A picture can be wrapped into a PDF the
+        // same way.
+        doc_reads.extend(
+            [
+                "docx", "xlsx", "xls", "ods", "csv", "tsv", "png", "jpg", "jpeg", "webp",
+                "bmp", "tif", "tiff", "gif", "svg",
+            ]
+            .iter()
+            .map(|name| name.to_string()),
+        );
+        doc_writes.push("csv".to_string());
+        doc_writes.push("pdf".to_string());
+
         // The PDF reader is a library beside the program, not a part of the
         // conversion program, so it is not in the manifest. It reads PDF
         // files and writes pictures and text, and it is only offered while
@@ -239,6 +255,18 @@ impl Capabilities {
                     "jpeg".to_string(),
                     "txt".to_string(),
                 ],
+            });
+        }
+
+        // The office documents become PDFs through whatever reads them —
+        // the installed Microsoft Office, or LibreOffice — and only the
+        // extensions a program is really there for are offered.
+        let office_reads = crate::media::documents2::available_reads();
+        if !office_reads.is_empty() {
+            processors.push(Processor {
+                name: "office".to_string(),
+                reads: office_reads.iter().map(|name| name.to_string()).collect(),
+                writes: vec!["pdf".to_string()],
             });
         }
 

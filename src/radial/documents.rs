@@ -33,6 +33,36 @@ impl<P: Publisher> Handler for Documents<P> {
             };
         };
 
+        // Many pictures put on PDF become one PDF, a page each. This is
+        // the one conversion that puts its inputs together, and the one
+        // PDF is named after the first picture.
+        if request.operation == "convert.pdf" {
+            let Some(first) = request.inputs.first() else {
+                return Outcome::Failed {
+                    reason: Failure::Error("no picture was given".to_string()),
+                };
+            };
+            let target = first.with_extension(extension);
+            return match crate::media::documents::images_to_pdf(&request.inputs, &target) {
+                Ok(()) => Outcome::Succeeded {
+                    outputs: vec![target],
+                },
+                Err(reason) => {
+                    let name = reason.name();
+                    diagnostics::log(
+                        Level::Warn,
+                        "action",
+                        &format!("the pictures were not put in one PDF: {name}"),
+                    );
+                    Outcome::Failed {
+                        reason: Failure::Error(format!(
+                            "the pictures could not be put in one PDF: {name}"
+                        )),
+                    }
+                }
+            };
+        }
+
         let mut outputs = Vec::new();
         let mut failed = 0usize;
         let mut first_reason: Option<String> = None;

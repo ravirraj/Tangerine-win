@@ -67,33 +67,64 @@ in this order — every engine behind one seam in `src/media/documents2.rs`:
     Word/Excel/PowerPoint COM  ->  LibreOffice (if installed)  ->
     office2pdf (optional ~20 MB download)  ->  clear "how to enable" message
 
-**Engine A — Office COM (zero bytes shipped, perfect fidelity):**
-- [ ] Create src/media/documents2.rs with the engine-chain seam
-- [ ] Word COM: Documents.Open -> SaveAs2 wdFormatPDF (DOCX->PDF)
-- [ ] Excel COM: XLSX->PDF; PowerPoint COM: PPTX->PDF + slide export JPG/PNG
-- [ ] Runtime detection (registry lookup of Office install, graceful absence)
+**Engine A — Office COM (zero bytes shipped, perfect fidelity): DONE 2026-10-24**
+- [x] src/media/documents2.rs — the engine-chain seam
+- [x] Word: Documents.Open -> ExportAsFixedFormat (docx AND legacy doc)
+- [x] Excel: Workbooks.Open -> ExportAsFixedFormat (xlsx, xls, ods, csv)
+- [x] PowerPoint: Presentations.Open -> ExportAsFixedFormat (pptx, ppt)
+- [x] Driven via PowerShell (-ComObject), paths passed in environment
+      variables — no path ever inside a script; detection via reg query
+      HKCR\<ProgId> (fast, ~20 ms)
+- [x] Registry: convert.docx-pdf / convert.xlsx-pdf / convert.pptx-pdf,
+      'office' processor present only for apps actually installed
+- [x] Real tests green on this machine: Word exported a fixture DOCX to
+      PDF, Excel exported a fixture XLSX to PDF (pptx test skipped — a
+      valid minimal PPTX fixture is disproportionately complex)
 
-**Engine B — LibreOffice (detected, never required, never bundled):**
-- [ ] Detect soffice.exe in standard locations; reuse chain seam
+**Engine B — LibreOffice (detected, never required, never bundled): DONE**
+- [x] Detect soffice.exe in standard locations; headless
+      --convert-to pdf into a staging folder, then moved beside original
+- [x] Serves the same 'office' processor reads when Office is absent
+- [ ] Verified on a machine that has LibreOffice (none here — self-skips)
 
 **Engine C — office2pdf for users with no MS Office (optional download):**
-- [ ] Evaluate output quality on real DOCX/PPTX/XLSX test set (v0.9.1, young)
-- [ ] If good: optional in-app download (~20 MB, user consent), store under
-      %LOCALAPPDATA%\OpenTangerine\engines\; base installer stays small
-- [ ] PPTX->JPG/PNG without Office = office2pdf->PDF then poppler render (B-9.4)
+- [x] Evaluated on this machine (v0.9.1, 2026-10-24):
+      - Windows x64 binary is 68 MB — not the ~20 MB once guessed
+        (Typst engine + bundled fonts)
+      - Converts a genuine Word-made DOCX to a valid PDF (%PDF-1.7)
+      - Font substitution observed: Word's default "Aptos" -> "Noto Sans";
+        layout can shift from what Word shows
+      - PDF as input is rejected by the tool (PDFium covers that side)
+      - DECISION: not bundled for now — Engine A (Office COM) covers most
+        users at zero size; keep the binary in vendor/office2pdf/
+        (gitignored) and revisit if/when the no-Office path matters more
+- [ ] If ever bundled: optional in-app download (~68 MB, user consent),
+      stored under %LOCALAPPDATA%\OpenTangerine\engines\; PPTX->JPG
+      without Office = office2pdf -> PDF then PDFium render
 
 **Native routes (always available, no engine, milliseconds):**
-- [ ] DOCX->TXT: zip + XML walk of word/document.xml (zip crate already a dep)
-- [ ] XLSX/XLS/ODS -> CSV/TSV: calamine (~1.5 MB)
-- [ ] CSV/TSV/XLSX/ODS interconversion via calamine
+- [x] DOCX->TXT: zip + quick-xml walk of word/document.xml (2026-10-24;
+      run text kept verbatim, paragraphs apart; deps: quick-xml)
+- [x] XLSX/XLS/ODS/CSV/TSV -> CSV: calamine 0.37; one file per sheet
+      (name.csv, name - Sheet.csv), cells quoted as CSV asks, nothing
+      overwritten (deps: calamine)
+- [ ] TSV/other spreadsheet targets (only CSV output so far)
 - [ ] MD/TXT -> PDF via markdown->HTML->PDF (small crates)
 - [ ] DOCX->HTML (approximate styling) and -> EPUB (zip of HTML) — later
 - [ ] RTF input: assess a Rust RTF reader (reference accepts RTF input;
       RTFD is an Apple bundle, skip)
 
 **Related cheap wins from the website matrix:**
-- [ ] Images->PDF via pdf-writer crate (fills the "PDF export" row)
-- [ ] PDF->TXT via poppler text layer (free once B-9.4 lands)
+- [x] Manual verification of engines A+B: docx/xlsx/pptx drags offer PDF and
+      export correctly on a machine with Office (2026-10-24)
+- [x] Images->PDF via pdf-writer 0.15 (2026-10-24): one page per picture,
+      page sized to the picture; JPEG embedded whole (DCTDecode); others
+      deflated; transparency kept as an SMask; SVG input rasterised first.
+      convert.pdf now implemented via the document processor; verified by
+      reading the made PDF back with PDFium (page == picture size)
+- [x] PDF->TXT — done as part of B-9.4 (PDFium text extraction)
+- [x] Many images on PDF -> ONE PDF, a page each, named after the first
+      picture (user-requested; previously one PDF per picture) (d045e12)
 
 **Registry operations:** convert.docx (PDF/TXT targets), convert.pptx
 (PDF/JPG/PNG), convert.xlsx (PDF/CSV) — `implemented` reflects engine
