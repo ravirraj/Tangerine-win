@@ -83,9 +83,12 @@ in this order — every engine behind one seam in `src/media/documents2.rs`:
 - [ ] PPTX->JPG/PNG without Office = office2pdf->PDF then poppler render (B-9.4)
 
 **Native routes (always available, no engine, milliseconds):**
-- [ ] DOCX->TXT: zip + XML walk of word/document.xml (zip crate already a dep)
-- [ ] XLSX/XLS/ODS -> CSV/TSV: calamine (~1.5 MB)
-- [ ] CSV/TSV/XLSX/ODS interconversion via calamine
+- [x] DOCX->TXT: zip + quick-xml walk of word/document.xml (2026-10-24;
+      run text kept verbatim, paragraphs apart; deps: quick-xml)
+- [x] XLSX/XLS/ODS/CSV/TSV -> CSV: calamine 0.37; one file per sheet
+      (name.csv, name - Sheet.csv), cells quoted as CSV asks, nothing
+      overwritten (deps: calamine)
+- [ ] TSV/other spreadsheet targets (only CSV output so far)
 - [ ] MD/TXT -> PDF via markdown->HTML->PDF (small crates)
 - [ ] DOCX->HTML (approximate styling) and -> EPUB (zip of HTML) — later
 - [ ] RTF input: assess a Rust RTF reader (reference accepts RTF input;

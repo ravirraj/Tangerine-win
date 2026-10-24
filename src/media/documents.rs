@@ -7,6 +7,7 @@ use std::fs;
 use std::io::{Cursor, Read, Write};
 use std::path::Path;
 
+use calamine::Reader as _;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 use tar::Archive;
@@ -313,7 +314,119 @@ pub fn convert(source: &Path, target_path: &Path, from: &str, to: &str) -> Resul
             archives::convert(source, target_path, from, to)
         }
         "pdf" => convert_pdf(source, target_path, to),
+        "docx" => convert_docx(source, target_path, to),
+        "xlsx" | "xls" | "ods" | "csv" | "tsv" => convert_sheet(source, target_path, to),
         _ => Err(DocError::UnsupportedSource),
+    }
+}
+
+/// Converts a DOCX into plain text.
+///
+/// A DOCX is a folder of XML in a zip; the words are in one part of it,
+/// each run of text inside its own element, each paragraph its own. The
+/// words are taken as they come and the paragraphs are kept apart by a
+/// line break each.
+fn convert_docx(source: &Path, target_path: &Path, to: &str) -> Result<(), DocError> {
+    if to != "txt" {
+        return Err(DocError::UnsupportedTarget);
+    }
+    let file = fs::File::open(source).map_err(|_| DocError::ReadError)?;
+    let mut archive = ZipArchive::new(file).map_err(|_| DocError::ReadError)?;
+    let mut xml = String::new();
+    archive
+        .by_name("word/document.xml")
+        .map_err(|_| DocError::ReadError)?
+        .read_to_string(&mut xml)
+        .map_err(|_| DocError::ReadError)?;
+
+    let mut reader = quick_xml::Reader::from_str(&xml);
+    // The spaces between words are inside the text elements in this
+    // format, so nothing is trimmed: a trimmed space is a lost word.
+    reader.config_mut().trim_text(false);
+    let mut text = String::new();
+    use quick_xml::events::Event;
+    loop {
+        match reader.read_event() {
+            Ok(Event::Text(words)) => text.push_str(
+                &words.xml_content(quick_xml::XmlVersion::Implicit1_0),
+            ),
+            Ok(Event::End(end)) => {
+                if end.name().local_name().as_ref() == "p" {
+                    text.push('\n');
+                }
+            }
+            Ok(Event::Eof) => break,
+            Ok(_) => {}
+            Err(_) => return Err(DocError::ReadError),
+        }
+    }
+    fs::write(target_path, text).map_err(|_| DocError::WriteError)?;
+    Ok(())
+}
+
+/// Converts a spreadsheet into CSV.
+///
+/// Every sheet becomes a file of its own: the first takes the target path,
+/// and each sheet after it takes the name of the sheet beside it. A name
+/// that is already taken is not used — the next number is tried — so
+/// nothing that is there already is ever overwritten.
+fn convert_sheet(source: &Path, target_path: &Path, to: &str) -> Result<(), DocError> {
+    if to != "csv" {
+        return Err(DocError::UnsupportedTarget);
+    }
+    let mut workbook =
+        calamine::open_workbook_auto(source).map_err(|_| DocError::ReadError)?;
+    let names = workbook.sheet_names();
+    if names.is_empty() {
+        return Err(DocError::ReadError);
+    }
+
+    let folder = target_path.parent().unwrap_or_else(|| Path::new("."));
+    let stem = target_path
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "converted".to_string());
+
+    for (which, sheet) in names.iter().enumerate() {
+        let range = workbook
+            .worksheet_range(sheet)
+            .map_err(|_| DocError::ReadError)?;
+        let mut rows = String::new();
+        for row in range.rows() {
+            let cells: Vec<String> = row
+                .iter()
+                .map(|cell| escape_csv(&cell.to_string()))
+                .collect();
+            rows.push_str(&cells.join(","));
+            rows.push('\n');
+        }
+        let mut number = 1usize;
+        let name = loop {
+            let candidate = if which == 0 && number == 1 {
+                target_path.to_path_buf()
+            } else if which == 0 {
+                folder.join(format!("{stem} ({number}).csv"))
+            } else if number == 1 {
+                folder.join(format!("{stem} - {sheet}.csv"))
+            } else {
+                folder.join(format!("{stem} - {sheet} ({number}).csv"))
+            };
+            if !candidate.exists() {
+                break candidate;
+            }
+            number += 1;
+        };
+        fs::write(&name, rows).map_err(|_| DocError::WriteError)?;
+    }
+    Ok(())
+}
+
+/// A cell of CSV, quoted when it has to be.
+fn escape_csv(cell: &str) -> String {
+    if cell.contains(',') || cell.contains('"') || cell.contains('\n') || cell.contains('\r') {
+        format!("\"{}\"", cell.replace('"', "\"\""))
+    } else {
+        cell.to_string()
     }
 }
 
@@ -416,5 +529,135 @@ mod tests {
     fn unsupported_target_is_rejected() {
         let result = subtitles::convert("hello", "srt", "xyz");
         assert_eq!(result.unwrap_err(), DocError::UnsupportedTarget);
+    }
+
+    /// A folder of its own for a test, removed when the test is over.
+    struct TempFolder {
+        path: std::path::PathBuf,
+    }
+
+    impl TempFolder {
+        fn new(name: &str) -> TempFolder {
+            let path = std::env::temp_dir().join(format!(
+                "open-tangerine-documents-{}-{name}",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_dir_all(&path);
+            std::fs::create_dir_all(&path).expect("the test folder could be made");
+            TempFolder { path }
+        }
+    }
+
+    impl Drop for TempFolder {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
+    /// Makes a zip of the given parts, the way the office formats are put
+    /// together, with the parts named as they are named in those formats.
+    fn office_file(path: &Path, parts: &[(&str, &str)]) {
+        let file = fs::File::create(path).expect("the office file could be made");
+        let mut zip = ZipWriter::new(file);
+        for (name, content) in parts {
+            zip.start_file(*name, zip::write::FileOptions::default())
+                .expect("the part could be started");
+            zip.write_all(content.as_bytes())
+                .expect("the part could be written");
+        }
+        zip.finish().expect("the office file could be finished");
+    }
+
+    const RELS: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
+<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
+<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"REPLACED\"/>\
+</Relationships>";
+
+    #[test]
+    fn a_docx_becomes_text_with_its_paragraphs_apart() {
+        let folder = TempFolder::new("docx");
+        let document = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
+<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+<w:body>\
+<w:p><w:r><w:t>Hello document</w:t></w:r></w:p>\
+<w:p><w:r><w:t>Second line</w:t></w:r><w:r><w:t> goes on</w:t></w:r></w:p>\
+</w:body></w:document>";
+        let content_types = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
+<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">\
+<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>\
+<Default Extension=\"xml\" ContentType=\"application/xml\"/>\
+<Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>\
+</Types>";
+        let docx = folder.path.join("letter.docx");
+        office_file(
+            &docx,
+            &[
+                ("[Content_Types].xml", content_types),
+                ("_rels/.rels", &RELS.replacen("REPLACED", "word/document.xml", 1)),
+                ("word/document.xml", document),
+            ],
+        );
+
+        let text = folder.path.join("letter.txt");
+        convert(&docx, &text, "docx", "txt").expect("the docx was converted");
+        let words = fs::read_to_string(&text).expect("the text is there");
+        assert!(words.contains("Hello document\n"), "{words:?}");
+        assert!(words.contains("Second line goes on\n"), "{words:?}");
+    }
+
+    #[test]
+    fn a_spreadsheet_becomes_csv_one_file_per_sheet() {
+        let folder = TempFolder::new("xlsx");
+        let workbook = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
+<workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" \
+xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">\
+<sheets><sheet name=\"Sheet1\" sheetId=\"1\" r:id=\"rId1\"/></sheets></workbook>";
+        let workbook_rels = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
+<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
+<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet1.xml\"/>\
+</Relationships>";
+        let sheet = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
+<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">\
+<sheetData>\
+<row r=\"1\"><c r=\"A1\" t=\"inlineStr\"><is><t>name</t></is></c><c r=\"B1\" t=\"inlineStr\"><is><t>age</t></is></c></row>\
+<row r=\"2\"><c r=\"A2\" t=\"inlineStr\"><is><t>ada, lovelace</t></is></c><c r=\"B2\"><v>36</v></c></row>\
+</sheetData></worksheet>";
+        let content_types = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
+<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">\
+<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>\
+<Default Extension=\"xml\" ContentType=\"application/xml\"/>\
+<Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/>\
+<Override PartName=\"/xl/worksheets/sheet1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>\
+</Types>";
+        let xlsx = folder.path.join("table.xlsx");
+        office_file(
+            &xlsx,
+            &[
+                ("[Content_Types].xml", content_types),
+                ("_rels/.rels", &RELS.replacen("REPLACED", "xl/workbook.xml", 1)),
+                ("xl/workbook.xml", workbook),
+                ("xl/_rels/workbook.xml.rels", workbook_rels),
+                ("xl/worksheets/sheet1.xml", sheet),
+            ],
+        );
+
+        let csv = folder.path.join("table.csv");
+        convert(&xlsx, &csv, "xlsx", "csv").expect("the sheet was converted");
+        let rows = fs::read_to_string(&csv).expect("the csv is there");
+        assert!(rows.contains("name,age\n"), "{rows:?}");
+        // A cell with a comma in it is quoted, the way CSV asks for.
+        assert!(rows.contains("\"ada, lovelace\",36\n"), "{rows:?}");
+    }
+
+    #[test]
+    fn a_docx_that_is_not_a_docx_is_refused() {
+        let folder = TempFolder::new("bad-docx");
+        let docx = folder.path.join("pretend.docx");
+        fs::write(&docx, b"not a docx").expect("the file could be written");
+        let text = folder.path.join("pretend.txt");
+        assert_eq!(
+            convert(&docx, &text, "docx", "txt"),
+            Err(DocError::ReadError)
+        );
     }
 }

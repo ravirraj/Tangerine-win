@@ -34,6 +34,8 @@ png = "0.18"
 usvg = "0.48"
 pdfium-render = "0.9.4"
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg"] }
+calamine = "0.37.0"
+quick-xml = "0.42.0"
 
 # The stand-in for the conversion program, used by the tests.
 #
