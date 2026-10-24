@@ -88,10 +88,19 @@ in this order — every engine behind one seam in `src/media/documents2.rs`:
 - [ ] Verified on a machine that has LibreOffice (none here — self-skips)
 
 **Engine C — office2pdf for users with no MS Office (optional download):**
-- [ ] Evaluate output quality on real DOCX/PPTX/XLSX test set (v0.9.1, young)
-- [ ] If good: optional in-app download (~20 MB, user consent), store under
-      %LOCALAPPDATA%\OpenTangerine\engines\; base installer stays small
-- [ ] PPTX->JPG/PNG without Office = office2pdf->PDF then poppler render (B-9.4)
+- [x] Evaluated on this machine (v0.9.1, 2026-10-24):
+      - Windows x64 binary is 68 MB — not the ~20 MB once guessed
+        (Typst engine + bundled fonts)
+      - Converts a genuine Word-made DOCX to a valid PDF (%PDF-1.7)
+      - Font substitution observed: Word's default "Aptos" -> "Noto Sans";
+        layout can shift from what Word shows
+      - PDF as input is rejected by the tool (PDFium covers that side)
+      - DECISION: not bundled for now — Engine A (Office COM) covers most
+        users at zero size; keep the binary in vendor/office2pdf/
+        (gitignored) and revisit if/when the no-Office path matters more
+- [ ] If ever bundled: optional in-app download (~68 MB, user consent),
+      stored under %LOCALAPPDATA%\OpenTangerine\engines\; PPTX->JPG
+      without Office = office2pdf -> PDF then PDFium render
 
 **Native routes (always available, no engine, milliseconds):**
 - [x] DOCX->TXT: zip + quick-xml walk of word/document.xml (2026-10-24;
@@ -114,6 +123,8 @@ in this order — every engine behind one seam in `src/media/documents2.rs`:
       convert.pdf now implemented via the document processor; verified by
       reading the made PDF back with PDFium (page == picture size)
 - [x] PDF->TXT — done as part of B-9.4 (PDFium text extraction)
+- [x] Many images on PDF -> ONE PDF, a page each, named after the first
+      picture (user-requested; previously one PDF per picture) (d045e12)
 
 **Registry operations:** convert.docx (PDF/TXT targets), convert.pptx
 (PDF/JPG/PNG), convert.xlsx (PDF/CSV) — `implemented` reflects engine
