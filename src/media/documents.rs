@@ -325,7 +325,7 @@ pub fn convert(source: &Path, target_path: &Path, from: &str, to: &str) -> Resul
         "pdf" => convert_pdf(source, target_path, to),
         "png" | "jpg" | "jpeg" | "webp" | "bmp" | "tif" | "tiff" | "gif" | "svg" => {
             if to == "pdf" {
-                convert_picture_pdf(source, target_path)
+                images_to_pdf(&[source.to_path_buf()], target_path)
             } else {
                 Err(DocError::UnsupportedTarget)
             }
@@ -465,117 +465,166 @@ fn escape_csv(cell: &str) -> String {
     }
 }
 
-/// Wraps a picture into a PDF of one page.
+/// Wraps pictures into one PDF, a page for each picture.
 ///
-/// The page is the size of the picture, one point to the pixel. A JPEG
-/// goes in as it is, because PDF keeps JPEGs that way; everything else is
-/// decoded and deflated. A picture that has see-through parts keeps them,
-/// as PDF keeps them, in a mask of its own. A vector picture is turned
-/// into pixels first, because PDF holds no vectors of that kind.
-fn convert_picture_pdf(source: &Path, target: &Path) -> Result<(), DocError> {
+/// The pages are the sizes of their pictures, one point to the pixel. A
+/// JPEG goes in as it is, because PDF keeps JPEGs that way; everything
+/// else is decoded and deflated. A picture that has see-through parts
+/// keeps them, as PDF keeps them, in a mask of its own. A vector picture
+/// is turned into pixels first, because PDF holds no vectors of that
+/// kind.
+pub fn images_to_pdf(sources: &[std::path::PathBuf], target: &Path) -> Result<(), DocError> {
     use pdf_writer::{Content, Filter, Finish, Name, Pdf, Rect, Ref};
 
-    let extension = source
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    let data = if extension == "svg" {
-        crate::media::svg::rasterise(source).map_err(|_| DocError::ReadError)?
-    } else {
-        fs::read(source).map_err(|_| DocError::ReadError)?
-    };
-    let picture = image::load_from_memory(&data).map_err(|_| DocError::ReadError)?;
-    let (width, height) = (picture.width(), picture.height());
-    if width == 0 || height == 0 {
+    /// One picture, ready to go into the PDF.
+    struct Encoded {
+        width: u32,
+        height: u32,
+        filter: Filter,
+        data: Vec<u8>,
+        mask: Option<Vec<u8>>,
+        gray: bool,
+    }
+
+    let mut pictures = Vec::new();
+    for source in sources {
+        let extension = source
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        let data = if extension == "svg" {
+            crate::media::svg::rasterise(source).map_err(|_| DocError::ReadError)?
+        } else {
+            fs::read(source).map_err(|_| DocError::ReadError)?
+        };
+        let picture = image::load_from_memory(&data).map_err(|_| DocError::ReadError)?;
+        let (width, height) = (picture.width(), picture.height());
+        if width == 0 || height == 0 {
+            return Err(DocError::ReadError);
+        }
+
+        // A JPEG is already deflated the way PDF wants, so it is kept whole.
+        let is_jpeg = extension != "svg"
+            && image::guess_format(&data)
+                .map(|format| format == image::ImageFormat::Jpeg)
+                .unwrap_or(false);
+        let plainly_coloured = picture.color() == image::ColorType::Rgb8
+            || picture.color() == image::ColorType::L8;
+        let gray = picture.color() == image::ColorType::L8;
+        let (filter, data, mask) =
+            if is_jpeg && plainly_coloured && !picture.color().has_alpha() {
+                (Filter::DctDecode, data, None)
+            } else {
+                let rgba = picture.to_rgba8();
+                let level = flate2::Compression::default();
+                let colours = zlib(
+                    rgba.pixels()
+                        .flat_map(|pixel| [pixel.0[0], pixel.0[1], pixel.0[2]])
+                        .collect::<Vec<u8>>(),
+                    level,
+                )?;
+                let mask = if picture.color().has_alpha() {
+                    Some(zlib(
+                        rgba.pixels().map(|pixel| pixel.0[3]).collect::<Vec<u8>>(),
+                        level,
+                    )?)
+                } else {
+                    None
+                };
+                (Filter::FlateDecode, colours, mask)
+            };
+        pictures.push(Encoded {
+            width,
+            height,
+            filter,
+            data,
+            mask,
+            gray,
+        });
+    }
+    if pictures.is_empty() {
         return Err(DocError::ReadError);
     }
 
-    // A JPEG is already deflated the way PDF wants, so it is kept whole.
-    let is_jpeg = extension != "svg"
-        && image::guess_format(&data)
-            .map(|format| format == image::ImageFormat::Jpeg)
-            .unwrap_or(false);
-    let plainly_coloured =
-        picture.color() == image::ColorType::Rgb8 || picture.color() == image::ColorType::L8;
-    let (filter, encoded, mask) = if is_jpeg && plainly_coloured && !picture.color().has_alpha() {
-        (Filter::DctDecode, data, None)
-    } else {
-        let rgba = picture.to_rgba8();
-        let level = flate2::Compression::default();
-        let colours = zlib(
-            rgba.pixels()
-                .flat_map(|pixel| [pixel.0[0], pixel.0[1], pixel.0[2]])
-                .collect::<Vec<u8>>(),
-            level,
-        )?;
-        let mask = if picture.color().has_alpha() {
-            Some(zlib(
-                rgba.pixels().map(|pixel| pixel.0[3]).collect::<Vec<u8>>(),
-                level,
-            )?)
-        } else {
-            None
-        };
-        (Filter::FlateDecode, colours, mask)
-    };
-
     let catalog = Ref::new(1);
     let tree = Ref::new(2);
-    let page = Ref::new(3);
-    let picture_ref = Ref::new(4);
-    let mask_ref = Ref::new(5);
-    let contents = Ref::new(6);
-    let name = Name(b"Im1");
-
     let mut pdf = Pdf::new();
     pdf.catalog(catalog).pages(tree);
-    pdf.pages(tree).kids([page]).count(1);
 
-    let mut page_writer = pdf.page(page);
-    page_writer
-        .parent(tree)
-        .media_box(Rect::new(0.0, 0.0, width as f32, height as f32))
-        .contents(contents)
-        .resources()
-        .x_objects()
-        .pair(name, picture_ref);
-    drop(page_writer);
+    // Each picture takes four objects of its own: its page, its image,
+    // the mask of its see-through parts, and the stream that places it.
+    let mut next = 3;
+    let mut kids = Vec::new();
+    for encoded in &pictures {
+        let page = Ref::new(next);
+        let image = Ref::new(next + 1);
+        let mask = Ref::new(next + 2);
+        let contents = Ref::new(next + 3);
+        next += 4;
+        kids.push(page);
+        let name = Name(b"Im1");
 
-    let mut image_writer = pdf.image_xobject(picture_ref, &encoded);
-    image_writer
-        .width(width as i32)
-        .height(height as i32)
-        .bits_per_component(8);
-    if picture.color() == image::ColorType::L8 && is_jpeg {
-        image_writer.color_space().device_gray();
-    } else {
-        image_writer.color_space().device_rgb();
-    }
-    if mask.is_some() {
-        image_writer.s_mask(mask_ref);
-    }
-    // The filter is said last, on its own, because it is said by the
-    // stream everything is written into.
-    image_writer.filter(filter);
-    drop(image_writer);
+        let mut page_writer = pdf.page(page);
+        page_writer
+            .parent(tree)
+            .media_box(Rect::new(
+                0.0,
+                0.0,
+                encoded.width as f32,
+                encoded.height as f32,
+            ))
+            .contents(contents)
+            .resources()
+            .x_objects()
+            .pair(name, image);
+        drop(page_writer);
 
-    if let Some(mask) = &mask {
-        let mut mask_writer = pdf.image_xobject(mask_ref, mask);
-        mask_writer
-            .width(width as i32)
-            .height(height as i32)
+        let mut image_writer = pdf.image_xobject(image, &encoded.data);
+        image_writer
+            .width(encoded.width as i32)
+            .height(encoded.height as i32)
             .bits_per_component(8);
-        mask_writer.color_space().device_gray();
-        mask_writer.filter(Filter::FlateDecode);
-    }
+        if encoded.gray {
+            image_writer.color_space().device_gray();
+        } else {
+            image_writer.color_space().device_rgb();
+        }
+        if encoded.mask.is_some() {
+            image_writer.s_mask(mask);
+        }
+        // The filter is said last, on its own, because it is said by the
+        // stream everything is written into.
+        image_writer.filter(encoded.filter);
+        drop(image_writer);
 
-    let mut stream = Content::new();
-    stream.save_state();
-    stream.transform([width as f32, 0.0, 0.0, height as f32, 0.0, 0.0]);
-    stream.x_object(name);
-    stream.restore_state();
-    pdf.stream(contents, &stream.finish());
+        if let Some(mask_bytes) = &encoded.mask {
+            let mut mask_writer = pdf.image_xobject(mask, mask_bytes);
+            mask_writer
+                .width(encoded.width as i32)
+                .height(encoded.height as i32)
+                .bits_per_component(8);
+            mask_writer.color_space().device_gray();
+            mask_writer.filter(Filter::FlateDecode);
+        }
+
+        let mut stream = Content::new();
+        stream.save_state();
+        stream.transform([
+            encoded.width as f32,
+            0.0,
+            0.0,
+            encoded.height as f32,
+            0.0,
+            0.0,
+        ]);
+        stream.x_object(name);
+        stream.restore_state();
+        pdf.stream(contents, &stream.finish());
+    }
+    pdf.pages(tree)
+        .kids(kids.iter().copied())
+        .count(pictures.len() as i32);
 
     fs::write(target, pdf.finish()).map_err(|_| DocError::WriteError)?;
     Ok(())
@@ -890,5 +939,29 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
         let picture = image::load_from_memory(&pages[0]).expect("the page is a picture");
         assert_eq!(picture.width(), 3);
         assert_eq!(picture.height(), 2);
+    }
+
+    /// Many pictures put together become one PDF with a page each, in the
+    /// order they were given, the first picture giving the PDF its name.
+    #[test]
+    #[ignore = "needs pdfium.dll"]
+    fn many_pictures_become_one_pdf_with_a_page_each() {
+        if crate::media::pdf::library().is_none() {
+            eprintln!("the library is not there; this test needs it");
+            return;
+        }
+        let folder = TempFolder::new("many-pictures");
+        let one = folder.path.join("one.png");
+        let two = folder.path.join("two.png");
+        picture_file(&one, image::ImageFormat::Png);
+        picture_file(&two, image::ImageFormat::Png);
+
+        let pdf = folder.path.join("one.pdf");
+        images_to_pdf(&[one, two], &pdf).expect("the pictures were put together");
+        assert!(pdf.is_file(), "the one PDF is named after the first picture");
+
+        let pages = crate::media::pdf::render_pages(&pdf, 72, crate::media::pdf::Encoding::Png)
+            .expect("the pdf reads back");
+        assert_eq!(pages.len(), 2, "every picture became a page");
     }
 }
