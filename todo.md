@@ -36,12 +36,20 @@
       conversions, output looks right (needs the running app)
 
 ### B-9.4 PDF Support
-- [ ] Assess poppler Windows build feasibility
-- [ ] Add pdf to ffmpeg/components.txt
-- [ ] Create src/media/pdf.rs (poppler render to PNG seam)
-- [ ] Add convert.pdf registry operation
-- [ ] Add registry test
-- [ ] Add real test: PDF→PNG multi-page
+Engine decision (2026-10-24): **PDFium, not poppler** — verified:
+- [x] Assess engine: pdfium-render crate (v0.5.0, mature) renders pages to
+      bitmaps AND extracts text; prebuilt pdfium.dll ~4-5 MB from
+      bblanchon/pdfium-binaries (no Windows build toolchain needed);
+      Apache-2.0 licence. Poppler needs a C++ MSYS2 build — the exact
+      rabbit hole that blocked HEIC/AVIF. Rejected.
+- [ ] Vendor pdfium.dll into the package (beside the exe, like ffmpeg)
+- [ ] Create src/media/pdf.rs (PDFium render-to-PNG seam; DPI is a scale
+      flag — 300 DPI for the reference behaviour)
+- [ ] Add PDF input ops: PDF -> JPG/PNG (ALL pages) and PDF -> TXT
+      (PDFium text extraction); registry ops + tests
+- [ ] convert.pdf output side (images -> PDF): PDFium can create PDFs,
+      or pdf-writer (~0.5 MB) — pick at implementation
+- [ ] Real test: multi-page PDF renders every page correctly
 - [ ] Manual verification: PDF pages render correctly
 
 ### B-9.5 Documents / Slides / Spreadsheets (REVISED 2026-10-24)
