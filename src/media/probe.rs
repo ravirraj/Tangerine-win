@@ -217,13 +217,18 @@ impl Capabilities {
         // The document processor also reads the office documents that are
         // converted in Rust alone — the words of a DOCX, the sheets of a
         // spreadsheet — and those need nothing but the program itself, so
-        // they are always offered.
+        // they are always offered. A picture can be wrapped into a PDF the
+        // same way.
         doc_reads.extend(
-            ["docx", "xlsx", "xls", "ods", "csv", "tsv"]
-                .iter()
-                .map(|name| name.to_string()),
+            [
+                "docx", "xlsx", "xls", "ods", "csv", "tsv", "png", "jpg", "jpeg", "webp",
+                "bmp", "tif", "tiff", "gif", "svg",
+            ]
+            .iter()
+            .map(|name| name.to_string()),
         );
         doc_writes.push("csv".to_string());
+        doc_writes.push("pdf".to_string());
 
         // The PDF reader is a library beside the program, not a part of the
         // conversion program, so it is not in the manifest. It reads PDF

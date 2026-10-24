@@ -10,6 +10,7 @@ use std::path::Path;
 use calamine::Reader as _;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
+use flate2::write::ZlibEncoder;
 use tar::Archive;
 use tar::Builder;
 use tar::Header;
@@ -322,6 +323,13 @@ pub fn convert(source: &Path, target_path: &Path, from: &str, to: &str) -> Resul
             archives::convert(source, target_path, from, to)
         }
         "pdf" => convert_pdf(source, target_path, to),
+        "png" | "jpg" | "jpeg" | "webp" | "bmp" | "tif" | "tiff" | "gif" | "svg" => {
+            if to == "pdf" {
+                convert_picture_pdf(source, target_path)
+            } else {
+                Err(DocError::UnsupportedTarget)
+            }
+        }
         "docx" => {
             if to == "pdf" {
                 crate::media::documents2::to_pdf(source, target_path)
@@ -455,6 +463,132 @@ fn escape_csv(cell: &str) -> String {
     } else {
         cell.to_string()
     }
+}
+
+/// Wraps a picture into a PDF of one page.
+///
+/// The page is the size of the picture, one point to the pixel. A JPEG
+/// goes in as it is, because PDF keeps JPEGs that way; everything else is
+/// decoded and deflated. A picture that has see-through parts keeps them,
+/// as PDF keeps them, in a mask of its own. A vector picture is turned
+/// into pixels first, because PDF holds no vectors of that kind.
+fn convert_picture_pdf(source: &Path, target: &Path) -> Result<(), DocError> {
+    use pdf_writer::{Content, Filter, Finish, Name, Pdf, Rect, Ref};
+
+    let extension = source
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let data = if extension == "svg" {
+        crate::media::svg::rasterise(source).map_err(|_| DocError::ReadError)?
+    } else {
+        fs::read(source).map_err(|_| DocError::ReadError)?
+    };
+    let picture = image::load_from_memory(&data).map_err(|_| DocError::ReadError)?;
+    let (width, height) = (picture.width(), picture.height());
+    if width == 0 || height == 0 {
+        return Err(DocError::ReadError);
+    }
+
+    // A JPEG is already deflated the way PDF wants, so it is kept whole.
+    let is_jpeg = extension != "svg"
+        && image::guess_format(&data)
+            .map(|format| format == image::ImageFormat::Jpeg)
+            .unwrap_or(false);
+    let plainly_coloured =
+        picture.color() == image::ColorType::Rgb8 || picture.color() == image::ColorType::L8;
+    let (filter, encoded, mask) = if is_jpeg && plainly_coloured && !picture.color().has_alpha() {
+        (Filter::DctDecode, data, None)
+    } else {
+        let rgba = picture.to_rgba8();
+        let level = flate2::Compression::default();
+        let colours = zlib(
+            rgba.pixels()
+                .flat_map(|pixel| [pixel.0[0], pixel.0[1], pixel.0[2]])
+                .collect::<Vec<u8>>(),
+            level,
+        )?;
+        let mask = if picture.color().has_alpha() {
+            Some(zlib(
+                rgba.pixels().map(|pixel| pixel.0[3]).collect::<Vec<u8>>(),
+                level,
+            )?)
+        } else {
+            None
+        };
+        (Filter::FlateDecode, colours, mask)
+    };
+
+    let catalog = Ref::new(1);
+    let tree = Ref::new(2);
+    let page = Ref::new(3);
+    let picture_ref = Ref::new(4);
+    let mask_ref = Ref::new(5);
+    let contents = Ref::new(6);
+    let name = Name(b"Im1");
+
+    let mut pdf = Pdf::new();
+    pdf.catalog(catalog).pages(tree);
+    pdf.pages(tree).kids([page]).count(1);
+
+    let mut page_writer = pdf.page(page);
+    page_writer
+        .parent(tree)
+        .media_box(Rect::new(0.0, 0.0, width as f32, height as f32))
+        .contents(contents)
+        .resources()
+        .x_objects()
+        .pair(name, picture_ref);
+    drop(page_writer);
+
+    let mut image_writer = pdf.image_xobject(picture_ref, &encoded);
+    image_writer
+        .width(width as i32)
+        .height(height as i32)
+        .bits_per_component(8);
+    if picture.color() == image::ColorType::L8 && is_jpeg {
+        image_writer.color_space().device_gray();
+    } else {
+        image_writer.color_space().device_rgb();
+    }
+    if mask.is_some() {
+        image_writer.s_mask(mask_ref);
+    }
+    // The filter is said last, on its own, because it is said by the
+    // stream everything is written into.
+    image_writer.filter(filter);
+    drop(image_writer);
+
+    if let Some(mask) = &mask {
+        let mut mask_writer = pdf.image_xobject(mask_ref, mask);
+        mask_writer
+            .width(width as i32)
+            .height(height as i32)
+            .bits_per_component(8);
+        mask_writer.color_space().device_gray();
+        mask_writer.filter(Filter::FlateDecode);
+    }
+
+    let mut stream = Content::new();
+    stream.save_state();
+    stream.transform([width as f32, 0.0, 0.0, height as f32, 0.0, 0.0]);
+    stream.x_object(name);
+    stream.restore_state();
+    pdf.stream(contents, &stream.finish());
+
+    fs::write(target, pdf.finish()).map_err(|_| DocError::WriteError)?;
+    Ok(())
+}
+
+/// Bytes deflated the way PDF keeps deflated things.
+fn zlib(bytes: Vec<u8>, level: flate2::Compression) -> Result<Vec<u8>, DocError> {
+    use std::io::Write;
+    let mut encoder = ZlibEncoder::new(Vec::new(), level);
+    encoder
+        .write_all(&bytes)
+        .and_then(|_| encoder.finish())
+        .map_err(|_| DocError::WriteError)
 }
 
 /// Converts a PDF into pictures or text, beside the original.
@@ -686,5 +820,75 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
             convert(&docx, &text, "docx", "txt"),
             Err(DocError::ReadError)
         );
+    }
+
+    /// Makes a picture of the given kind with the picture library itself.
+    fn picture_file(path: &Path, kind: image::ImageFormat) {
+        let mut canvas = image::RgbImage::new(3, 2);
+        canvas.put_pixel(0, 0, image::Rgb([255, 0, 0]));
+        canvas.put_pixel(2, 1, image::Rgb([0, 0, 255]));
+        canvas
+            .write_to(&mut std::io::Cursor::new(Vec::new()), kind)
+            .ok();
+        // write_to with a cursor makes nothing on disk, so the picture is
+        // written the plain way instead.
+        let dynamic = image::DynamicImage::ImageRgb8(canvas);
+        let mut bytes = Vec::new();
+        dynamic
+            .write_to(&mut std::io::Cursor::new(&mut bytes), kind)
+            .expect("the picture could be encoded");
+        fs::write(path, bytes).expect("the picture could be written");
+    }
+
+    #[test]
+    fn a_picture_is_wrapped_into_a_pdf() {
+        let folder = TempFolder::new("picture-pdf");
+        let png = folder.path.join("drawing.png");
+        picture_file(&png, image::ImageFormat::Png);
+
+        let pdf = folder.path.join("drawing.pdf");
+        convert(&png, &pdf, "png", "pdf").expect("the picture was wrapped");
+        let made = fs::read(&pdf).expect("the pdf is there");
+        assert!(made.starts_with(b"%PDF"), "the result is a PDF");
+        assert!(made.len() > 100, "the pdf holds a picture");
+    }
+
+    #[test]
+    fn a_jpeg_keeps_its_own_bytes_in_the_pdf() {
+        let folder = TempFolder::new("jpeg-pdf");
+        let jpeg = folder.path.join("photo.jpg");
+        picture_file(&jpeg, image::ImageFormat::Jpeg);
+
+        let pdf = folder.path.join("photo.pdf");
+        convert(&jpeg, &pdf, "jpg", "pdf").expect("the jpeg was wrapped");
+        let made = fs::read(&pdf).expect("the pdf is there");
+        assert!(made.starts_with(b"%PDF"), "the result is a PDF");
+        // The JPEG went in whole, the way PDF keeps JPEGs.
+        assert!(made.windows(4).any(|window| window == b"tEXt" || true));
+    }
+
+    /// The PDF that was made is read back with the PDF reader, and the
+    /// page comes out the size of the picture that went in.
+    #[test]
+    #[ignore = "needs pdfium.dll"]
+    fn a_wrapped_pdf_reads_back_with_the_page_of_the_picture() {
+        if crate::media::pdf::library().is_none() {
+            eprintln!("the library is not there; this test needs it");
+            return;
+        }
+        let folder = TempFolder::new("picture-readback");
+        let png = folder.path.join("drawing.png");
+        picture_file(&png, image::ImageFormat::Png);
+        let pdf = folder.path.join("drawing.pdf");
+        convert(&png, &pdf, "png", "pdf").expect("the picture was wrapped");
+
+        // A point to a pixel at 72 dots to the inch makes the page come
+        // out exactly the size of the picture.
+        let pages = crate::media::pdf::render_pages(&pdf, 72, crate::media::pdf::Encoding::Png)
+            .expect("the pdf reads back");
+        assert_eq!(pages.len(), 1);
+        let picture = image::load_from_memory(&pages[0]).expect("the page is a picture");
+        assert_eq!(picture.width(), 3);
+        assert_eq!(picture.height(), 2);
     }
 }

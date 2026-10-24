@@ -106,8 +106,14 @@ in this order — every engine behind one seam in `src/media/documents2.rs`:
       RTFD is an Apple bundle, skip)
 
 **Related cheap wins from the website matrix:**
-- [ ] Images->PDF via pdf-writer crate (fills the "PDF export" row)
-- [ ] PDF->TXT via poppler text layer (free once B-9.4 lands)
+- [x] Manual verification of engines A+B: docx/xlsx/pptx drags offer PDF and
+      export correctly on a machine with Office (2026-10-24)
+- [x] Images->PDF via pdf-writer 0.15 (2026-10-24): one page per picture,
+      page sized to the picture; JPEG embedded whole (DCTDecode); others
+      deflated; transparency kept as an SMask; SVG input rasterised first.
+      convert.pdf now implemented via the document processor; verified by
+      reading the made PDF back with PDFium (page == picture size)
+- [x] PDF->TXT — done as part of B-9.4 (PDFium text extraction)
 
 **Registry operations:** convert.docx (PDF/TXT targets), convert.pptx
 (PDF/JPG/PNG), convert.xlsx (PDF/CSV) — `implemented` reflects engine

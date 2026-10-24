@@ -221,7 +221,7 @@ pub const OPERATIONS: &[Operation] = &[
         folders: false,
         output: Output::Beside("pdf"),
         collision: Collision::Rename,
-        implemented: false,
+        implemented: true,
         requires: Requirement::Processor("document"),
     },
     Operation {
@@ -1333,6 +1333,7 @@ mod tests {
             "convert.png",
             "convert.jpeg",
             "convert.webp",
+            "convert.pdf",
             "convert.bmp",
             "convert.tiff",
             "convert.gif",
