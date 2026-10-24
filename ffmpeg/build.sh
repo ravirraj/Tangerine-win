@@ -183,13 +183,15 @@ assert_formats() {
     demuxers="$( { manifest_field read demuxer; manifest_field animation demuxer; manifest_field confirm demuxer; manifest_words test-demuxers; } | sort -u )"
     muxers="$( { manifest_field write muxer; manifest_words test-muxers; manifest_words reserved-muxers; } | sort -u )"
     for name in $demuxers; do
-        if ! grep -qE "^ *[.A-Z]*D[^ ]*[ ]+$name([ ]|$)" <<<"$found"; then
+        # A demuxer name may appear alone or as part of a comma-separated list
+        # in the format listing (e.g. "matroska,webm"). Match either case.
+        if ! grep -qE "^ *[.A-Z]*D[^ ]*[ ]+$name([ ,]|$)" <<<"$found"; then
             echo "MISSING: $name is not a demuxer"
             MISSING=1
         fi
     done
     for name in $muxers; do
-        if ! grep -qE "^ *[.A-Z]*E[^ ]*[ ]+$name([ ]|$)" <<<"$found"; then
+        if ! grep -qE "^ *[.A-Z]*E[^ ]*[ ]+$name([ ,]|$)" <<<"$found"; then
             echo "MISSING: $name is not a muxer"
             MISSING=1
         fi
