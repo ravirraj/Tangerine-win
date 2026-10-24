@@ -24,6 +24,7 @@ pub mod documents;
 pub mod ico;
 pub mod locator;
 pub mod manifest;
+pub mod pdf;
 pub mod probe;
 pub mod publish;
 pub mod runner;

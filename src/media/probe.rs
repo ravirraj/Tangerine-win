@@ -24,6 +24,13 @@ const IMAGE_PROCESSOR: &str = "image";
 /// handled in Rust without FFmpeg.
 const DOCUMENT_PROCESSOR: &str = "document";
 
+/// The name of the processor that reads PDF files with the PDFium library.
+///
+/// It is there only while the library is: when the library is missing, the
+/// operations that need it are not offered, because a wheel never shows
+/// what cannot be run.
+const PDF_PROCESSOR: &str = "pdf";
+
 /// What the program says it can do.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Capabilities {
@@ -207,20 +214,35 @@ impl Capabilities {
             }
         }
 
-        Environment {
-            processors: vec![
-                Processor {
-                    name: IMAGE_PROCESSOR.to_string(),
-                    reads: image_reads,
-                    writes: image_writes,
-                },
-                Processor {
-                    name: DOCUMENT_PROCESSOR.to_string(),
-                    reads: doc_reads,
-                    writes: doc_writes,
-                },
-            ],
+        // The PDF reader is a library beside the program, not a part of the
+        // conversion program, so it is not in the manifest. It reads PDF
+        // files and writes pictures and text, and it is only offered while
+        // the library is there to be bound to.
+        let mut processors = vec![
+            Processor {
+                name: IMAGE_PROCESSOR.to_string(),
+                reads: image_reads,
+                writes: image_writes,
+            },
+            Processor {
+                name: DOCUMENT_PROCESSOR.to_string(),
+                reads: doc_reads,
+                writes: doc_writes,
+            },
+        ];
+        if crate::media::pdf::library().is_some() {
+            processors.push(Processor {
+                name: PDF_PROCESSOR.to_string(),
+                reads: vec!["pdf".to_string()],
+                writes: vec![
+                    "png".to_string(),
+                    "jpeg".to_string(),
+                    "txt".to_string(),
+                ],
+            });
         }
+
+        Environment { processors }
     }
 }
 

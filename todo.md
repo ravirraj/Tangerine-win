@@ -36,21 +36,29 @@
       conversions, output looks right (needs the running app)
 
 ### B-9.4 PDF Support
-Engine decision (2026-10-24): **PDFium, not poppler** — verified:
-- [x] Assess engine: pdfium-render crate (v0.5.0, mature) renders pages to
-      bitmaps AND extracts text; prebuilt pdfium.dll ~4-5 MB from
-      bblanchon/pdfium-binaries (no Windows build toolchain needed);
-      Apache-2.0 licence. Poppler needs a C++ MSYS2 build — the exact
-      rabbit hole that blocked HEIC/AVIF. Rejected.
-- [ ] Vendor pdfium.dll into the package (beside the exe, like ffmpeg)
-- [ ] Create src/media/pdf.rs (PDFium render-to-PNG seam; DPI is a scale
-      flag — 300 DPI for the reference behaviour)
-- [ ] Add PDF input ops: PDF -> JPG/PNG (ALL pages) and PDF -> TXT
-      (PDFium text extraction); registry ops + tests
-- [ ] convert.pdf output side (images -> PDF): PDFium can create PDFs,
-      or pdf-writer (~0.5 MB) — pick at implementation
-- [ ] Real test: multi-page PDF renders every page correctly
-- [ ] Manual verification: PDF pages render correctly
+Engine decision (2026-10-24): **PDFium, not poppler** — verified.
+- [x] Assess engine: pdfium-render crate (v0.9.4) renders pages to bitmaps
+      AND extracts text; prebuilt pdfium.dll ~7 MB (chromium/8111) from
+      bblanchon/pdfium-binaries; Apache-2.0/BSD. Poppler rejected (C++ MSYS2
+      build — the HEIC rabbit hole).
+- [x] Vendor pdfium.dll: vendor/pdfium/ (gitignored); ffmpeg/package.sh
+      copies it beside the exe with licence + NOTICE when present
+- [x] Create src/media/pdf.rs: bind-once seam (library() lookup beside exe/
+      cwd/vendor), render_pages(dpi) -> PNG/JPEG bytes per page,
+      extract_text; DPI = scale on the 72-pt page
+- [x] PDF input ops: convert.pdf-png / pdf-jpeg / pdf-txt for FileKind::Pdf,
+      routed through the documents handler at 300 DPI; every page becomes
+      its own file (name, name (2), ...), nothing overwritten
+- [x] Honest gating: probe exposes a "pdf" processor ONLY while the DLL is
+      found — the wheel never offers PDF conversions it cannot run.
+      Note: pdf deliberately NOT in components.txt (it is not an FFmpeg
+      component; unlike SVG nothing needs a manifest lookup for it)
+- [x] Real tests (ignored, need dll): 2-page render at exact pixel size,
+      text extraction, not-a-pdf refused, page naming with collision
+- [ ] convert.pdf output side (images -> PDF): PDFium can create PDFs, or
+      pdf-writer (~0.5 MB) — pick when B-9.5 touches it
+- [ ] Manual verification: drag a real .pdf in Explorer, wheel offers
+      PNG/JPG/TXT, pages land beside it correctly
 
 ### B-9.5 Documents / Slides / Spreadsheets (REVISED 2026-10-24)
 Replaces the old "LibreOffice headless" plan. Engine chain, resolved at runtime

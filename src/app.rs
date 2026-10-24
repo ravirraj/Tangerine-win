@@ -577,10 +577,19 @@ impl App {
         let environment = self.environment();
         let sender = self.sender.clone();
         let operation = request.operation.clone();
-        // Document conversions (subtitles, archives) run in Rust without FFmpeg.
+        // Document conversions (subtitles, archives, PDF pages) run in Rust
+        // without FFmpeg.
         let is_document = matches!(
             operation.as_str(),
-            "convert.srt" | "convert.vtt" | "convert.txt" | "convert.zip" | "convert.tar" | "convert.gz"
+            "convert.srt"
+                | "convert.vtt"
+                | "convert.txt"
+                | "convert.zip"
+                | "convert.tar"
+                | "convert.gz"
+                | "convert.pdf-png"
+                | "convert.pdf-jpeg"
+                | "convert.pdf-txt"
         );
         // Tool operations (compress, crop, trim, etc.) run with the Tools handler.
         let is_tools = operation.as_str().starts_with("tools.");

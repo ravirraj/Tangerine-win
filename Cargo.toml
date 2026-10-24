@@ -32,6 +32,8 @@ tar = "0.4"
 resvg = "0.48"
 png = "0.18"
 usvg = "0.48"
+pdfium-render = "0.9.4"
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg"] }
 
 # The stand-in for the conversion program, used by the tests.
 #
