@@ -38,6 +38,8 @@ pub enum ConvertError {
     BadResult,
     /// The result could not be put at its name.
     CouldNotPublish,
+    /// The temporary file could not be written.
+    WriteError,
 }
 
 impl ConvertError {
@@ -54,6 +56,7 @@ impl ConvertError {
             ConvertError::ProgramFailed => "the conversion did not finish",
             ConvertError::BadResult => "the result was not what it should be",
             ConvertError::CouldNotPublish => "the result could not be put at its name",
+            ConvertError::WriteError => "the temporary file could not be written",
         }
     }
 }
@@ -98,10 +101,33 @@ impl<'a> Converter<'a> {
         let folder = input.parent().unwrap_or_else(|| Path::new("."));
         let temporary = self.temporary_file(folder, input);
 
-        let result = self.run(input, source, target, &temporary);
-        if let Err(reason) = result {
-            let _ = std::fs::remove_file(&temporary);
-            return Err(reason);
+        // SVG is not read by FFmpeg at all. It is rasterised here, into a
+        // picture staged under a name of its own, and that picture is what
+        // FFmpeg is given. The staged picture is never the file the result
+        // goes into.
+        if source.format == "svg" {
+            let png = Manifest::get()
+                .format("png")
+                .ok_or(ConvertError::UnknownFormat)?;
+            let png_bytes = crate::media::svg::rasterise(input)
+                .map_err(|_| ConvertError::ProgramFailed)?;
+            let staged = self.staging_file(folder, input);
+            if std::fs::write(&staged, &png_bytes).is_err() {
+                let _ = std::fs::remove_file(&staged);
+                return Err(ConvertError::WriteError);
+            }
+            let result = self.run(&staged, png, target, &temporary);
+            let _ = std::fs::remove_file(&staged);
+            if let Err(reason) = result {
+                let _ = std::fs::remove_file(&temporary);
+                return Err(reason);
+            }
+        } else {
+            let result = self.run(input, source, target, &temporary);
+            if let Err(reason) = result {
+                let _ = std::fs::remove_file(&temporary);
+                return Err(reason);
+            }
         }
 
         // If the target is ICO, wrap the image in an ICO container.
@@ -153,6 +179,23 @@ impl<'a> Converter<'a> {
             .unwrap_or_else(|| "converted".to_string());
         let number = COUNTER.fetch_add(1, Ordering::Relaxed);
         folder.join(format!(".{stem}.{}.{number}.part", std::process::id()))
+    }
+
+    /// The name the rasterised SVG is staged under.
+    ///
+    /// Like the temporary file it cannot be the name of anything the user
+    /// has, and it carries the png extension because the format of a file
+    /// is learned from the name it is called.
+    fn staging_file(&self, folder: &Path, input: &Path) -> PathBuf {
+        let stem = input
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "converted".to_string());
+        let number = COUNTER.fetch_add(1, Ordering::Relaxed);
+        folder.join(format!(
+            ".{stem}.{}.{number}.staging.png",
+            std::process::id()
+        ))
     }
 
     /// Runs the conversion, with the result going into the temporary file.
@@ -434,6 +477,52 @@ mod tests {
             .expect("the file was converted");
         assert_eq!(name, folder.path.join("photo.jpeg"));
         assert!(name.is_file());
+    }
+
+    #[test]
+    fn an_svg_is_rasterised_and_converted() {
+        let folder = TempFolder::new("svg");
+        let path = folder.path.join("drawing.svg");
+        std::fs::write(
+            &path,
+            r#"<svg width="100" height="100" xmlns="http://www.w3.org/2000/svg">
+  <rect width="100" height="100" fill="red"/>
+</svg>"#,
+        )
+        .expect("the svg could be written");
+        let manifest = Manifest::get();
+        let target = manifest.format("jpeg").expect("jpeg is in the manifest");
+        let tools = tools();
+        let publisher = Recording {
+            taken: Vec::new(),
+            published: std::sync::Mutex::new(Vec::new()),
+        };
+        let runner = Writing {
+            bytes: vec![0xFF, 0xD8, 0xFF, 0xE0, 0, 0],
+            fails: false,
+        };
+        let converter = Converter {
+            tools: &tools,
+            runner: &runner,
+            publisher: &publisher,
+        };
+        let name = converter
+            .convert(&path, target)
+            .expect("the svg was converted");
+        assert_eq!(name, folder.path.join("drawing.jpeg"));
+        assert!(name.is_file());
+        // The staged rasterised picture is not left behind.
+        let left: Vec<_> = std::fs::read_dir(&folder.path)
+            .expect("the folder is there")
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .ends_with(".staging.png")
+            })
+            .collect();
+        assert!(left.is_empty(), "a staged picture was left behind");
     }
 
     #[test]

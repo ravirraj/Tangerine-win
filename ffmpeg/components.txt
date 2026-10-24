@@ -211,6 +211,15 @@ animation  = -
 confirm    = -
 magic      = 0:1F 8B
 
+format     = svg
+extensions = svg
+read       = -
+write      = -
+alpha      = keep
+animation  = -
+confirm    = -
+magic      = 0:3C 3F 78 6D 6C
+
 # Components only the test suite needs. They ship in the release build
 # because the tests read pixels back with the very binary being released.
 test-demuxers = rawvideo

@@ -376,6 +376,47 @@ fn a_picture_is_converted_to_mp4() {
 
 #[test]
 #[ignore = "needs the conversion program"]
+fn an_svg_is_rasterised_and_converted_by_the_program() {
+    let Some(tools) = programs() else {
+        eprintln!("the program is not there; this test needs it");
+        return;
+    };
+    let folder = TempFolder::new("svg");
+    let manifest = Manifest::get();
+    let runner = SystemRunner;
+    let publisher = TestPublisher;
+
+    // A red square as a vector picture.
+    let svg = folder.path.join("source.svg");
+    std::fs::write(
+        &svg,
+        r#"<svg width="64" height="64" xmlns="http://www.w3.org/2000/svg">
+  <rect width="64" height="64" fill="red"/>
+</svg>"#,
+    )
+    .expect("the svg could be written");
+
+    for format in ["png", "jpeg"] {
+        let target = manifest.format(format).expect("the format is in the manifest");
+        let converter = Converter {
+            tools: &tools,
+            runner: &runner,
+            publisher: &publisher,
+        };
+        let result = converter.convert(&svg, target).unwrap_or_else(|reason| {
+            panic!("svg could not be converted to {format}: {}", reason.name())
+        });
+        assert!(result.is_file(), "the {format} was not made");
+        let bytes = std::fs::read(&result).expect("the result is there");
+        assert!(
+            target.matches(&bytes),
+            "the result of svg to {format} is not a {format}"
+        );
+    }
+}
+
+#[test]
+#[ignore = "needs the conversion program"]
 fn a_picture_is_converted_to_mkv() {
     let Some(tools) = programs() else {
         eprintln!("the program is not there; this test needs it");

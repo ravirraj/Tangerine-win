@@ -153,7 +153,7 @@
 | **B-9.2** | AVIF input/output | 3–5 days | libavif/dav1d (previous build failed) |
 | **B-9.3** | SVG input | 2–3 days | resvg (vendored via Slint) |
 | **B-9.4** | PDF support | 5–10 days | poppler (Windows build) |
-| **B-9.5** | DOCX/PPTX/XLSX | 5–15 days | LibreOffice headless (external) |
+| **B-9.5** | Documents/slides/spreadsheets | 5–10 days | Engine chain: Office COM → LibreOffice (detect) → office2pdf (optional download); native TXT/CSV routes |
 | **B-9.6** | Audio formats (WAV, OGG, AIFF, M4A) | 2–3 days | Native FFmpeg codecs |
 | **B-9.7** | RAR input | 2–3 days | unrar/7z external |
 | **B-10** | Remaining 19 tools | 10–15 days | FFmpeg filters + Rust crates |
@@ -174,6 +174,9 @@
 | libheif + libde265 | ~2 MB | LGPL/GPL | Static link |
 | libavif + dav1d | ~3 MB | BSD | Previous build failed |
 | poppler (PDF) | ~10–20 MB | GPL | Optional/external |
+| calamine (XLSX/XLS/ODS read) | ~1.5 MB | MIT | Native spreadsheet routes |
+| pdf-writer (images→PDF) | ~0.5 MB | Apache/MIT | Cheap win, fills "PDF export" |
+| office2pdf (DOCX/PPTX/XLSX→PDF) | ~20 MB | Apache-2.0 | Optional download for no-Office users, not bundled |
 | exif-rs | ~0.5 MB | MIT | Small |
 | ONNX Runtime (background removal) | ~50–100 MB | MIT | **Too heavy** — defer |
 | serde + serde_json | ~0 | MIT | For settings |
@@ -228,7 +231,9 @@ src/platform/windows/mod.rs — Add clipboard, shell, tray modules
 **Do not implement:**
 - Background removal (ONNX Runtime ~50-100 MB — too heavy)
 - QR reading (needs barcode library — assess size first)
-- DOCX/PPTX/XLSX bundled LibreOffice — detect at runtime only
+- PDF → DOCX/PPTX/XLSX (layout reconstruction — no lightweight offline engine)
+- Bundled LibreOffice or bundled office2pdf — engines are detected or
+  optionally downloaded, never shipped in the installer
 
 **Do not implement AirDrop** — replace with Windows Nearby Share fallback (Explorer selection + manual share).
 

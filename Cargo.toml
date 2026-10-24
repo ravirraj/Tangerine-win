@@ -27,6 +27,12 @@ zip = "0.6"
 flate2 = "1.0"
 tar = "0.4"
 
+# SVG rasterisation (Phase B-9.3): resvg is vendored through Slint but we
+# need it as a direct dependency for SVG→PNG conversion.
+resvg = "0.48"
+png = "0.18"
+usvg = "0.48"
+
 # The stand-in for the conversion program, used by the tests.
 #
 # It is a program of its own, because the tests have to start a real child
