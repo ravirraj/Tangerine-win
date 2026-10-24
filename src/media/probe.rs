@@ -253,6 +253,18 @@ impl Capabilities {
             });
         }
 
+        // The office documents become PDFs through whatever reads them —
+        // the installed Microsoft Office, or LibreOffice — and only the
+        // extensions a program is really there for are offered.
+        let office_reads = crate::media::documents2::available_reads();
+        if !office_reads.is_empty() {
+            processors.push(Processor {
+                name: "office".to_string(),
+                reads: office_reads.iter().map(|name| name.to_string()).collect(),
+                writes: vec!["pdf".to_string()],
+            });
+        }
+
         Environment { processors }
     }
 }

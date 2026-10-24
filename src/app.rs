@@ -592,6 +592,9 @@ impl App {
                 | "convert.pdf-txt"
                 | "convert.docx-txt"
                 | "convert.csv"
+                | "convert.docx-pdf"
+                | "convert.xlsx-pdf"
+                | "convert.pptx-pdf"
         );
         // Tool operations (compress, crop, trim, etc.) run with the Tools handler.
         let is_tools = operation.as_str().starts_with("tools.");

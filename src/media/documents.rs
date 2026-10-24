@@ -33,6 +33,10 @@ pub enum DocError {
     PdfLibraryMissing,
     /// A page of a PDF could not be rendered.
     RenderFailed,
+    /// No program that reads office documents is installed.
+    OfficeMissing,
+    /// The program that reads office documents did not finish.
+    OfficeFailed,
 }
 
 impl DocError {
@@ -45,6 +49,10 @@ impl DocError {
             DocError::InvalidArchive => "the file is not a valid archive",
             DocError::PdfLibraryMissing => "the PDF reader is not installed",
             DocError::RenderFailed => "a page could not be rendered",
+            DocError::OfficeMissing => {
+                "no program that reads office documents is installed"
+            }
+            DocError::OfficeFailed => "the program that reads office documents did not finish",
         }
     }
 }
@@ -314,8 +322,27 @@ pub fn convert(source: &Path, target_path: &Path, from: &str, to: &str) -> Resul
             archives::convert(source, target_path, from, to)
         }
         "pdf" => convert_pdf(source, target_path, to),
-        "docx" => convert_docx(source, target_path, to),
-        "xlsx" | "xls" | "ods" | "csv" | "tsv" => convert_sheet(source, target_path, to),
+        "docx" => {
+            if to == "pdf" {
+                crate::media::documents2::to_pdf(source, target_path)
+            } else {
+                convert_docx(source, target_path, to)
+            }
+        }
+        "doc" | "ppt" | "pptx" => {
+            if to == "pdf" {
+                crate::media::documents2::to_pdf(source, target_path)
+            } else {
+                Err(DocError::UnsupportedTarget)
+            }
+        }
+        "xlsx" | "xls" | "ods" | "csv" | "tsv" => {
+            if to == "pdf" {
+                crate::media::documents2::to_pdf(source, target_path)
+            } else {
+                convert_sheet(source, target_path, to)
+            }
+        }
         _ => Err(DocError::UnsupportedSource),
     }
 }

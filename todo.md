@@ -67,14 +67,25 @@ in this order — every engine behind one seam in `src/media/documents2.rs`:
     Word/Excel/PowerPoint COM  ->  LibreOffice (if installed)  ->
     office2pdf (optional ~20 MB download)  ->  clear "how to enable" message
 
-**Engine A — Office COM (zero bytes shipped, perfect fidelity):**
-- [ ] Create src/media/documents2.rs with the engine-chain seam
-- [ ] Word COM: Documents.Open -> SaveAs2 wdFormatPDF (DOCX->PDF)
-- [ ] Excel COM: XLSX->PDF; PowerPoint COM: PPTX->PDF + slide export JPG/PNG
-- [ ] Runtime detection (registry lookup of Office install, graceful absence)
+**Engine A — Office COM (zero bytes shipped, perfect fidelity): DONE 2026-10-24**
+- [x] src/media/documents2.rs — the engine-chain seam
+- [x] Word: Documents.Open -> ExportAsFixedFormat (docx AND legacy doc)
+- [x] Excel: Workbooks.Open -> ExportAsFixedFormat (xlsx, xls, ods, csv)
+- [x] PowerPoint: Presentations.Open -> ExportAsFixedFormat (pptx, ppt)
+- [x] Driven via PowerShell (-ComObject), paths passed in environment
+      variables — no path ever inside a script; detection via reg query
+      HKCR\<ProgId> (fast, ~20 ms)
+- [x] Registry: convert.docx-pdf / convert.xlsx-pdf / convert.pptx-pdf,
+      'office' processor present only for apps actually installed
+- [x] Real tests green on this machine: Word exported a fixture DOCX to
+      PDF, Excel exported a fixture XLSX to PDF (pptx test skipped — a
+      valid minimal PPTX fixture is disproportionately complex)
 
-**Engine B — LibreOffice (detected, never required, never bundled):**
-- [ ] Detect soffice.exe in standard locations; reuse chain seam
+**Engine B — LibreOffice (detected, never required, never bundled): DONE**
+- [x] Detect soffice.exe in standard locations; headless
+      --convert-to pdf into a staging folder, then moved beside original
+- [x] Serves the same 'office' processor reads when Office is absent
+- [ ] Verified on a machine that has LibreOffice (none here — self-skips)
 
 **Engine C — office2pdf for users with no MS Office (optional download):**
 - [ ] Evaluate output quality on real DOCX/PPTX/XLSX test set (v0.9.1, young)
