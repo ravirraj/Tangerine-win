@@ -239,7 +239,9 @@ for name in $EXPECTED_LIBRARIES; do
     case "$version" in
         ""|system) continue ;;
     esac
-    found="$(pkgconf --modversion "$name" 2>/dev/null || echo "not found")"
+    found="$(pkgconf --modversion "$name" 2>/dev/null \
+        || pkgconf --modversion "${name#lib}" 2>/dev/null \
+        || echo "not found")"
     if [ "$found" != "$version" ]; then
         echo "MISSING: $name is $found, not $version"
         MISSING=1

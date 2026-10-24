@@ -84,6 +84,34 @@ impl Drop for TempFolder {
 /// The width and height of the pictures the tests make.
 const SIZE: usize = 8;
 
+/// Makes a WAV of a moment of silence, with the test's own hands.
+///
+/// A WAV is a header and the samples, and both are plain: nothing has to
+/// be encoded to make one.
+fn make_silence(folder: &Path, name: &str) -> PathBuf {
+    const RATE: u32 = 8000;
+    const SECONDS: u32 = 1;
+    let data_len = RATE * SECONDS * 2;
+    let mut wav = Vec::with_capacity(44 + data_len as usize);
+    wav.extend_from_slice(b"RIFF");
+    wav.extend_from_slice(&(36 + data_len).to_le_bytes());
+    wav.extend_from_slice(b"WAVE");
+    wav.extend_from_slice(b"fmt ");
+    wav.extend_from_slice(&16u32.to_le_bytes());
+    wav.extend_from_slice(&1u16.to_le_bytes());
+    wav.extend_from_slice(&1u16.to_le_bytes());
+    wav.extend_from_slice(&RATE.to_le_bytes());
+    wav.extend_from_slice(&(RATE * 2).to_le_bytes());
+    wav.extend_from_slice(&2u16.to_le_bytes());
+    wav.extend_from_slice(&16u16.to_le_bytes());
+    wav.extend_from_slice(b"data");
+    wav.extend_from_slice(&data_len.to_le_bytes());
+    wav.extend(std::iter::repeat(0u8).take(data_len as usize));
+    let path = folder.join(name);
+    std::fs::write(&path, wav).expect("the wav could be written");
+    path
+}
+
 /// Makes a picture of the given format, with the given number of frames.
 ///
 /// The picture is made by the program itself, from raw pixels, so that
@@ -333,6 +361,75 @@ fn every_picture_is_converted_into_every_format() {
             );
         }
     }
+}
+
+#[test]
+#[ignore = "needs the conversion program"]
+fn every_sound_is_made_from_a_wav() {
+    let Some(tools) = programs() else {
+        eprintln!("the program is not there; this test needs it");
+        return;
+    };
+    let folder = TempFolder::new("sounds");
+    let manifest = Manifest::get();
+    let runner = SystemRunner;
+    let publisher = TestPublisher;
+    let wav = make_silence(&folder.path, "sound.wav");
+
+    for format in ["mp3", "ogg", "opus", "aiff", "m4a", "wma", "flac", "aac"] {
+        let Some(target) = manifest.format(format) else {
+            panic!("{format} is not in the manifest");
+        };
+        let converter = Converter {
+            tools: &tools,
+            runner: &runner,
+            publisher: &publisher,
+        };
+        let name = converter.convert(&wav, target).unwrap_or_else(|reason| {
+            panic!("wav could not be converted to {format}: {}", reason.name())
+        });
+        assert!(name.is_file(), "the {format} was not made");
+        let bytes = std::fs::read(&name).expect("the result is there");
+        assert!(
+            target.matches(&bytes),
+            "the result of wav to {format} is not a {format}"
+        );
+    }
+}
+
+#[test]
+#[ignore = "needs the conversion program"]
+fn a_sound_is_taken_out_of_its_container() {
+    let Some(tools) = programs() else {
+        eprintln!("the program is not there; this test needs it");
+        return;
+    };
+    let folder = TempFolder::new("extraction");
+    let manifest = Manifest::get();
+    let runner = SystemRunner;
+    let publisher = TestPublisher;
+    let converter = Converter {
+        tools: &tools,
+        runner: &runner,
+        publisher: &publisher,
+    };
+
+    // A sound inside a container of a film kind, and then the sound taken
+    // out of it: the same road a film's sound takes.
+    let wav = make_silence(&folder.path, "sound.wav");
+    let m4a_target = manifest.format("m4a").expect("m4a is in the manifest");
+    let m4a = converter
+        .convert(&wav, m4a_target)
+        .expect("the m4a was made");
+    let mp3_target = manifest.format("mp3").expect("mp3 is in the manifest");
+    let mp3 = converter
+        .convert(&m4a, mp3_target)
+        .expect("the sound was taken out and made an mp3");
+    let bytes = std::fs::read(&mp3).expect("the mp3 is there");
+    assert!(
+        mp3_target.matches(&bytes),
+        "the result of m4a to mp3 is not an mp3"
+    );
 }
 
 #[test]

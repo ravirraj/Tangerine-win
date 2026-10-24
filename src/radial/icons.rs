@@ -23,6 +23,11 @@ const DOCUMENT: &str =
 const FILM: &str =
     "M 4 5 H 20 V 19 H 4 Z M 4 9 H 20 M 4 15 H 20 M 7 5 V 9 M 7 15 V 19 M 12 10 L 15 12 L 12 14";
 
+/// A music icon.
+///
+/// Two notes joined by a beam.
+const MUSIC: &str = "M 6.5 17.5 A 2 2 0 1 0 6.5 17.51 M 8.5 17.5 V 7.5 L 16.5 5.5 V 15.5 M 16.5 15.5 A 2 2 0 1 0 16.5 15.51 M 8.5 11.5 L 16.5 9.5";
+
 /// An archive icon.
 ///
 /// A box with a label strip.
@@ -94,6 +99,7 @@ pub fn path_for(kind: IconKind) -> &'static str {
         IconKind::Picture => PICTURE,
         IconKind::Document => DOCUMENT,
         IconKind::Film => FILM,
+        IconKind::Music => MUSIC,
         IconKind::Archive => ARCHIVE,
         IconKind::Folder => FOLDER,
         IconKind::Copy => COPY,
@@ -120,6 +126,7 @@ mod tests {
             IconKind::Picture,
             IconKind::Document,
             IconKind::Film,
+            IconKind::Music,
             IconKind::Archive,
             IconKind::Folder,
             IconKind::Copy,
@@ -146,6 +153,7 @@ mod tests {
             IconKind::Picture,
             IconKind::Document,
             IconKind::Film,
+            IconKind::Music,
             IconKind::Archive,
             IconKind::Folder,
             IconKind::Copy,

@@ -37,21 +37,26 @@ pub fn composite_graph() -> String {
 
 /// Whether a muxer needs a seekable output file (cannot write to pipe).
 ///
-/// Some muxers (mov, matroska, avi, asf) need to seek back to write the
-/// header, so they cannot write to a pipe. Image muxers (image2pipe, gif,
-/// webp) and audio muxers (adts, flac, mp3) can write to pipe.
+/// Some muxers (mov, matroska, avi, asf, ipod) need to seek back to write
+/// the header, so they cannot write to a pipe. Image muxers (image2pipe,
+/// gif, webp) and audio muxers (adts, flac, mp3, ogg, wav, aiff) can write
+/// to a pipe.
 pub fn muxer_needs_file(muxer: &str) -> bool {
     matches!(
         muxer,
-        "mov" | "matroska" | "avi" | "asf" | "mp4" | "mkv"
+        "mov" | "matroska" | "avi" | "asf" | "mp4" | "mkv" | "ipod"
     )
 }
 
-/// Whether a format is audio-only (no video stream).
-pub fn is_audio_format(muxer: &str) -> bool {
+/// Whether an encoder writes sound, not pictures.
+///
+/// The encoder says what a conversion makes, not the container: the same
+/// container holds a film and a sound (asf holds wmv and wma), and it is
+/// the encoder that tells the two apart.
+pub fn is_audio_encoder(encoder: &str) -> bool {
     matches!(
-        muxer,
-        "adts" | "flac" | "mp3" | "ogg" | "opus"
+        encoder,
+        "pcm_s16le" | "libmp3lame" | "libvorbis" | "libopus" | "wmav2" | "aac" | "flac"
     )
 }
 
@@ -89,13 +94,15 @@ pub fn convert(
         args.push(OsString::from(filter));
     }
 
-    if target.alpha == Alpha::Matte {
+    let audio = is_audio_encoder(&target.write.encoder);
+
+    if target.alpha == Alpha::Matte && !audio {
         args.push(OsString::from("-filter_complex"));
         args.push(OsString::from(composite_graph()));
     }
 
-    if is_audio_format(&target.write.muxer) {
-        // Audio-only output: encode audio, no video frame limit.
+    if audio {
+        // A sound has no frames to limit and no picture to encode.
         args.push(OsString::from("-c:a"));
         args.push(OsString::from(&target.write.encoder));
     } else {

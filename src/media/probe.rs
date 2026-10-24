@@ -31,6 +31,28 @@ const DOCUMENT_PROCESSOR: &str = "document";
 /// what cannot be run.
 const PDF_PROCESSOR: &str = "pdf";
 
+/// The kind of a format: the wheels ask for kinds, and the processors are
+/// divided by kind.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Kind {
+    Image,
+    Video,
+    Audio,
+}
+
+/// The kind a format belongs to, when the conversion program is what works
+/// on it. The formats the program handles in Rust have no kind here.
+fn kind_of(format: &str) -> Option<Kind> {
+    match format {
+        "png" | "jpeg" | "bmp" | "tiff" | "gif" | "ico" | "webp" => Some(Kind::Image),
+        "mp4" | "mkv" | "avi" | "wmv" | "webm" => Some(Kind::Video),
+        "mp3" | "aac" | "flac" | "wav" | "ogg" | "opus" | "aiff" | "m4a" | "wma" => {
+            Some(Kind::Audio)
+        }
+        _ => None,
+    }
+}
+
 /// What the program says it can do.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Capabilities {
@@ -187,14 +209,21 @@ impl Capabilities {
         let manifest = Manifest::get();
         let mut image_reads = Vec::new();
         let mut image_writes = Vec::new();
+        let mut video_reads = Vec::new();
+        let mut video_writes = Vec::new();
+        let mut audio_reads = Vec::new();
+        let mut audio_writes = Vec::new();
         let mut doc_reads = Vec::new();
         let mut doc_writes = Vec::new();
 
         for format in &manifest.formats {
             // Formats with no reader (write-only, like ICO) skip reading.
             if format.read.demuxer.is_empty() {
-                // Document/archive formats with no FFmpeg parts are handled
-                // by the document processor in Rust.
+                if matches!(kind_of(&format.format), Some(Kind::Image)) {
+                    // A vector picture: read by the program itself, which
+                    // turns it into pixels before anything else is asked.
+                    continue;
+                }
                 if !format.write.encoder.is_empty() || !format.write.muxer.is_empty() {
                     // Write-only FFmpeg format (ICO): image processor can write.
                     image_writes.push(format.format.clone());
@@ -206,13 +235,45 @@ impl Capabilities {
                 }
                 continue;
             }
-            if self.can_read(format) && self.can_count_frames(format) {
-                image_reads.extend(format.extensions.iter().cloned());
-            }
-            if self.can_write(format) {
-                image_writes.push(format.format.clone());
+            let readable = self.can_read(format);
+            let writable = self.can_write(format);
+            match kind_of(&format.format) {
+                Some(Kind::Image) => {
+                    if readable && self.can_count_frames(format) {
+                        image_reads.extend(format.extensions.iter().cloned());
+                    }
+                    if writable {
+                        image_writes.push(format.format.clone());
+                    }
+                }
+                Some(Kind::Video) => {
+                    if readable {
+                        video_reads.extend(format.extensions.iter().cloned());
+                    }
+                    if writable {
+                        video_writes.push(format.format.clone());
+                    }
+                }
+                Some(Kind::Audio) => {
+                    // A sound has no frames to count; being read is enough.
+                    if readable {
+                        audio_reads.extend(format.extensions.iter().cloned());
+                    }
+                    if writable {
+                        audio_writes.push(format.format.clone());
+                    }
+                }
+                None => {}
             }
         }
+
+        // A vector picture is read by the program itself, so the image
+        // processor reads it whatever the conversion program says.
+        image_reads.push("svg".to_string());
+
+        // A film is a sound source too: what it holds can be taken out
+        // and made into a sound of another kind.
+        audio_reads.extend(video_reads.iter().cloned());
 
         // The document processor also reads the office documents that are
         // converted in Rust alone — the words of a DOCX, the sheets of a
@@ -246,6 +307,23 @@ impl Capabilities {
                 writes: doc_writes,
             },
         ];
+        // The films and the sounds are the conversion program's too, each
+        // under a name of its own, and each only while there is something
+        // it can really do.
+        if !video_reads.is_empty() || !video_writes.is_empty() {
+            processors.push(Processor {
+                name: "video".to_string(),
+                reads: video_reads,
+                writes: video_writes,
+            });
+        }
+        if !audio_reads.is_empty() || !audio_writes.is_empty() {
+            processors.push(Processor {
+                name: "audio".to_string(),
+                reads: audio_reads,
+                writes: audio_writes,
+            });
+        }
         if crate::media::pdf::library().is_some() {
             processors.push(Processor {
                 name: PDF_PROCESSOR.to_string(),
@@ -418,6 +496,7 @@ Filters:
  ... format            ->V        Convert the input image to the pixel format.
  ... overlay           VV->V      Overlay a video source on top of the input.
  ... scale             ->V        Scale the input image.
+ ... aresample         A->A       Resample audio data.
  ... split             ->V        Pass on the source to the output.
 ";
 
@@ -459,6 +538,7 @@ Output:
         capabilities.muxers.insert("image2pipe".to_string());
         capabilities.filters.insert("format".to_string());
         capabilities.filters.insert("scale".to_string());
+        capabilities.filters.insert("aresample".to_string());
         assert!(!capabilities.can_read(png));
         assert!(!capabilities.can_write(png));
         // With the pipe and the file, it can.
@@ -506,7 +586,7 @@ Output:
         let filters: Vec<&str> = names.iter().map(|(_, name)| name.as_str()).collect();
         assert_eq!(
             filters,
-            vec!["abench", "format", "overlay", "scale", "split"]
+            vec!["abench", "format", "overlay", "scale", "aresample", "split"]
         );
     }
 
