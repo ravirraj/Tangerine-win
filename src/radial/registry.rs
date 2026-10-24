@@ -1401,7 +1401,6 @@ mod tests {
                 "convert.jpeg",
                 "convert.webp",
                 "convert.pdf",
-                "convert.mp4",
                 "convert.gif",
                 "convert.tiff",
                 "convert.bmp",
