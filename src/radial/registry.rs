@@ -294,6 +294,20 @@ pub const OPERATIONS: &[Operation] = &[
         implemented: true,
         requires: Requirement::Processor("image"),
     },
+    Operation {
+        id: "convert.ico",
+        label: "ICO",
+        detail: "Convert to ICO",
+        icon: IconKind::Picture,
+        mode: RadialMode::Convert,
+        categories: &[FileKind::Image],
+        batch: Batch::Several,
+        folders: false,
+        output: Output::Beside("ico"),
+        collision: Collision::Rename,
+        implemented: true,
+        requires: Requirement::Processor("image"),
+    },
     // --------------------------------------------------------------- tools
     Operation {
         id: "tools.compress",
