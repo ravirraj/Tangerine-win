@@ -38,6 +38,8 @@ pub enum ConvertError {
     BadResult,
     /// The result could not be put at its name.
     CouldNotPublish,
+    /// The temporary file could not be written.
+    WriteError,
 }
 
 impl ConvertError {
@@ -54,6 +56,7 @@ impl ConvertError {
             ConvertError::ProgramFailed => "the conversion did not finish",
             ConvertError::BadResult => "the result was not what it should be",
             ConvertError::CouldNotPublish => "the result could not be put at its name",
+            ConvertError::WriteError => "the temporary file could not be written",
         }
     }
 }
@@ -98,10 +101,26 @@ impl<'a> Converter<'a> {
         let folder = input.parent().unwrap_or_else(|| Path::new("."));
         let temporary = self.temporary_file(folder, input);
 
-        let result = self.run(input, source, target, &temporary);
-        if let Err(reason) = result {
-            let _ = std::fs::remove_file(&temporary);
-            return Err(reason);
+        // SVG is not a FFmpeg-demuxable format. Rasterise it to PNG first,
+        // then run the PNG through the normal FFmpeg conversion pipeline.
+        if source.format == "svg" {
+            let png_bytes = crate::media::svg::rasterise(input)
+                .map_err(|_| ConvertError::ProgramFailed)?;
+            std::fs::write(&temporary, &png_bytes)
+                .map_err(|_| ConvertError::WriteError)?;
+            // Re-source the temporary PNG as the source for FFmpeg.
+            let source = self.source_of(&temporary).ok_or(ConvertError::UnknownFormat)?;
+            let result = self.run(&temporary, source, target, &temporary);
+            if let Err(reason) = result {
+                let _ = std::fs::remove_file(&temporary);
+                return Err(reason);
+            }
+        } else {
+            let result = self.run(input, source, target, &temporary);
+            if let Err(reason) = result {
+                let _ = std::fs::remove_file(&temporary);
+                return Err(reason);
+            }
         }
 
         // If the target is ICO, wrap the image in an ICO container.

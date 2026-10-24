@@ -27,6 +27,7 @@ pub mod manifest;
 pub mod probe;
 pub mod publish;
 pub mod runner;
+pub mod svg;
 
 #[cfg(test)]
 mod real;

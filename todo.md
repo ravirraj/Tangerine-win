@@ -9,28 +9,18 @@
 
 ## Phase B-9: Missing Format Engines
 
-### B-9.1 HEIC Input/Output
-- [ ] Assess libheif/libde265 Windows static build feasibility
-- [ ] Add heic to ffmpeg/components.txt
-- [ ] Add heic to ffmpeg/build.sh configure flags
-- [ ] Create src/media/heic.rs (FFmpeg heic demuxer/encoder wrapper)
-- [ ] Add convert.heic registry operation
-- [ ] Add registry test (implemented list + order)
-- [ ] Add real-FFmpeg ignored test (PNG→HEIC→PNG)
-- [ ] Manual verification: .heic opens in Windows Photos
+### B-9.1 HEIC Input/Output (BLOCKED)
+- [x] Assess libheif/libde265 Windows static build feasibility — NO MSYS2 packages available
+- [ ] Decision: Document as blocked until pre-built libs available
+- [ ] Add to ffmpeg/components.txt when libs available
+- [ ] Add convert.heic registry operation (implemented: false until backend available)
 
-### B-9.2 AVIF Input/Output
-- [ ] Assess libavif/dav1d Windows static build feasibility (previous build failed)
-- [ ] Add avif to ffmpeg/components.txt
-- [ ] Add avif to ffmpeg/build.sh configure flags
-- [ ] Create src/media/avif.rs (FFmpeg avif demuxer/encoder wrapper)
-- [ ] Add convert.avif registry operation
-- [ ] Add registry test (implemented list + order)
-- [ ] Add real-FFmpeg ignored test (PNG→AVIF→PNG)
-- [ ] Manual verification: .avif opens in Windows Photos
+### B-9.2 AVIF Input/Output (BLOCKED)
+- [x] Assess libavif/dav1d Windows static build feasibility — previous build failed, no MSYS2 packages
+- [ ] Decision: Document as blocked until pre-built libs available
 
-### B-9.3 SVG Input
-- [ ] Assess resvg integration (vendored via Slint 1.18)
+### B-9.3 SVG Input (IN PROGRESS)
+- [x] Assess resvg integration (vendored via Slint 1.18)
 - [ ] Add svg to ffmpeg/components.txt (read = -)
 - [ ] Create src/media/svg.rs (resvg rasterize to PNG seam)
 - [ ] Add convert.svg registry operation
