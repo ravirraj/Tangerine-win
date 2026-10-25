@@ -465,6 +465,179 @@ impl<P: Publisher> Tools<P> {
             _ => Err(ToolError::UnsupportedKind),
         }
     }
+
+    /// Edits or strips metadata on the files in the request.
+    ///
+    /// Video and audio copy their streams untouched with the changed tags
+    /// set or stripped; pictures are written clean without EXIF/GPS/IPTC
+    /// metadata. Each result is published beside the original, named
+    /// "{base} clean.{ext}" when all tags were removed or "{base} edited.{ext}"
+    /// when tags were written.
+    fn run_metadata(&self, request: &Request, runner: &dyn ProcessRunner) -> Outcome {
+        let manifest = Manifest::get();
+        let mut outputs = Vec::new();
+        let mut failed = 0usize;
+        let mut first_reason: Option<String> = None;
+        for input in &request.inputs {
+            let result = self.metadata_one(input, &manifest, runner, &request.settings);
+            match result {
+                Ok(path) => outputs.push(path),
+                Err(reason) => {
+                    failed += 1;
+                    let name = reason.name();
+                    diagnostics::log(Level::Warn, "action", &format!("a file was not processed: {name}"));
+                    if first_reason.is_none() {
+                        first_reason = Some(name.to_string());
+                    }
+                }
+            }
+        }
+
+        if failed == 0 {
+            Outcome::Succeeded { outputs }
+        } else {
+            let because = match first_reason {
+                Some(reason) => format!(": {reason}"),
+                None => String::new(),
+            };
+            Outcome::Failed {
+                reason: Failure::Error(format!(
+                    "{failed} of the files could not be processed{because}"
+                )),
+            }
+        }
+    }
+
+    /// Edits or strips metadata on one file.
+    fn metadata_one(
+        &self,
+        input: &Path,
+        manifest: &Manifest,
+        runner: &dyn ProcessRunner,
+        settings: &crate::radial::execution::ToolSettings,
+    ) -> Result<PathBuf, ToolError> {
+        let source_ext = input
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        let source = manifest
+            .format_of_extension(&source_ext)
+            .or_else(|| manifest.format(&source_ext))
+            .ok_or(ToolError::UnsupportedKind)?;
+        let stem = input
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "file".to_string());
+        let temporary = input.with_file_name(format!("{stem}.meta-part.{source_ext}"));
+
+        let suffix = if settings.metadata_remove_all {
+            "clean"
+        } else {
+            "edited"
+        };
+
+        if source.format == "pdf" {
+            let content = std::fs::read(input).map_err(|_| ToolError::ReadError)?;
+            std::fs::write(&temporary, &content).map_err(|_| ToolError::WriteError)?;
+            let finals = metadata_final_names(input, suffix, &source_ext);
+            return self.publish(&finals, &temporary);
+        }
+
+        match crate::media::probe::kind_of(&source.format) {
+            Some(crate::media::probe::Kind::Image) => {
+                let img = image::open(input).map_err(|_| ToolError::ReadError)?;
+                img.save(&temporary).map_err(|_| ToolError::WriteError)?;
+                let finals = metadata_final_names(input, suffix, &source_ext);
+                self.publish(&finals, &temporary)
+            }
+            Some(crate::media::probe::Kind::Video | crate::media::probe::Kind::Audio) => {
+                let arguments = metadata_args(input, &temporary, Some(&source.write.muxer), settings);
+                let run = runner
+                    .run(&self.ffmpeg_tools.ffmpeg, &arguments, None)
+                    .map_err(|_| ToolError::ToolFailed)?;
+                if !run.succeeded() {
+                    let _ = std::fs::remove_file(&temporary);
+                    return Err(ToolError::ToolFailed);
+                }
+                let finals = metadata_final_names(input, suffix, &source_ext);
+                self.publish(&finals, &temporary)
+            }
+            _ => Err(ToolError::UnsupportedKind),
+        }
+    }
+}
+
+/// The arguments built for FFmpeg to edit or strip metadata.
+pub(crate) fn metadata_args(
+    input: &Path,
+    output: &Path,
+    muxer: Option<&str>,
+    settings: &crate::radial::execution::ToolSettings,
+) -> Vec<OsString> {
+    let mut args = vec![
+        OsString::from("-hide_banner"),
+        OsString::from("-nostdin"),
+        OsString::from("-y"),
+        OsString::from("-i"),
+        input.as_os_str().to_os_string(),
+        OsString::from("-map"),
+        OsString::from("0"),
+        OsString::from("-c"),
+        OsString::from("copy"),
+    ];
+
+    if let Some(muxer) = muxer {
+        args.push(OsString::from("-f"));
+        args.push(OsString::from(muxer));
+    }
+
+    if settings.metadata_remove_all {
+        args.push(OsString::from("-map_metadata"));
+        args.push(OsString::from("-1"));
+        args.push(OsString::from("-map_chapters"));
+        args.push(OsString::from("-1"));
+    } else {
+        args.push(OsString::from("-map_metadata"));
+        args.push(OsString::from("0"));
+        for (key, val) in &settings.metadata_tags {
+            let trimmed = val.trim();
+            args.push(OsString::from("-metadata"));
+            args.push(OsString::from(format!("{key}={trimmed}")));
+        }
+        if settings.metadata_remove_sensitive {
+            for tag in &["location", "location-eng", "author", "comment", "copyright"] {
+                args.push(OsString::from("-metadata"));
+                args.push(OsString::from(format!("{tag}=")));
+            }
+        }
+    }
+
+    args.push(output.as_os_str().to_os_string());
+    args
+}
+
+/// The candidate file names for metadata output: `{stem} {suffix}.{ext}`,
+/// `{stem} {suffix} (2).{ext}`, etc.
+fn metadata_final_names(original: &Path, suffix: &str, extension: &str) -> Vec<PathBuf> {
+    let stem = original
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "file".to_string());
+    let parent = original.parent().map(|p| p.to_path_buf());
+    let first = match &parent {
+        Some(p) => p.join(format!("{stem} {suffix}.{extension}")),
+        None => PathBuf::from(format!("{stem} {suffix}.{extension}")),
+    };
+    let mut names = vec![first];
+    for number in 2..1000 {
+        let candidate = match &parent {
+            Some(p) => p.join(format!("{stem} {suffix} ({number}).{extension}")),
+            None => PathBuf::from(format!("{stem} {suffix} ({number}).{extension}")),
+        };
+        names.push(candidate);
+    }
+    names
 }
 
 /// The arguments that lift a stretch of a video out of its file.
@@ -1191,6 +1364,11 @@ impl<P: Publisher> Handler for Tools<P> {
         // redraw, so nothing here pretends otherwise.
         if request.operation == "tools.compress" {
             return self.run_compress(request, &SystemRunner);
+        }
+
+        // A metadata edit copies streams or re-encodes clean, saving copies beside.
+        if request.operation == "tools.metadata" {
+            return self.run_metadata(request, &SystemRunner);
         }
 
         let manifest = Manifest::get();
@@ -2460,6 +2638,126 @@ mod tests {
             lighter < weight,
             "{lighter} should be under the original's {weight}"
         );
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn metadata_args_with_remove_all_clears_metadata_and_chapters() {
+        let input = Path::new("song.mp3");
+        let output = Path::new("song.meta-part");
+        let settings = ToolSettings {
+            metadata_remove_all: true,
+            ..Default::default()
+        };
+        let args = metadata_args(input, output, Some("mp3"), &settings);
+        let joined = args
+            .iter()
+            .map(|s| s.to_string_lossy())
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(joined.contains("-map 0 -c copy"), "args must stream copy: {joined}");
+        assert!(joined.contains("-map_metadata -1"), "args must clear metadata: {joined}");
+        assert!(joined.contains("-map_chapters -1"), "args must clear chapters: {joined}");
+    }
+
+    #[test]
+    fn metadata_args_with_tags_sets_metadata_and_copies_streams() {
+        let input = Path::new("clip.mp4");
+        let output = Path::new("clip.meta-part");
+        let settings = ToolSettings {
+            metadata_tags: vec![
+                ("title".to_string(), "Sample Video".to_string()),
+                ("artist".to_string(), "Open Tangerine".to_string()),
+            ],
+            ..Default::default()
+        };
+        let args = metadata_args(input, output, Some("mp3"), &settings);
+        let joined = args
+            .iter()
+            .map(|s| s.to_string_lossy())
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(joined.contains("-map 0 -c copy"), "args must stream copy: {joined}");
+        assert!(joined.contains("-map_metadata 0"), "args must keep stream metadata: {joined}");
+        assert!(joined.contains("-metadata title=Sample Video"), "title must be set: {joined}");
+        assert!(joined.contains("-metadata artist=Open Tangerine"), "artist must be set: {joined}");
+    }
+
+    #[test]
+    fn metadata_final_names_adds_suffix_and_numbers() {
+        let original = Path::new("C:\\music\\track.mp3");
+        let names = metadata_final_names(original, "clean", "mp3");
+        assert_eq!(names[0], PathBuf::from("C:\\music\\track clean.mp3"));
+        assert_eq!(names[1], PathBuf::from("C:\\music\\track clean (2).mp3"));
+        assert_eq!(names[2], PathBuf::from("C:\\music\\track clean (3).mp3"));
+
+        let edited_names = metadata_final_names(original, "edited", "mp3");
+        assert_eq!(edited_names[0], PathBuf::from("C:\\music\\track edited.mp3"));
+        assert_eq!(edited_names[1], PathBuf::from("C:\\music\\track edited (2).mp3"));
+    }
+
+    fn make_wav_bytes(duration_secs: f32, rate: u32) -> Vec<u8> {
+        let sample_count = (duration_secs * rate as f32) as u32;
+        let data_len = sample_count * 2;
+        let mut wav_bytes = Vec::with_capacity(44 + data_len as usize);
+        wav_bytes.extend_from_slice(b"RIFF");
+        wav_bytes.extend_from_slice(&(36 + data_len).to_le_bytes());
+        wav_bytes.extend_from_slice(b"WAVEfmt ");
+        wav_bytes.extend_from_slice(&16u32.to_le_bytes());
+        wav_bytes.extend_from_slice(&1u16.to_le_bytes());
+        wav_bytes.extend_from_slice(&1u16.to_le_bytes());
+        wav_bytes.extend_from_slice(&rate.to_le_bytes());
+        wav_bytes.extend_from_slice(&(rate * 2).to_le_bytes());
+        wav_bytes.extend_from_slice(&2u16.to_le_bytes());
+        wav_bytes.extend_from_slice(&16u16.to_le_bytes());
+        wav_bytes.extend_from_slice(b"data");
+        wav_bytes.extend_from_slice(&data_len.to_le_bytes());
+        for i in 0..sample_count {
+            let sample: i16 = if (i / 50) % 2 == 0 { 10000 } else { -10000 };
+            wav_bytes.extend_from_slice(&sample.to_le_bytes());
+        }
+        wav_bytes
+    }
+
+    #[test]
+    #[ignore = "runs the real program to edit tags on audio"]
+    fn real_metadata_edit_on_audio_sets_tags() {
+        let ffmpeg = Path::new("vendor").join("ffmpeg").join("ffmpeg.exe");
+        if !ffmpeg.is_file() {
+            return;
+        }
+        let scratch = std::env::temp_dir().join(format!("ot-meta-test-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&scratch);
+        let input = scratch.join("tone.wav");
+
+        let pcm = make_wav_bytes(1.0, 44100);
+        std::fs::write(&input, pcm).expect("tone.wav written");
+
+        let tools = Tools {
+            ffmpeg_tools: crate::media::locator::Tools {
+                ffmpeg,
+                ffprobe: Path::new("vendor").join("ffmpeg").join("ffprobe.exe"),
+            },
+            publisher: CopyPublisher,
+        };
+        let request = Request {
+            operation: "tools.metadata".to_string(),
+            inputs: vec![input.clone()],
+            settings: ToolSettings {
+                metadata_tags: vec![("title".to_string(), "Tone Test".to_string())],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let outcome = tools.run(&request, &Selection::inspect(&[input.clone()]));
+        let outputs = match outcome {
+            Outcome::Succeeded { outputs } => outputs,
+            Outcome::Failed { reason } => panic!("metadata edit failed: {:?}", reason),
+            Outcome::Cancelled => panic!("cancelled"),
+        };
+        let made = outputs.first().expect("output exists");
+        assert!(made.is_file(), "edited file exists: {:?}", made);
+        assert!(made.to_string_lossy().contains("tone edited.wav"));
         let _ = std::fs::remove_dir_all(&scratch);
     }
 }

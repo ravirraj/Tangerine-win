@@ -26,6 +26,7 @@ pub mod frames;
 pub mod ico;
 pub mod locator;
 pub mod manifest;
+pub mod metadata;
 pub mod pdf;
 pub mod probe;
 pub mod publish;

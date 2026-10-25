@@ -710,14 +710,13 @@ pub const OPERATIONS: &[Operation] = &[
         detail: "Edit the file metadata",
         icon: IconKind::Pencil,
         mode: RadialMode::Tools,
-        categories: &FileKind::FILES,
+        categories: &[FileKind::Image, FileKind::Video, FileKind::Audio, FileKind::Pdf],
         batch: Batch::Several,
-        folders: true,
-        // This one changes the file it is given.
-        output: Output::InPlace,
-        collision: Collision::Ask,
+        folders: false,
+        output: Output::BesideAsInput,
+        collision: Collision::Rename,
         implemented: true,
-        requires: Requirement::Processor("metadata"),
+        requires: Requirement::AnyProcessor(&["image", "video", "audio", "pdf"]),
     },
     // ------------------------------------------------------ file actions
     Operation {
@@ -1549,9 +1548,8 @@ mod tests {
     #[test]
     fn the_operations_that_change_the_original_say_so() {
         for entry in OPERATIONS {
-            // These two change the file they are given: the one renames it and
-            // the other edits what is written in it.
-            if entry.id == "actions.rename" || entry.id == "tools.metadata" {
+            // Only rename changes the file it is given; metadata writes a copy beside.
+            if entry.id == "actions.rename" {
                 assert!(entry.is_destructive(), "{} changes the original", entry.id);
             } else {
                 assert!(
