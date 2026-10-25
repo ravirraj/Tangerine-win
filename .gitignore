@@ -34,6 +34,11 @@ $RECYCLE.BIN/
 *.bak
 /out/
 
+# Scratch research, not product code: the landing-page design notes and the
+# downloaded analysis examples.
+/design.md
+/examples/
+
 # The reference sources of the original macOS product stay on the machine but
 # not in the repository: they are under the GPL-3, this project is under the
 # MIT or the Apache-2.0, and the two should not travel together. The port is
