@@ -400,3 +400,77 @@ export component CardFooter {
         }
     }
 }
+
+// A round checkbox: the toggle compress.webp and removeMetadata.webp show.
+// What is checked is filled with the orange accent, carrying a white checkmark;
+// unchecked is quiet with a subtle border.
+export component RoundCheckbox {
+    in property <Panel> box;
+    in property <string> label;
+    in property <bool> checked: false;
+    in property <bool> focused: false;
+    in property <float> ui-scale: 1.0;
+
+    callback toggled();
+
+    // The ring the keyboard puts around the checkbox.
+    Rectangle {
+        x: root.box.x - 3px; y: root.box.y - 3px;
+        width: root.box.width + 6px; height: root.box.height + 6px;
+        border-radius: root.box.height / 2 + 3px;
+        border-width: 2px;
+        border-color: Tokens.accent;
+        visible: root.focused;
+    }
+
+    Rectangle {
+        x: root.box.x; y: root.box.y;
+        width: root.box.width; height: root.box.height;
+        background: transparent;
+
+        TouchArea {
+            clicked => { root.toggled(); }
+        }
+
+        // The circle itself
+        Rectangle {
+            x: 0;
+            y: (parent.height - self.height) / 2;
+            width: root.ui-scale * 18px;
+            height: root.ui-scale * 18px;
+            border-radius: self.height / 2;
+            background: root.checked ? Tokens.accent : Tokens.content;
+            border-width: root.checked ? 0px : 1px;
+            border-color: root.checked ? Tokens.accent : Tokens.field-border;
+
+            // Checkmark glyph inside circle when checked
+            Path {
+                visible: root.checked;
+                commands: "M 4 9 L 7.5 12.5 L 14 5";
+                viewbox-width: 18;
+                viewbox-height: 18;
+                fill: transparent;
+                stroke: Tokens.content;
+                stroke-width: 2px;
+                stroke-line-cap: round;
+                stroke-line-join: round;
+                width: parent.width;
+                height: parent.height;
+            }
+        }
+
+        // The label text beside the circle
+        Text {
+            x: root.ui-scale * 26px;
+            y: 0;
+            width: parent.width - self.x;
+            height: parent.height;
+            text: root.label;
+            color: Tokens.text;
+            font-size: root.ui-scale * 13px;
+            font-family: "Segoe UI";
+            vertical-alignment: center;
+        }
+    }
+}
+

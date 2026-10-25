@@ -1,0 +1,477 @@
+// The card a file is compressed in.
+//
+// The skeleton is the shell's (shell.slint); the body follows the
+// reference's Compress tool view: the compression presets (Balanced and
+// Strong) as quiet chips with a hint line, video options when a video
+// is in the batch (codec, resolution and frame rate chips), a round
+// checkbox for target file size that reveals the numeric field and KB/MB
+// unit chips, a footnote line saying total size and copies policy, and
+// the shared footer with Cancel and Compress actions.
+//
+// The card only draws. Hit-testing, keyboard walk and number typing are
+// read by the window itself, which holds the same geometry the card is
+// given.
+
+import { Tokens, Panel } from "tokens.slint";
+import { CardHeader, Hairline, RoundCheckbox, CardFooter } from "shell.slint";
+
+// One preset chip: quiet until chosen, wearing the accent when active.
+component Chip {
+    in property <Panel> box;
+    in property <string> label;
+    in property <bool> focused;
+    in property <bool> selected;
+    in property <float> ui-scale: 1.0;
+
+    callback chosen();
+
+    Rectangle {
+        x: root.box.x; y: root.box.y;
+        width: root.box.width; height: root.box.height;
+        border-radius: Tokens.radius-control;
+        background: root.selected ? Tokens.accent-tint
+                   : (chip-touch.pressed ? Tokens.quiet-pressed
+                   : (chip-touch.has-hover ? Tokens.quiet-hover : Tokens.quiet));
+        border-width: 1px;
+        border-color: root.selected ? Tokens.accent : Tokens.hairline;
+
+        chip-touch := TouchArea {
+            clicked => { root.chosen(); }
+        }
+
+        Text {
+            text: root.label;
+            color: root.selected ? Tokens.accent : Tokens.text;
+            font-size: root.ui-scale * 12px;
+            font-family: "Segoe UI";
+            vertical-alignment: center;
+            horizontal-alignment: center;
+        }
+    }
+    // The ring the keyboard puts around the chip.
+    Rectangle {
+        x: root.box.x - 3px; y: root.box.y - 3px;
+        width: root.box.width + 6px; height: root.box.height + 6px;
+        border-radius: Tokens.radius-control + 3px;
+        border-width: 2px;
+        border-color: Tokens.accent;
+        visible: root.focused;
+    }
+}
+
+export component CompressCard inherits Window {
+    in property <length> card-width: 420px;
+    in property <length> card-height: 480px;
+
+    // What the card says.
+    in property <string> file-name;
+    in property <string> detail;
+    in property <float> ui-scale: 1.0;
+
+    // Mode flags
+    in property <bool> has-video: false;
+    in property <bool> target-enabled: false;
+    in property <bool> preset-strong: false;
+    in property <bool> codec-hevc: false;
+    in property <int> res-choice: 0;
+    in property <int> fps-choice: 0;
+    in property <bool> target-unit-mb: true;
+    in property <string> target-value-text: "1";
+    in property <string> preset-hint: "Smaller files with less quality loss.";
+    in property <string> video-hint: "H.264 plays everywhere.";
+    in property <string> footnote: "Originals stay untouched; copies saved beside.";
+
+    // Focus state
+    in property <int> preset-focus: 0;
+    in property <int> codec-focus: 0;
+    in property <int> res-focus: 0;
+    in property <int> fps-focus: 0;
+    in property <bool> target-check-focus: false;
+    in property <bool> target-field-focus: false;
+    in property <int> unit-focus: 0;
+    in property <int> button-focus: 0;
+    in property <bool> run-enabled: true;
+
+    // Geometry panels
+    in property <Panel> header-box;
+    in property <Panel> detail-box;
+    in property <Panel> hairline-top;
+    in property <Panel> preset-label-box;
+    in property <Panel> preset-balanced-box;
+    in property <Panel> preset-strong-box;
+    in property <Panel> preset-hint-box;
+    in property <Panel> video-codec-label-box;
+    in property <Panel> codec-h264-box;
+    in property <Panel> codec-hevc-box;
+    in property <Panel> video-codec-hint-box;
+    in property <Panel> video-res-label-box;
+    in property <Panel> res-orig-box;
+    in property <Panel> res-4k-box;
+    in property <Panel> res-1080-box;
+    in property <Panel> res-720-box;
+    in property <Panel> res-480-box;
+    in property <Panel> video-fps-label-box;
+    in property <Panel> fps-orig-box;
+    in property <Panel> fps-60-box;
+    in property <Panel> fps-30-box;
+    in property <Panel> fps-24-box;
+    in property <Panel> hairline-mid;
+    in property <Panel> target-check-box;
+    in property <Panel> target-tile-box;
+    in property <Panel> target-kb-box;
+    in property <Panel> target-mb-box;
+    in property <Panel> target-caption-box;
+    in property <Panel> target-hint-box;
+    in property <Panel> footnote-box;
+    in property <Panel> hairline-bottom;
+    in property <Panel> helper-box;
+    in property <Panel> cancel-box;
+    in property <Panel> run-box;
+
+    // Callbacks
+    callback preset-chosen(bool);
+    callback codec-chosen(bool);
+    callback res-chosen(int);
+    callback fps-chosen(int);
+    callback target-toggled();
+    callback unit-chosen(bool);
+    callback run-chosen();
+    callback cancel-chosen();
+
+    // The daylight background
+    background: Tokens.window-bg;
+
+    // Header
+    CardHeader {
+        x: 0; y: 0;
+        width: root.card-width; height: root.card-height;
+        file-name: root.file-name;
+        detail: root.detail;
+        ui-scale: root.ui-scale;
+        header-box: root.header-box;
+        detail-box: root.detail-box;
+    }
+
+    Hairline {
+        x: 0; y: 0;
+        width: root.card-width; height: root.card-height;
+        box: root.hairline-top;
+    }
+
+    // Preset section
+    Text {
+        x: root.preset-label-box.x; y: root.preset-label-box.y;
+        width: root.preset-label-box.width; height: root.preset-label-box.height;
+        text: "Compression preset";
+        color: Tokens.text;
+        font-weight: 600;
+        font-size: root.ui-scale * 13px;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+    }
+
+    Chip {
+        x: 0; y: 0;
+        width: root.card-width; height: root.card-height;
+        box: root.preset-balanced-box;
+        label: "Balanced";
+        selected: !root.preset-strong;
+        focused: root.preset-focus == 1;
+        ui-scale: root.ui-scale;
+        chosen => { root.preset-chosen(false); }
+    }
+
+    Chip {
+        x: 0; y: 0;
+        width: root.card-width; height: root.card-height;
+        box: root.preset-strong-box;
+        label: "Strong";
+        selected: root.preset-strong;
+        focused: root.preset-focus == 2;
+        ui-scale: root.ui-scale;
+        chosen => { root.preset-chosen(true); }
+    }
+
+    Text {
+        x: root.preset-hint-box.x; y: root.preset-hint-box.y;
+        width: root.preset-hint-box.width; height: root.preset-hint-box.height;
+        text: root.preset-hint;
+        color: Tokens.text-muted;
+        font-size: root.ui-scale * 12px;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    // Video options (when video is in batch)
+    if root.has-video: Text {
+        x: root.video-codec-label-box.x; y: root.video-codec-label-box.y;
+        width: root.video-codec-label-box.width; height: root.video-codec-label-box.height;
+        text: "Video codec";
+        color: Tokens.text;
+        font-weight: 500;
+        font-size: root.ui-scale * 12px;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+    }
+
+    if root.has-video: Chip {
+        x: 0; y: 0;
+        width: root.card-width; height: root.card-height;
+        box: root.codec-h264-box;
+        label: "H.264";
+        selected: !root.codec-hevc;
+        focused: root.codec-focus == 1;
+        ui-scale: root.ui-scale;
+        chosen => { root.codec-chosen(false); }
+    }
+
+    if root.has-video: Chip {
+        x: 0; y: 0;
+        width: root.card-width; height: root.card-height;
+        box: root.codec-hevc-box;
+        label: "HEVC";
+        selected: root.codec-hevc;
+        focused: root.codec-focus == 2;
+        ui-scale: root.ui-scale;
+        chosen => { root.codec-chosen(true); }
+    }
+
+    if root.has-video: Text {
+        x: root.video-codec-hint-box.x; y: root.video-codec-hint-box.y;
+        width: root.video-codec-hint-box.width; height: root.video-codec-hint-box.height;
+        text: root.video-hint;
+        color: Tokens.text-muted;
+        font-size: root.ui-scale * 11px;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    if root.has-video: Text {
+        x: root.video-res-label-box.x; y: root.video-res-label-box.y;
+        width: root.video-res-label-box.width; height: root.video-res-label-box.height;
+        text: "Resolution";
+        color: Tokens.text;
+        font-weight: 500;
+        font-size: root.ui-scale * 12px;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+    }
+
+    if root.has-video: Chip {
+        x: 0; y: 0;
+        width: root.card-width; height: root.card-height;
+        box: root.res-orig-box;
+        label: "Original";
+        selected: root.res-choice == 0;
+        focused: root.res-focus == 1;
+        ui-scale: root.ui-scale;
+        chosen => { root.res-chosen(0); }
+    }
+
+    if root.has-video: Chip {
+        x: 0; y: 0;
+        width: root.card-width; height: root.card-height;
+        box: root.res-4k-box;
+        label: "4K";
+        selected: root.res-choice == 1;
+        focused: root.res-focus == 2;
+        ui-scale: root.ui-scale;
+        chosen => { root.res-chosen(1); }
+    }
+
+    if root.has-video: Chip {
+        x: 0; y: 0;
+        width: root.card-width; height: root.card-height;
+        box: root.res-1080-box;
+        label: "1080p";
+        selected: root.res-choice == 2;
+        focused: root.res-focus == 3;
+        ui-scale: root.ui-scale;
+        chosen => { root.res-chosen(2); }
+    }
+
+    if root.has-video: Chip {
+        x: 0; y: 0;
+        width: root.card-width; height: root.card-height;
+        box: root.res-720-box;
+        label: "720p";
+        selected: root.res-choice == 3;
+        focused: root.res-focus == 4;
+        ui-scale: root.ui-scale;
+        chosen => { root.res-chosen(3); }
+    }
+
+    if root.has-video: Chip {
+        x: 0; y: 0;
+        width: root.card-width; height: root.card-height;
+        box: root.res-480-box;
+        label: "480p";
+        selected: root.res-choice == 4;
+        focused: root.res-focus == 5;
+        ui-scale: root.ui-scale;
+        chosen => { root.res-chosen(4); }
+    }
+
+    if root.has-video: Text {
+        x: root.video-fps-label-box.x; y: root.video-fps-label-box.y;
+        width: root.video-fps-label-box.width; height: root.video-fps-label-box.height;
+        text: "Frame rate";
+        color: Tokens.text;
+        font-weight: 500;
+        font-size: root.ui-scale * 12px;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+    }
+
+    if root.has-video: Chip {
+        x: 0; y: 0;
+        width: root.card-width; height: root.card-height;
+        box: root.fps-orig-box;
+        label: "Original";
+        selected: root.fps-choice == 0;
+        focused: root.fps-focus == 1;
+        ui-scale: root.ui-scale;
+        chosen => { root.fps-chosen(0); }
+    }
+
+    if root.has-video: Chip {
+        x: 0; y: 0;
+        width: root.card-width; height: root.card-height;
+        box: root.fps-60-box;
+        label: "60";
+        selected: root.fps-choice == 1;
+        focused: root.fps-focus == 2;
+        ui-scale: root.ui-scale;
+        chosen => { root.fps-chosen(1); }
+    }
+
+    if root.has-video: Chip {
+        x: 0; y: 0;
+        width: root.card-width; height: root.card-height;
+        box: root.fps-30-box;
+        label: "30";
+        selected: root.fps-choice == 2;
+        focused: root.fps-focus == 3;
+        ui-scale: root.ui-scale;
+        chosen => { root.fps-chosen(2); }
+    }
+
+    if root.has-video: Chip {
+        x: 0; y: 0;
+        width: root.card-width; height: root.card-height;
+        box: root.fps-24-box;
+        label: "24";
+        selected: root.fps-choice == 3;
+        focused: root.fps-focus == 4;
+        ui-scale: root.ui-scale;
+        chosen => { root.fps-chosen(3); }
+    }
+
+    Hairline {
+        x: 0; y: 0;
+        width: root.card-width; height: root.card-height;
+        box: root.hairline-mid;
+    }
+
+    // Target size section
+    RoundCheckbox {
+        x: 0; y: 0;
+        width: root.card-width; height: root.card-height;
+        box: root.target-check-box;
+        label: "Compress to target file size";
+        checked: root.target-enabled;
+        focused: root.target-check-focus;
+        ui-scale: root.ui-scale;
+        toggled => { root.target-toggled(); }
+    }
+
+    // Target tile (surrounding the native EDIT control)
+    if root.target-enabled: Rectangle {
+        x: root.target-tile-box.x; y: root.target-tile-box.y;
+        width: root.target-tile-box.width; height: root.target-tile-box.height;
+        border-radius: Tokens.radius-control;
+        background: Tokens.content;
+        border-width: 1px;
+        border-color: root.target-field-focus ? Tokens.accent : Tokens.field-border;
+    }
+
+    if root.target-enabled: Chip {
+        x: 0; y: 0;
+        width: root.card-width; height: root.card-height;
+        box: root.target-kb-box;
+        label: "KB";
+        selected: !root.target-unit-mb;
+        focused: root.unit-focus == 1;
+        ui-scale: root.ui-scale;
+        chosen => { root.unit-chosen(false); }
+    }
+
+    if root.target-enabled: Chip {
+        x: 0; y: 0;
+        width: root.card-width; height: root.card-height;
+        box: root.target-mb-box;
+        label: "MB";
+        selected: root.target-unit-mb;
+        focused: root.unit-focus == 2;
+        ui-scale: root.ui-scale;
+        chosen => { root.unit-chosen(true); }
+    }
+
+    if root.target-enabled: Text {
+        x: root.target-caption-box.x; y: root.target-caption-box.y;
+        width: root.target-caption-box.width; height: root.target-caption-box.height;
+        text: "per file";
+        color: Tokens.text-muted;
+        font-size: root.ui-scale * 12px;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+    }
+
+    if root.target-enabled: Text {
+        x: root.target-hint-box.x; y: root.target-hint-box.y;
+        width: root.target-hint-box.width; height: root.target-hint-box.height;
+        text: "Videos and audio pick a bitrate from the duration.";
+        color: Tokens.text-muted;
+        font-size: root.ui-scale * 11px;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    // Footnote
+    Text {
+        x: root.footnote-box.x; y: root.footnote-box.y;
+        width: root.footnote-box.width; height: root.footnote-box.height;
+        text: root.footnote;
+        color: Tokens.text-muted;
+        font-size: root.ui-scale * 11px;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    Hairline {
+        x: 0; y: 0;
+        width: root.card-width; height: root.card-height;
+        box: root.hairline-bottom;
+    }
+
+    // Footer
+    CardFooter {
+        x: 0; y: 0;
+        width: root.card-width; height: root.card-height;
+        ui-scale: root.ui-scale;
+        helper: "Enter to run \u{b7} Esc to close";
+        run-label: "Compress";
+        has-cancel: true;
+        run-enabled: root.run-enabled;
+        helper-box: root.helper-box;
+        cancel-box: root.cancel-box;
+        run-box: root.run-box;
+        button-focus: root.button-focus;
+        run-chosen => { root.run-chosen(); }
+        cancel-chosen => { root.cancel-chosen(); }
+    }
+}

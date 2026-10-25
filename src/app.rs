@@ -272,6 +272,8 @@ struct App {
     /// The window a video or a picture is cropped in, hidden until a crop
     /// is picked.
     crop_window: crate::platform::windows::cropwindow::CropWindow,
+    /// The window a file is compressed in, hidden until compress is picked.
+    compress_window: crate::platform::windows::compresswindow::CompressWindow,
 }
 
 /// The end of a drag that has not been acted on yet.
@@ -396,6 +398,22 @@ impl App {
         let crop_window = crate::platform::windows::cropwindow::CropWindow::new(crop_sender)
             .map_err(|reason| reason)?;
 
+        // The window a compress is asked in.
+        let (compress_sender, compress_messages) =
+            std::sync::mpsc::channel::<crate::platform::windows::toolwindow::ToolEvent>();
+        {
+            let sender = sender.clone();
+            std::thread::spawn(move || {
+                while let Ok(event) = compress_messages.recv() {
+                    if sender.send(Message::ToolWindow(event)).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+        let compress_window = crate::platform::windows::compresswindow::CompressWindow::new(compress_sender)
+            .map_err(|reason| reason)?;
+
         Ok(Self {
             controller,
             animation: WheelAnimation::new(),
@@ -442,6 +460,7 @@ impl App {
             tool_window,
             timeline_window,
             crop_window,
+            compress_window,
         })
     }
 
@@ -641,6 +660,12 @@ impl App {
     /// to say no. When the window is answered, what it was asked comes
     /// back as a message and the work starts then.
     fn open_tool_window(&mut self, segment: &Segment, files: &[std::path::PathBuf]) {
+        // A compress asks for its own card: presets, video options and target size.
+        if segment.id == "tools.compress" {
+            self.compress_window
+                .show_for(&segment.id, &segment.label, &segment.detail, files);
+            return;
+        }
         // A crop asks for its own card the media stands on: the rectangle
         // that is kept, and the ratio it wears. It is not the plain
         // window's form of typed fields.
