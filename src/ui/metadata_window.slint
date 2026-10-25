@@ -1,0 +1,904 @@
+// The card a file's metadata is inspected and edited in.
+//
+// The layout follows the reference's Edit Metadata tool view:
+// - Left pane: a white card holding a search field at top, the editable
+//   metadata fields (Title, Description, Author, Keywords, Copyright,
+//   Date, Comment) with changed dots when modified, and file system
+//   readouts (Created, Modified, Name, Size).
+// - Right pane: three sidebar cards: Fields instruction and Undo,
+//   Remove options (Remove all, Remove camera/GPS/processing data), and
+//   Summary count of total and sensitive fields.
+// - Footer: file name on the left, Cancel and Save copy actions on the right.
+//
+// Slint only draws. Sizing, hit-testing and keyboard walk are measured by
+// the Win32 window host using the twin geometry.
+
+import { Tokens, Panel } from "tokens.slint";
+import { Hairline, RoundCheckbox, PillButton } from "shell.slint";
+
+export component MetadataCard inherits Window {
+    in property <length> card-width: 820px;
+    in property <length> card-height: 560px;
+    in property <float> ui-scale: 1.0;
+
+    // Search
+    in property <string> search-text: "";
+    in property <bool> search-focused: false;
+
+    // Tag fields (up to 7)
+    in property <int> tag-count: 7;
+
+    in property <string> tag-0-label: "Title";
+    in property <string> tag-0-value: "";
+    in property <string> tag-0-placeholder: "Title";
+    in property <bool> tag-0-changed: false;
+    in property <bool> tag-0-focused: false;
+
+    in property <string> tag-1-label: "Description";
+    in property <string> tag-1-value: "";
+    in property <string> tag-1-placeholder: "Description";
+    in property <bool> tag-1-changed: false;
+    in property <bool> tag-1-focused: false;
+
+    in property <string> tag-2-label: "Author";
+    in property <string> tag-2-value: "";
+    in property <string> tag-2-placeholder: "Author";
+    in property <bool> tag-2-changed: false;
+    in property <bool> tag-2-focused: false;
+
+    in property <string> tag-3-label: "Keywords";
+    in property <string> tag-3-value: "";
+    in property <string> tag-3-placeholder: "Separated by commas";
+    in property <bool> tag-3-changed: false;
+    in property <bool> tag-3-focused: false;
+
+    in property <string> tag-4-label: "Copyright";
+    in property <string> tag-4-value: "";
+    in property <string> tag-4-placeholder: "Copyright";
+    in property <bool> tag-4-changed: false;
+    in property <bool> tag-4-focused: false;
+
+    in property <string> tag-5-label: "Date taken";
+    in property <string> tag-5-value: "";
+    in property <string> tag-5-placeholder: "YYYY:MM:DD HH:MM:SS";
+    in property <bool> tag-5-changed: false;
+    in property <bool> tag-5-focused: false;
+
+    in property <string> tag-6-label: "Comment";
+    in property <string> tag-6-value: "";
+    in property <string> tag-6-placeholder: "Comment";
+    in property <bool> tag-6-changed: false;
+    in property <bool> tag-6-focused: false;
+
+    // File rows
+    in property <string> file-0-label: "Created";
+    in property <string> file-0-value: "";
+    in property <string> file-1-label: "Modified";
+    in property <string> file-1-value: "";
+    in property <string> file-2-label: "Name";
+    in property <string> file-2-value: "";
+    in property <string> file-3-label: "Size";
+    in property <string> file-3-value: "";
+
+    // Sidebar
+    in property <string> fields-desc: "Type in a field to add it or change it; empty it to remove it. Only what you change is written.";
+    in property <bool> has-changes: false;
+    in property <bool> undo-focused: false;
+
+    in property <bool> remove-all: false;
+    in property <bool> remove-all-focused: false;
+    in property <bool> remove-sensitive: false;
+    in property <bool> remove-sensitive-focused: false;
+    in property <bool> remove-sensitive-disabled: false;
+    in property <string> summary-text: "17 fields \u{b7} 3 sensitive";
+
+    // Footer
+    in property <string> footer-file-name: "";
+    in property <string> footer-helper: "Enter to save copy \u{b7} Esc to close";
+    in property <string> save-title: "Save copy";
+    in property <bool> save-enabled: false;
+    in property <int> button-focus: 0;
+
+    // Panels (Left card)
+    in property <Panel> left-card-box;
+    in property <Panel> search-tile-box;
+    in property <Panel> hairline-search-box;
+    in property <Panel> fields-header-box;
+
+    in property <Panel> tag-0-label-box;
+    in property <Panel> tag-0-tile-box;
+    in property <Panel> tag-0-dot-box;
+
+    in property <Panel> tag-1-label-box;
+    in property <Panel> tag-1-tile-box;
+    in property <Panel> tag-1-dot-box;
+
+    in property <Panel> tag-2-label-box;
+    in property <Panel> tag-2-tile-box;
+    in property <Panel> tag-2-dot-box;
+
+    in property <Panel> tag-3-label-box;
+    in property <Panel> tag-3-tile-box;
+    in property <Panel> tag-3-dot-box;
+
+    in property <Panel> tag-4-label-box;
+    in property <Panel> tag-4-tile-box;
+    in property <Panel> tag-4-dot-box;
+
+    in property <Panel> tag-5-label-box;
+    in property <Panel> tag-5-tile-box;
+    in property <Panel> tag-5-dot-box;
+
+    in property <Panel> tag-6-label-box;
+    in property <Panel> tag-6-tile-box;
+    in property <Panel> tag-6-dot-box;
+
+    in property <Panel> file-header-box;
+    in property <Panel> file-0-row-box;
+    in property <Panel> file-0-label-box;
+    in property <Panel> file-0-value-box;
+
+    in property <Panel> file-1-row-box;
+    in property <Panel> file-1-label-box;
+    in property <Panel> file-1-value-box;
+
+    in property <Panel> file-2-row-box;
+    in property <Panel> file-2-label-box;
+    in property <Panel> file-2-value-box;
+
+    in property <Panel> file-3-row-box;
+    in property <Panel> file-3-label-box;
+    in property <Panel> file-3-value-box;
+
+    // Panels (Right sidebar)
+    in property <Panel> sidebar-fields-box;
+    in property <Panel> sidebar-fields-title-box;
+    in property <Panel> sidebar-fields-text-box;
+    in property <Panel> undo-button-box;
+
+    in property <Panel> sidebar-remove-box;
+    in property <Panel> sidebar-remove-title-box;
+    in property <Panel> remove-all-box;
+    in property <Panel> remove-sensitive-box;
+    in property <Panel> sidebar-remove-hint-box;
+
+    in property <Panel> sidebar-summary-box;
+    in property <Panel> sidebar-summary-title-box;
+    in property <Panel> sidebar-summary-text-box;
+
+    // Panels (Footer)
+    in property <Panel> hairline-bottom-box;
+    in property <Panel> footer-icon-box;
+    in property <Panel> footer-file-box;
+    in property <Panel> footer-helper-box;
+    in property <Panel> footer-cancel-box;
+    in property <Panel> footer-save-box;
+
+    // Callbacks
+    callback search-clicked();
+    callback tag-clicked(int);
+    callback undo-clicked();
+    callback remove-all-toggled();
+    callback remove-sensitive-toggled();
+    callback cancel-chosen();
+    callback save-chosen();
+
+    // Backdrop
+    background: Tokens.window-bg;
+
+    // ==========================================
+    // Left Card
+    // ==========================================
+    Rectangle {
+        x: root.left-card-box.x; y: root.left-card-box.y;
+        width: root.left-card-box.width; height: root.left-card-box.height;
+        background: Tokens.content;
+        border-radius: 10px;
+        border-width: 1px;
+        border-color: Tokens.hairline;
+    }
+
+    // Search Field Tile
+    Rectangle {
+        x: root.search-tile-box.x; y: root.search-tile-box.y;
+        width: root.search-tile-box.width; height: root.search-tile-box.height;
+        border-radius: Tokens.radius-control;
+        background: Tokens.window-bg;
+        border-width: 1px;
+        border-color: root.search-focused ? Tokens.accent : Tokens.field-border;
+
+        TouchArea {
+            clicked => { root.search-clicked(); }
+        }
+
+        Text {
+            x: 8px; y: 0;
+            width: parent.width - 16px; height: parent.height;
+            text: root.search-text != "" ? root.search-text : "Search everything in the file";
+            color: root.search-text != "" ? Tokens.text : Tokens.text-muted;
+            font-size: root.ui-scale * 12px;
+            font-family: "Segoe UI";
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
+
+    // Hairline under search
+    Rectangle {
+        x: root.hairline-search-box.x; y: root.hairline-search-box.y;
+        width: root.hairline-search-box.width; height: root.hairline-search-box.height;
+        background: Tokens.hairline;
+    }
+
+    // Section Header: Fields
+    Text {
+        x: root.fields-header-box.x; y: root.fields-header-box.y;
+        width: root.fields-header-box.width; height: root.fields-header-box.height;
+        text: "Fields";
+        color: Tokens.text-muted;
+        font-size: root.ui-scale * 12px;
+        font-weight: 600;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+    }
+
+    // --- Tag Row 0 ---
+    if root.tag-count > 0: Text {
+        x: root.tag-0-label-box.x; y: root.tag-0-label-box.y;
+        width: root.tag-0-label-box.width; height: root.tag-0-label-box.height;
+        text: root.tag-0-label;
+        color: Tokens.text;
+        font-size: root.ui-scale * 13px;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+    }
+    if root.tag-count > 0: Rectangle {
+        x: root.tag-0-tile-box.x; y: root.tag-0-tile-box.y;
+        width: root.tag-0-tile-box.width; height: root.tag-0-tile-box.height;
+        border-radius: Tokens.radius-control;
+        background: Tokens.content;
+        border-width: 1px;
+        border-color: root.tag-0-focused ? Tokens.accent : Tokens.field-border;
+        opacity: root.remove-all ? 0.4 : 1.0;
+
+        TouchArea {
+            clicked => { root.tag-clicked(0); }
+        }
+
+        Text {
+            x: 8px; y: 0;
+            width: parent.width - 24px; height: parent.height;
+            text: root.tag-0-value != "" ? root.tag-0-value : root.tag-0-placeholder;
+            color: root.tag-0-value != "" ? Tokens.text : Tokens.text-muted;
+            font-size: root.ui-scale * 13px;
+            font-family: "Segoe UI";
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        // Changed dot
+        Rectangle {
+            x: parent.width - 14px; y: (parent.height - 6px) / 2;
+            width: 6px; height: 6px;
+            border-radius: 3px;
+            background: Tokens.accent;
+            visible: root.tag-0-changed;
+        }
+    }
+
+    // --- Tag Row 1 ---
+    if root.tag-count > 1: Text {
+        x: root.tag-1-label-box.x; y: root.tag-1-label-box.y;
+        width: root.tag-1-label-box.width; height: root.tag-1-label-box.height;
+        text: root.tag-1-label;
+        color: Tokens.text;
+        font-size: root.ui-scale * 13px;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+    }
+    if root.tag-count > 1: Rectangle {
+        x: root.tag-1-tile-box.x; y: root.tag-1-tile-box.y;
+        width: root.tag-1-tile-box.width; height: root.tag-1-tile-box.height;
+        border-radius: Tokens.radius-control;
+        background: Tokens.content;
+        border-width: 1px;
+        border-color: root.tag-1-focused ? Tokens.accent : Tokens.field-border;
+        opacity: root.remove-all ? 0.4 : 1.0;
+
+        TouchArea {
+            clicked => { root.tag-clicked(1); }
+        }
+
+        Text {
+            x: 8px; y: 0;
+            width: parent.width - 24px; height: parent.height;
+            text: root.tag-1-value != "" ? root.tag-1-value : root.tag-1-placeholder;
+            color: root.tag-1-value != "" ? Tokens.text : Tokens.text-muted;
+            font-size: root.ui-scale * 13px;
+            font-family: "Segoe UI";
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        Rectangle {
+            x: parent.width - 14px; y: (parent.height - 6px) / 2;
+            width: 6px; height: 6px;
+            border-radius: 3px;
+            background: Tokens.accent;
+            visible: root.tag-1-changed;
+        }
+    }
+
+    // --- Tag Row 2 ---
+    if root.tag-count > 2: Text {
+        x: root.tag-2-label-box.x; y: root.tag-2-label-box.y;
+        width: root.tag-2-label-box.width; height: root.tag-2-label-box.height;
+        text: root.tag-2-label;
+        color: Tokens.text;
+        font-size: root.ui-scale * 13px;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+    }
+    if root.tag-count > 2: Rectangle {
+        x: root.tag-2-tile-box.x; y: root.tag-2-tile-box.y;
+        width: root.tag-2-tile-box.width; height: root.tag-2-tile-box.height;
+        border-radius: Tokens.radius-control;
+        background: Tokens.content;
+        border-width: 1px;
+        border-color: root.tag-2-focused ? Tokens.accent : Tokens.field-border;
+        opacity: root.remove-all ? 0.4 : 1.0;
+
+        TouchArea {
+            clicked => { root.tag-clicked(2); }
+        }
+
+        Text {
+            x: 8px; y: 0;
+            width: parent.width - 24px; height: parent.height;
+            text: root.tag-2-value != "" ? root.tag-2-value : root.tag-2-placeholder;
+            color: root.tag-2-value != "" ? Tokens.text : Tokens.text-muted;
+            font-size: root.ui-scale * 13px;
+            font-family: "Segoe UI";
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        Rectangle {
+            x: parent.width - 14px; y: (parent.height - 6px) / 2;
+            width: 6px; height: 6px;
+            border-radius: 3px;
+            background: Tokens.accent;
+            visible: root.tag-2-changed;
+        }
+    }
+
+    // --- Tag Row 3 ---
+    if root.tag-count > 3: Text {
+        x: root.tag-3-label-box.x; y: root.tag-3-label-box.y;
+        width: root.tag-3-label-box.width; height: root.tag-3-label-box.height;
+        text: root.tag-3-label;
+        color: Tokens.text;
+        font-size: root.ui-scale * 13px;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+    }
+    if root.tag-count > 3: Rectangle {
+        x: root.tag-3-tile-box.x; y: root.tag-3-tile-box.y;
+        width: root.tag-3-tile-box.width; height: root.tag-3-tile-box.height;
+        border-radius: Tokens.radius-control;
+        background: Tokens.content;
+        border-width: 1px;
+        border-color: root.tag-3-focused ? Tokens.accent : Tokens.field-border;
+        opacity: root.remove-all ? 0.4 : 1.0;
+
+        TouchArea {
+            clicked => { root.tag-clicked(3); }
+        }
+
+        Text {
+            x: 8px; y: 0;
+            width: parent.width - 24px; height: parent.height;
+            text: root.tag-3-value != "" ? root.tag-3-value : root.tag-3-placeholder;
+            color: root.tag-3-value != "" ? Tokens.text : Tokens.text-muted;
+            font-size: root.ui-scale * 13px;
+            font-family: "Segoe UI";
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        Rectangle {
+            x: parent.width - 14px; y: (parent.height - 6px) / 2;
+            width: 6px; height: 6px;
+            border-radius: 3px;
+            background: Tokens.accent;
+            visible: root.tag-3-changed;
+        }
+    }
+
+    // --- Tag Row 4 ---
+    if root.tag-count > 4: Text {
+        x: root.tag-4-label-box.x; y: root.tag-4-label-box.y;
+        width: root.tag-4-label-box.width; height: root.tag-4-label-box.height;
+        text: root.tag-4-label;
+        color: Tokens.text;
+        font-size: root.ui-scale * 13px;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+    }
+    if root.tag-count > 4: Rectangle {
+        x: root.tag-4-tile-box.x; y: root.tag-4-tile-box.y;
+        width: root.tag-4-tile-box.width; height: root.tag-4-tile-box.height;
+        border-radius: Tokens.radius-control;
+        background: Tokens.content;
+        border-width: 1px;
+        border-color: root.tag-4-focused ? Tokens.accent : Tokens.field-border;
+        opacity: root.remove-all ? 0.4 : 1.0;
+
+        TouchArea {
+            clicked => { root.tag-clicked(4); }
+        }
+
+        Text {
+            x: 8px; y: 0;
+            width: parent.width - 24px; height: parent.height;
+            text: root.tag-4-value != "" ? root.tag-4-value : root.tag-4-placeholder;
+            color: root.tag-4-value != "" ? Tokens.text : Tokens.text-muted;
+            font-size: root.ui-scale * 13px;
+            font-family: "Segoe UI";
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        Rectangle {
+            x: parent.width - 14px; y: (parent.height - 6px) / 2;
+            width: 6px; height: 6px;
+            border-radius: 3px;
+            background: Tokens.accent;
+            visible: root.tag-4-changed;
+        }
+    }
+
+    // --- Tag Row 5 ---
+    if root.tag-count > 5: Text {
+        x: root.tag-5-label-box.x; y: root.tag-5-label-box.y;
+        width: root.tag-5-label-box.width; height: root.tag-5-label-box.height;
+        text: root.tag-5-label;
+        color: Tokens.text;
+        font-size: root.ui-scale * 13px;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+    }
+    if root.tag-count > 5: Rectangle {
+        x: root.tag-5-tile-box.x; y: root.tag-5-tile-box.y;
+        width: root.tag-5-tile-box.width; height: root.tag-5-tile-box.height;
+        border-radius: Tokens.radius-control;
+        background: Tokens.content;
+        border-width: 1px;
+        border-color: root.tag-5-focused ? Tokens.accent : Tokens.field-border;
+        opacity: root.remove-all ? 0.4 : 1.0;
+
+        TouchArea {
+            clicked => { root.tag-clicked(5); }
+        }
+
+        Text {
+            x: 8px; y: 0;
+            width: parent.width - 24px; height: parent.height;
+            text: root.tag-5-value != "" ? root.tag-5-value : root.tag-5-placeholder;
+            color: root.tag-5-value != "" ? Tokens.text : Tokens.text-muted;
+            font-size: root.ui-scale * 13px;
+            font-family: "Segoe UI";
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        Rectangle {
+            x: parent.width - 14px; y: (parent.height - 6px) / 2;
+            width: 6px; height: 6px;
+            border-radius: 3px;
+            background: Tokens.accent;
+            visible: root.tag-5-changed;
+        }
+    }
+
+    // --- Tag Row 6 ---
+    if root.tag-count > 6: Text {
+        x: root.tag-6-label-box.x; y: root.tag-6-label-box.y;
+        width: root.tag-6-label-box.width; height: root.tag-6-label-box.height;
+        text: root.tag-6-label;
+        color: Tokens.text;
+        font-size: root.ui-scale * 13px;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+    }
+    if root.tag-count > 6: Rectangle {
+        x: root.tag-6-tile-box.x; y: root.tag-6-tile-box.y;
+        width: root.tag-6-tile-box.width; height: root.tag-6-tile-box.height;
+        border-radius: Tokens.radius-control;
+        background: Tokens.content;
+        border-width: 1px;
+        border-color: root.tag-6-focused ? Tokens.accent : Tokens.field-border;
+        opacity: root.remove-all ? 0.4 : 1.0;
+
+        TouchArea {
+            clicked => { root.tag-clicked(6); }
+        }
+
+        Text {
+            x: 8px; y: 0;
+            width: parent.width - 24px; height: parent.height;
+            text: root.tag-6-value != "" ? root.tag-6-value : root.tag-6-placeholder;
+            color: root.tag-6-value != "" ? Tokens.text : Tokens.text-muted;
+            font-size: root.ui-scale * 13px;
+            font-family: "Segoe UI";
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        Rectangle {
+            x: parent.width - 14px; y: (parent.height - 6px) / 2;
+            width: 6px; height: 6px;
+            border-radius: 3px;
+            background: Tokens.accent;
+            visible: root.tag-6-changed;
+        }
+    }
+
+    // Section Header: File
+    Text {
+        x: root.file-header-box.x; y: root.file-header-box.y;
+        width: root.file-header-box.width; height: root.file-header-box.height;
+        text: "File";
+        color: Tokens.text-muted;
+        font-size: root.ui-scale * 12px;
+        font-weight: 600;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+    }
+
+    // --- File Row 0 (Created) ---
+    Rectangle {
+        x: root.file-0-row-box.x; y: root.file-0-row-box.y;
+        width: root.file-0-row-box.width; height: root.file-0-row-box.height;
+        border-radius: Tokens.radius-control;
+        background: Tokens.surface;
+
+        Text {
+            x: 8px; y: 0;
+            width: root.file-0-label-box.width; height: parent.height;
+            text: root.file-0-label;
+            color: Tokens.text;
+            font-size: root.ui-scale * 12px;
+            font-family: "Segoe UI";
+            vertical-alignment: center;
+        }
+
+        Text {
+            x: root.file-0-label-box.width + 16px; y: 0;
+            width: parent.width - (root.file-0-label-box.width + 24px); height: parent.height;
+            text: root.file-0-value;
+            color: Tokens.text-muted;
+            font-size: root.ui-scale * 12px;
+            font-family: "Segoe UI";
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
+
+    // --- File Row 1 (Modified) ---
+    Rectangle {
+        x: root.file-1-row-box.x; y: root.file-1-row-box.y;
+        width: root.file-1-row-box.width; height: root.file-1-row-box.height;
+        border-radius: Tokens.radius-control;
+        background: Tokens.surface;
+
+        Text {
+            x: 8px; y: 0;
+            width: root.file-1-label-box.width; height: parent.height;
+            text: root.file-1-label;
+            color: Tokens.text;
+            font-size: root.ui-scale * 12px;
+            font-family: "Segoe UI";
+            vertical-alignment: center;
+        }
+
+        Text {
+            x: root.file-1-label-box.width + 16px; y: 0;
+            width: parent.width - (root.file-1-label-box.width + 24px); height: parent.height;
+            text: root.file-1-value;
+            color: Tokens.text-muted;
+            font-size: root.ui-scale * 12px;
+            font-family: "Segoe UI";
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
+
+    // --- File Row 2 (Name) ---
+    Rectangle {
+        x: root.file-2-row-box.x; y: root.file-2-row-box.y;
+        width: root.file-2-row-box.width; height: root.file-2-row-box.height;
+        border-radius: Tokens.radius-control;
+        background: Tokens.surface;
+
+        Text {
+            x: 8px; y: 0;
+            width: root.file-2-label-box.width; height: parent.height;
+            text: root.file-2-label;
+            color: Tokens.text;
+            font-size: root.ui-scale * 12px;
+            font-family: "Segoe UI";
+            vertical-alignment: center;
+        }
+
+        Text {
+            x: root.file-2-label-box.width + 16px; y: 0;
+            width: parent.width - (root.file-2-label-box.width + 24px); height: parent.height;
+            text: root.file-2-value;
+            color: Tokens.text-muted;
+            font-size: root.ui-scale * 12px;
+            font-family: "Segoe UI";
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
+
+    // --- File Row 3 (Size) ---
+    Rectangle {
+        x: root.file-3-row-box.x; y: root.file-3-row-box.y;
+        width: root.file-3-row-box.width; height: root.file-3-row-box.height;
+        border-radius: Tokens.radius-control;
+        background: Tokens.surface;
+
+        Text {
+            x: 8px; y: 0;
+            width: root.file-3-label-box.width; height: parent.height;
+            text: root.file-3-label;
+            color: Tokens.text;
+            font-size: root.ui-scale * 12px;
+            font-family: "Segoe UI";
+            vertical-alignment: center;
+        }
+
+        Text {
+            x: root.file-3-label-box.width + 16px; y: 0;
+            width: parent.width - (root.file-3-label-box.width + 24px); height: parent.height;
+            text: root.file-3-value;
+            color: Tokens.text-muted;
+            font-size: root.ui-scale * 12px;
+            font-family: "Segoe UI";
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
+
+    // ==========================================
+    // Right Sidebar
+    // ==========================================
+
+    // Sidebar Section 1: Fields
+    Rectangle {
+        x: root.sidebar-fields-box.x; y: root.sidebar-fields-box.y;
+        width: root.sidebar-fields-box.width; height: root.sidebar-fields-box.height;
+        background: Tokens.surface;
+        border-radius: 10px;
+        border-width: 1px;
+        border-color: Tokens.hairline;
+    }
+
+    Text {
+        x: root.sidebar-fields-title-box.x; y: root.sidebar-fields-title-box.y;
+        width: root.sidebar-fields-title-box.width; height: root.sidebar-fields-title-box.height;
+        text: "Fields";
+        color: Tokens.text;
+        font-size: root.ui-scale * 13px;
+        font-weight: 600;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+    }
+
+    Text {
+        x: root.sidebar-fields-text-box.x; y: root.sidebar-fields-text-box.y;
+        width: root.sidebar-fields-text-box.width; height: root.sidebar-fields-text-box.height;
+        text: root.fields-desc;
+        color: root.has-changes ? Tokens.accent : Tokens.text-muted;
+        font-size: root.ui-scale * 11px;
+        font-family: "Segoe UI";
+        wrap: word-wrap;
+    }
+
+    if root.has-changes: PillButton {
+        x: 0; y: 0;
+        width: root.card-width; height: root.card-height;
+        box: root.undo-button-box;
+        label: "Undo changes";
+        focused: root.undo-focused;
+        ui-scale: root.ui-scale;
+        clicked => { root.undo-clicked(); }
+    }
+
+    // Sidebar Section 2: Remove
+    Rectangle {
+        x: root.sidebar-remove-box.x; y: root.sidebar-remove-box.y;
+        width: root.sidebar-remove-box.width; height: root.sidebar-remove-box.height;
+        background: Tokens.surface;
+        border-radius: 10px;
+        border-width: 1px;
+        border-color: Tokens.hairline;
+    }
+
+    Text {
+        x: root.sidebar-remove-title-box.x; y: root.sidebar-remove-title-box.y;
+        width: root.sidebar-remove-title-box.width; height: root.sidebar-remove-title-box.height;
+        text: "Remove";
+        color: Tokens.text;
+        font-size: root.ui-scale * 13px;
+        font-weight: 600;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+    }
+
+    RoundCheckbox {
+        x: 0; y: 0;
+        width: root.card-width; height: root.card-height;
+        box: root.remove-all-box;
+        label: "Remove all metadata";
+        checked: root.remove-all;
+        focused: root.remove-all-focused;
+        ui-scale: root.ui-scale;
+        toggled => { root.remove-all-toggled(); }
+    }
+
+    RoundCheckbox {
+        x: 0; y: 0;
+        width: root.card-width; height: root.card-height;
+        box: root.remove-sensitive-box;
+        label: "Remove camera, GPS and processing data";
+        checked: root.remove-sensitive;
+        focused: root.remove-sensitive-focused;
+        enabled: !root.remove-sensitive-disabled;
+        ui-scale: root.ui-scale;
+        toggled => { root.remove-sensitive-toggled(); }
+    }
+
+    Text {
+        x: root.sidebar-remove-hint-box.x; y: root.sidebar-remove-hint-box.y;
+        width: root.sidebar-remove-hint-box.width; height: root.sidebar-remove-hint-box.height;
+        text: "Orientation and color profile are kept. For audio and video, removing sensitive data clears every tag. The copy is saved next to the original, which stays as it is.";
+        color: Tokens.text-muted;
+        font-size: root.ui-scale * 11px;
+        font-family: "Segoe UI";
+        wrap: word-wrap;
+    }
+
+    // Sidebar Section 3: Summary
+    Rectangle {
+        x: root.sidebar-summary-box.x; y: root.sidebar-summary-box.y;
+        width: root.sidebar-summary-box.width; height: root.sidebar-summary-box.height;
+        background: Tokens.surface;
+        border-radius: 10px;
+        border-width: 1px;
+        border-color: Tokens.hairline;
+    }
+
+    Text {
+        x: root.sidebar-summary-title-box.x; y: root.sidebar-summary-title-box.y;
+        width: root.sidebar-summary-title-box.width; height: root.sidebar-summary-title-box.height;
+        text: "Summary";
+        color: Tokens.text;
+        font-size: root.ui-scale * 13px;
+        font-weight: 600;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+    }
+
+    Text {
+        x: root.sidebar-summary-text-box.x; y: root.sidebar-summary-text-box.y;
+        width: root.sidebar-summary-text-box.width; height: root.sidebar-summary-text-box.height;
+        text: root.summary-text;
+        color: Tokens.text;
+        font-size: root.ui-scale * 13px;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+    }
+
+    // ==========================================
+    // Footer
+    // ==========================================
+    Rectangle {
+        x: root.hairline-bottom-box.x; y: root.hairline-bottom-box.y;
+        width: root.hairline-bottom-box.width; height: root.hairline-bottom-box.height;
+        background: Tokens.hairline;
+    }
+
+    // Tag icon glyph + file name
+    Path {
+        x: root.footer-icon-box.x; y: root.footer-icon-box.y;
+        width: root.footer-icon-box.width; height: root.footer-icon-box.height;
+        commands: "M 3 9 L 9 3 L 17 3 L 17 11 L 11 17 Z";
+        viewbox-width: 20; viewbox-height: 20;
+        fill: transparent;
+        stroke: Tokens.text-muted;
+        stroke-width: 1.5px;
+        stroke-line-cap: round;
+        stroke-line-join: round;
+    }
+
+    Text {
+        x: root.footer-file-box.x; y: root.footer-file-box.y;
+        width: root.footer-file-box.width; height: root.footer-file-box.height;
+        text: root.footer-file-name;
+        color: Tokens.text-muted;
+        font-size: root.ui-scale * 13px;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    // Buttons
+    // Cancel
+    Rectangle {
+        x: root.footer-cancel-box.x - 3px; y: root.footer-cancel-box.y - 3px;
+        width: root.footer-cancel-box.width + 6px; height: root.footer-cancel-box.height + 6px;
+        border-radius: Tokens.radius-control + 3px;
+        border-width: 2px;
+        border-color: Tokens.accent;
+        visible: root.button-focus == 1;
+    }
+
+    Rectangle {
+        x: root.footer-cancel-box.x; y: root.footer-cancel-box.y;
+        width: root.footer-cancel-box.width; height: root.footer-cancel-box.height;
+        border-radius: Tokens.radius-control;
+        background: cancel-touch.pressed ? Tokens.quiet-pressed
+                   : (cancel-touch.has-hover ? Tokens.quiet-hover : Tokens.quiet);
+
+        cancel-touch := TouchArea {
+            clicked => { root.cancel-chosen(); }
+        }
+
+        Text {
+            text: "Cancel";
+            color: Tokens.text;
+            font-size: root.ui-scale * 13px;
+            font-family: "Segoe UI";
+            vertical-alignment: center;
+            horizontal-alignment: center;
+        }
+    }
+
+    // Save copy
+    Rectangle {
+        x: root.footer-save-box.x - 3px; y: root.footer-save-box.y - 3px;
+        width: root.footer-save-box.width + 6px; height: root.footer-save-box.height + 6px;
+        border-radius: Tokens.radius-control + 3px;
+        border-width: 2px;
+        border-color: Tokens.accent;
+        visible: root.button-focus == 2;
+    }
+
+    Rectangle {
+        x: root.footer-save-box.x; y: root.footer-save-box.y;
+        width: root.footer-save-box.width; height: root.footer-save-box.height;
+        border-radius: Tokens.radius-control;
+        background: !root.save-enabled ? Tokens.quiet
+                   : (save-touch.pressed ? Tokens.accent-pressed
+                   : (save-touch.has-hover ? Tokens.accent-hover : Tokens.accent));
+        opacity: root.save-enabled ? 1.0 : 0.5;
+
+        save-touch := TouchArea {
+            enabled: root.save-enabled;
+            clicked => { root.save-chosen(); }
+        }
+
+        Text {
+            text: root.save-title;
+            color: root.save-enabled ? Tokens.content : Tokens.text-muted;
+            font-size: root.ui-scale * 13px;
+            font-family: "Segoe UI";
+            font-weight: 500;
+            vertical-alignment: center;
+            horizontal-alignment: center;
+        }
+    }
+}

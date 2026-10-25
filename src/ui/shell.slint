@@ -409,6 +409,7 @@ export component RoundCheckbox {
     in property <string> label;
     in property <bool> checked: false;
     in property <bool> focused: false;
+    in property <bool> enabled: true;
     in property <float> ui-scale: 1.0;
 
     callback toggled();
@@ -420,15 +421,17 @@ export component RoundCheckbox {
         border-radius: root.box.height / 2 + 3px;
         border-width: 2px;
         border-color: Tokens.accent;
-        visible: root.focused;
+        visible: root.focused && root.enabled;
     }
 
     Rectangle {
         x: root.box.x; y: root.box.y;
         width: root.box.width; height: root.box.height;
         background: transparent;
+        opacity: root.enabled ? 1.0 : 0.4;
 
         TouchArea {
+            enabled: root.enabled;
             clicked => { root.toggled(); }
         }
 
@@ -467,9 +470,10 @@ export component RoundCheckbox {
             height: parent.height;
             text: root.label;
             color: Tokens.text;
-            font-size: root.ui-scale * 13px;
+            font-size: root.ui-scale * 12px;
             font-family: "Segoe UI";
             vertical-alignment: center;
+            wrap: word-wrap;
         }
     }
 }

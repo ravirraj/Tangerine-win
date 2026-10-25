@@ -394,7 +394,7 @@ fn format_duration(seconds: f64) -> String {
 }
 
 /// Formats a system time into a human-readable string.
-fn format_system_time(time: SystemTime) -> String {
+pub fn format_system_time(time: SystemTime) -> String {
     let Ok(elapsed) = time.duration_since(SystemTime::UNIX_EPOCH) else {
         return "Unknown".to_string();
     };

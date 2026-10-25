@@ -274,6 +274,8 @@ struct App {
     crop_window: crate::platform::windows::cropwindow::CropWindow,
     /// The window a file is compressed in, hidden until compress is picked.
     compress_window: crate::platform::windows::compresswindow::CompressWindow,
+    /// The window a file's metadata is inspected and edited in, hidden until metadata is picked.
+    metadata_window: crate::platform::windows::metadatawindow::MetadataWindow,
 }
 
 /// The end of a drag that has not been acted on yet.
@@ -414,6 +416,20 @@ impl App {
         let compress_window = crate::platform::windows::compresswindow::CompressWindow::new(compress_sender)
             .map_err(|reason| reason)?;
 
+        let (metadata_sender, metadata_messages) = std::sync::mpsc::channel();
+        {
+            let sender = sender.clone();
+            std::thread::spawn(move || {
+                while let Ok(event) = metadata_messages.recv() {
+                    if sender.send(Message::ToolWindow(event)).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+        let metadata_window = crate::platform::windows::metadatawindow::MetadataWindow::new(metadata_sender)
+            .map_err(|reason| reason)?;
+
         Ok(Self {
             controller,
             animation: WheelAnimation::new(),
@@ -461,6 +477,7 @@ impl App {
             timeline_window,
             crop_window,
             compress_window,
+            metadata_window,
         })
     }
 
@@ -663,6 +680,12 @@ impl App {
         // A compress asks for its own card: presets, video options and target size.
         if segment.id == "tools.compress" {
             self.compress_window
+                .show_for(&segment.id, &segment.label, &segment.detail, files);
+            return;
+        }
+        // A metadata operation asks for its own card: inspect/edit tags, remove metadata.
+        if segment.id == "tools.metadata" {
+            self.metadata_window
                 .show_for(&segment.id, &segment.label, &segment.detail, files);
             return;
         }
