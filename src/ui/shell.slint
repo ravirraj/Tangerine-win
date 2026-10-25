@@ -478,3 +478,141 @@ export component RoundCheckbox {
     }
 }
 
+// A labeled slider: track with active fill, optional tick dots,
+// white capsule thumb with shadow, and value readout on the right.
+export component LabeledSlider {
+    in property <Panel> box;
+    in property <string> label;
+    in property <string> value-text;
+    in property <float> min: 0.0;
+    in property <float> max: 1.0;
+    in property <float> value: 0.5;
+    in property <[float]> ticks: [];
+    in property <bool> focused: false;
+    in property <bool> enabled: true;
+    in property <float> ui-scale: 1.0;
+
+    callback value-changed(float);
+
+    // Keyboard focus ring
+    Rectangle {
+        x: root.box.x - 3px; y: root.box.y - 3px;
+        width: root.box.width + 6px; height: root.box.height + 6px;
+        border-radius: 6px;
+        border-width: 2px;
+        border-color: Tokens.accent;
+        visible: root.focused && root.enabled;
+    }
+
+    Rectangle {
+        x: root.box.x; y: root.box.y;
+        width: root.box.width; height: root.box.height;
+        background: transparent;
+
+        // Label on left
+        Text {
+            x: 0;
+            y: 0;
+            height: 18px * root.ui-scale;
+            text: root.label;
+            font-size: 13px * root.ui-scale;
+            font-weight: 500;
+            font-family: "Segoe UI";
+            color: Tokens.text;
+            vertical-alignment: center;
+        }
+
+        // Value readout on right
+        Text {
+            x: parent.width - self.width;
+            y: 0;
+            height: 18px * root.ui-scale;
+            text: root.value-text;
+            font-size: 13px * root.ui-scale;
+            font-weight: 400;
+            font-family: "Segoe UI";
+            color: Tokens.text;
+            vertical-alignment: center;
+            horizontal-alignment: right;
+        }
+
+        // Track and thumb container
+        track-area := Rectangle {
+            x: 0;
+            y: 20px * root.ui-scale;
+            width: parent.width;
+            height: 24px * root.ui-scale;
+            background: transparent;
+
+            property <float> progress: Math.max(0.0, Math.min(1.0, (root.value - root.min) / Math.max(0.0001, root.max - root.min)));
+            property <length> track-height: 4px * root.ui-scale;
+            property <length> track-y: (parent.height - self.track-height) / 2;
+            property <length> thumb-w: 10px * root.ui-scale;
+            property <length> thumb-h: 16px * root.ui-scale;
+
+            // Inactive track (full width)
+            Rectangle {
+                x: 0;
+                y: track-area.track-y;
+                width: parent.width;
+                height: track-area.track-height;
+                border-radius: 2px * root.ui-scale;
+                background: #DFDFDF;
+            }
+
+            // Active track fill up to thumb center
+            Rectangle {
+                x: 0;
+                y: track-area.track-y;
+                width: track-area.progress * parent.width;
+                height: track-area.track-height;
+                border-radius: 2px * root.ui-scale;
+                background: #A0A0A0;
+            }
+
+            // Tick dots below track
+            for tick in root.ticks : Rectangle {
+                x: tick * (parent.width - 2px * root.ui-scale);
+                y: track-area.track-y + track-area.track-height + 3px * root.ui-scale;
+                width: 2px * root.ui-scale;
+                height: 2px * root.ui-scale;
+                border-radius: 1px * root.ui-scale;
+                background: #B4B4B4;
+            }
+
+            // Thumb shadow
+            Rectangle {
+                x: track-area.progress * (parent.width - track-area.thumb-w) + 0.5px;
+                y: (parent.height - track-area.thumb-h) / 2 + 1px;
+                width: track-area.thumb-w;
+                height: track-area.thumb-h;
+                border-radius: 3px * root.ui-scale;
+                background: #00000018;
+            }
+
+            // White capsule thumb
+            Rectangle {
+                x: track-area.progress * (parent.width - track-area.thumb-w);
+                y: (parent.height - track-area.thumb-h) / 2;
+                width: track-area.thumb-w;
+                height: track-area.thumb-h;
+                border-radius: 3px * root.ui-scale;
+                background: #FFFFFF;
+                border-width: 1px;
+                border-color: #D0D0D0;
+            }
+
+            // Touch interaction
+            TouchArea {
+                enabled: root.enabled;
+                clicked => {
+                    let ratio = Math.max(0.0, Math.min(1.0, (self.mouse-x / parent.width)));
+                    let new-val = root.min + ratio * (root.max - root.min);
+                    root.value-changed(new-val);
+                }
+            }
+        }
+    }
+}
+
+
