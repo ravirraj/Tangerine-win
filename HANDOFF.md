@@ -68,22 +68,28 @@ All `reference\…` paths above are relative to the repo root
 ## 3. State at handoff
 
 - Branch `phase/b-10-tool-windows`, tree clean. Chain ends:
-  `… 3352a14` (windowhost refactor) → `5805672` (B-10.8 audit & evidence)
-  → `fe97de0` (compress execution backend) → `f07f900` (compress window host + card)
-  → `b4e70da` (metadata execution backend) → `500d9cc` (metadata window host + card).
-- Tools wheel now has **8** implemented ops: compress, crop, trim, split, rotate,
-  resize, merge, metadata. Trim (B-10.4), Split (B-10.6), Crop (B-10.7),
-  Compress (B-10.8) and Metadata (B-10.8) have real dedicated windows matching
-  reference behavior and visual mockups.
-- Tests at handoff: **381 unit + 45 ignored, 0 failures** (real-FFmpeg operation
+  `… 500d9cc` (metadata window host + card)
+  → `453681b` (audio trim backend) → `31d584e` (audio trim timeline skin)
+  → `9584c9a` (normalize volume backend) → `df67df1` (shared LabeledSlider control)
+  → `bee8c6e` (normalize volume window host + Slint card)
+  → `3380dbd` (convert audio channels backend)
+  → `42b08d8` (convert audio channels window host + Slint card).
+- Tools wheel now has **10** implemented ops: compress, crop, trim, split, rotate,
+  resize, merge, metadata, normalize, channels. Dedicated windows exist for
+  Trim Video, Split Video, Crop Video/Image, Compress, Edit Metadata, Trim Audio,
+  Normalize Volume, and Convert Audio Channels matching reference behavior and visual mockups.
+- Tests at handoff: **408 unit + 51 ignored, 0 failures** (real-FFmpeg operation
   tests + window captures: trim, split, crop video, crop image, compress,
-  compress video, metadata).
+  metadata, trim-audio, normalize, channels).
 - `ToolSettings` fields today: `width, height (u32)`, `start_ms, end_ms (u64)`,
   `points_ms: Vec<u64>`, `crop_x, crop_y, crop_w, crop_h (Option<u32>)`,
-  `compress_preset: Option<CompressPreset>`, `target_bytes: Option<u64>`,
+  `compress_strong: bool`, `target_bytes: Option<u64>`,
   `max_long_edge: Option<u32>`, `max_fps: Option<u32>`,
-  `metadata_tags: HashMap<MetadataTag, String>`, `metadata_remove_all: bool`,
-  `metadata_remove_sensitive: bool`.
+  `metadata_tags: Vec<(String, String)>`, `metadata_remove_all: bool`,
+  `metadata_remove_sensitive: bool`, `normalize_lufs_x10: Option<i32>`,
+  `normalize_range_x10: Option<i32>`, `normalize_true_peak_x10: Option<i32>`,
+  `channel_mode: Option<String>`, `channel_left_gain: Option<u32>`,
+  `channel_right_gain: Option<u32>`.
 
 ## 4. The conventions a new window must follow
 

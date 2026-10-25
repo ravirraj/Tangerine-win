@@ -201,14 +201,12 @@ must match the mockup; read both.
 
 ## 4. What is left, in order (18 of the reference's 22 tools)
 
-Done: trim (B-10.4), split (B-10.6), crop video + crop images (B-10.7).
+Done: trim (B-10.4), split (B-10.6), crop video + crop images (B-10.7), compress + edit metadata (P3-9 / B-10.8), audio trio (P3-10 / B-10.9: trim audio, normalize volume, convert audio channels).
 Remaining, in the agreed batch order:
 
 | Batch | Tools | Backends | New controls to build |
 |---|---|---|---|
-| **P3-9 NEXT** | Compress + Edit metadata | compress **done**, metadata **partial** | **Slider (+ticks)**, **Checkbox** — build the control in shell.slint when the first one is needed, not before |
-| P3-10 | Normalize volume, Trim audio, Convert audio channels | — | WaveformPanel family |
-| P3-11 | Redact video, audio (bleep), photos | — | LaneClip editor |
+| **P3-11 NEXT** | Redact video, audio (bleep), photos | — | LaneClip editor |
 | P3-12 | Save video frames (snapshots) | — | FrameChip |
 | P3-13 | Join videos, Merge PDFs | merge **done** | ItemRow list/reorder |
 | P3-14 | Organize PDF pages | — | PageCard grid |
