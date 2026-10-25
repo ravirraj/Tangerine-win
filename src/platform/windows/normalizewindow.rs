@@ -341,6 +341,25 @@ pub struct NormalizeWindow {
     pub sender: Sender<ToolEvent>,
 }
 
+fn outer_size(window: HWND, client_w: i32, client_h: i32) -> (i32, i32) {
+    let mut rect = RECT {
+        left: 0,
+        top: 0,
+        right: client_w,
+        bottom: client_h,
+    };
+    unsafe {
+        let _ = windows::Win32::UI::HiDpi::AdjustWindowRectExForDpi(
+            &mut rect,
+            fixed_style(),
+            false,
+            windows::Win32::UI::WindowsAndMessaging::WINDOW_EX_STYLE::default(),
+            (scale_factor(window) * 96.0).round() as u32,
+        );
+    }
+    (rect.right - rect.left, rect.bottom - rect.top)
+}
+
 impl NormalizeWindow {
     pub fn new(sender: Sender<ToolEvent>) -> Result<Self, String> {
         let class_name = to_wide("OpenTangerineNormalizeCard");
@@ -515,6 +534,7 @@ impl NormalizeWindow {
         let scale = scale_factor(self.window);
         let phys_w = (CARD_W as f32 * scale).round() as i32;
         let phys_h = (CARD_H as f32 * scale).round() as i32;
+        let (outer_w, outer_h) = outer_size(self.window, phys_w, phys_h);
 
         unsafe {
             SetWindowPos(
@@ -522,8 +542,8 @@ impl NormalizeWindow {
                 None,
                 0,
                 0,
-                phys_w,
-                phys_h,
+                outer_w,
+                outer_h,
                 SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
             );
         }
