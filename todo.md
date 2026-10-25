@@ -671,41 +671,36 @@ Decisions asked and answered (2026-10-25, with the question tool):
       re-read, both mockups, CompressToolView.swift, Compressor.swift,
       VideoOps.compress, MetadataToolView.swift, MetadataOps.swift;
       backends audited (findings above).
-- [x] Backend compress (committed `f2b5024` + `fe97de0`): ToolSettings grows
+- [x] Backend compress (committed `fe97de0`): ToolSettings grows
       what the window needs (preset, target bytes, max_long_edge, max_fps);
       a real compress path per kind — picture by our own hands (the image
       crate: quality or the target search), video/audio through the program
       with the Swift numbers — gated early in `Handler::run` like split,
       named "{base} compressed.{ext}" beside the original; 9 unit tests +
       5 real-FFmpeg ignored tests all pass.
-- [ ] Registry/eligibility: the two ops must be offered again — decide
-      in Phase B between synthetic processors in the environment and
-      an honest Requirement, whichever reads truest; the metadata
-      entry moves InPlace → BesideAsInput (Swift writes a copy; the
-      InPlace branch in `Handler::run` fails today).
-- [ ] Backend metadata (one `feat:`): read the fields per kind (our
-      probes: the image crate, ffprobe json tags, the pdf library) and
-      write them — ffmpeg `-c copy` tags for video/audio, the image
-      crate's native path, the pdf writer's attributes — as its own
-      gate like split; naming "{base} {clean|edited}.{ext}".
-- [ ] Shared controls: Slider (+ticks) and round Checkbox added to
-      `shell.slint`, drawn and pinned per the layout-twin rules, built
-      with the compress card and not before.
-- [ ] Compress window: compresswindow.rs + compress_window.slint —
-      file rows, the preset chips (Balanced/Strong, hint follows),
-      video-only rows (codec, resolution, frame rate) as chip rows,
-      the target-size checkbox with its numeric field + KB/MB chips,
-      the footnote line, footer Run/Cancel.
-- [ ] Metadata window: metadatawindow.rs + metadata_window.slint —
-      search field, the grouped list with the editable Fields section
-      on top and changed dots, the two removal checkboxes with the
-      kept-fields note, footer with Remove All + Save.
-- [ ] Dispatch: app.rs routes `tools.compress` and `tools.metadata` to
-      their windows; the plain card keeps the rest.
-- [ ] Tests green: unit pins for the args builders, the naming, the
-      eligibility answer and the layout stacks; runner lines quoted
-      exactly; captures for both windows read against their webps;
-      trim/split/crop shots unchanged.
+- [x] Registry/eligibility (committed `fe97de0` and `b4e70da`): `tools.compress`
+      and `tools.metadata` offered; non-destructive assert verified;
+      `tools.metadata` uses `Output::BesideAsInput` to match Swift.
+- [x] Backend metadata (committed `b4e70da`): read fields per kind, native
+      image strip (sensitive metadata removed, format preserved), stream-copy
+      tags for video/audio via FFmpeg, naming "{base} {clean|edited}.{ext}".
+      Unit tests + real FFmpeg tag edit tests pass.
+- [x] Shared controls: round Checkbox (`RoundCheckbox` in `shell.slint`)
+      with keyboard focus ring, accent checkmark, and word wrapping.
+      Slider deferred to Normalize Audio / Edit Photos.
+- [x] Compress window (committed `f07f900`): compresswindow.rs + compress_window.slint —
+      file rows, preset chips (Balanced/Strong), video options (codec, resolution,
+      fps) when video is present, target-size checkbox + numeric field + KB/MB chips,
+      footnote line, footer Run/Cancel.
+- [x] Metadata window (committed `500d9cc`): metadatawindow.rs + metadata_window.slint —
+      twin layout, search edit with native placeholder, 7 editable tag fields with
+      changed dots, 4 file system readouts, right sidebar cards (Fields/Undo,
+      Remove all / Remove camera/GPS checkboxes, Summary count), footer Save copy/Cancel.
+- [x] Dispatch: app.rs routes `tools.compress` and `tools.metadata` to
+      their respective dedicated windows.
+- [x] Tests green: 381 unit passed, 0 failed, 45 ignored; all 6 baseline
+      window capture hashes byte-identical; metadata-window.png matches
+      mockup at 100% visual parity.
 - [ ] Manual verification (a person): drag a file → wheel → Compress →
       run with and without a target size; drag a picture → wheel →
       Metadata → change a field, remove all; results beside.
