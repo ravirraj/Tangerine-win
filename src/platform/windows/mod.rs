@@ -13,3 +13,4 @@ pub mod shell;
 pub mod shellselection;
 pub mod timelinewindow;
 pub mod toolwindow;
+pub mod windowhost;

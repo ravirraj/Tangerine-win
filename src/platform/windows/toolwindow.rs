@@ -48,6 +48,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WS_VISIBLE, ES_NUMBER, WINDOW_EX_STYLE, WINDOW_STYLE,
 };
 
+use crate::platform::windows::windowhost::{scale_factor, screen_scale, to_wide};
 use crate::radial::execution::ToolSettings;
 use crate::ui::wheel::{window_for_next_component, Bgra8, Panel, ToolCard};
 
@@ -893,33 +894,6 @@ fn number(text: &str) -> Option<u32> {
     text.trim().parse::<u32>().ok().filter(|value| *value > 0)
 }
 
-/// How much the display stretches everything.
-fn scale_factor(window: HWND) -> f32 {
-    unsafe {
-        let context = windows::Win32::Graphics::Gdi::GetDC(Some(window));
-        let dots = windows::Win32::Graphics::Gdi::GetDeviceCaps(
-            Some(context),
-            windows::Win32::Graphics::Gdi::LOGPIXELSY,
-        );
-        let _ = windows::Win32::Graphics::Gdi::ReleaseDC(Some(window), context);
-        dots as f32 / 96.0
-    }
-}
-
-/// How much the display stretches everything, before any window is made
-/// to ask it of.
-fn screen_scale() -> f32 {
-    unsafe {
-        let context = windows::Win32::Graphics::Gdi::GetDC(None);
-        let dots = windows::Win32::Graphics::Gdi::GetDeviceCaps(
-            Some(context),
-            windows::Win32::Graphics::Gdi::LOGPIXELSY,
-        );
-        let _ = windows::Win32::Graphics::Gdi::ReleaseDC(None, context);
-        dots as f32 / 96.0
-    }
-}
-
 /// The font the system's fields are given, in the face people read.
 unsafe fn interface_font(window: HWND) -> windows::Win32::Graphics::Gdi::HFONT {
     let scale = scale_factor(window);
@@ -941,11 +915,6 @@ unsafe fn interface_font(window: HWND) -> windows::Win32::Graphics::Gdi::HFONT {
             w!("Segoe UI"),
         )
     }
-}
-
-/// Words in the wide letters the system reads.
-fn to_wide(text: &str) -> Vec<u16> {
-    text.encode_utf16().chain([0]).collect()
 }
 
 #[cfg(test)]
@@ -985,7 +954,7 @@ mod tests {
 mod show_tests {
     use super::*;
     use windows::Win32::UI::WindowsAndMessaging::{
-        DispatchMessageW, GetMessageW, MSG, PM_REMOVE, PeekMessageW, TranslateMessage,
+        DispatchMessageW, MSG, PM_REMOVE, PeekMessageW, TranslateMessage,
     };
 
     /// Showing the card and pumping the messages that come of it must not

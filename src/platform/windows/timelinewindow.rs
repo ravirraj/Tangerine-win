@@ -29,7 +29,7 @@ use std::sync::mpsc::Sender;
 
 use slint::platform::software_renderer::MinimalSoftwareWindow;
 use slint::platform::{PointerEventButton, WindowAdapter, WindowEvent};
-use slint::{ComponentHandle, LogicalPosition, PhysicalSize, SharedPixelBuffer};
+use slint::{LogicalPosition, PhysicalSize, SharedPixelBuffer};
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{BeginPaint, CreateSolidBrush, InvalidateRect};
@@ -45,12 +45,15 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SetWindowTextW, ShowWindow, SW_HIDE, SW_SHOW, SWP_NOACTIVATE, SWP_NOZORDER, CW_USEDEFAULT,
     IDC_ARROW, LWA_ALPHA, WNDCLASSW, WM_CLOSE, WM_DESTROY, WM_DPICHANGED, WM_ERASEBKGND,
     WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_PAINT, WM_SIZE, WM_TIMER,
-    WS_EX_LAYERED, WS_MAXIMIZEBOX, WS_OVERLAPPEDWINDOW, WS_THICKFRAME,
+    WS_EX_LAYERED,
 };
 
 use crate::media::frames::{duration_of, frame_at, pillar_of};
 use crate::media::locator;
 use crate::platform::windows::toolwindow::ToolEvent;
+use crate::platform::windows::windowhost::{
+    fixed_style, fraction, scale_factor, screen_scale, timecode, to_wide,
+};
 use crate::radial::execution::ToolSettings;
 use crate::ui::wheel::{window_for_next_component, Bgra8, Panel, TrimCard};
 
@@ -305,12 +308,6 @@ pub struct TimelineWindow {
 
 // The window belongs to the thread that made it and is used by no other.
 unsafe impl Send for TimelineWindow {}
-
-/// The style of a window that opens the size its content wants and stays
-/// that way: a caption to carry it, no grip to stretch it.
-fn fixed_style() -> windows::Win32::UI::WindowsAndMessaging::WINDOW_STYLE {
-    WS_OVERLAPPEDWINDOW & !(WS_THICKFRAME | WS_MAXIMIZEBOX)
-}
 
 /// How wide a window of this card must be made so that what a person
 /// uses of it is the size the drawing asked for, at this stretch.
@@ -1028,25 +1025,6 @@ impl Layout {
     }
 }
 
-/// A share of the whole, from a moment of it.
-fn fraction(moment: f64, duration: f64) -> f32 {
-    if duration > 0.0 {
-        (moment / duration).clamp(0.0, 1.0) as f32
-    } else {
-        0.0
-    }
-}
-
-/// How a moment is said: minutes, seconds and the hundredths, in the
-/// face where every digit takes the same room — the way the reference
-/// says its times.
-fn timecode(moment: f64) -> String {
-    let moment = moment.max(0.0);
-    let minutes = (moment / 60.0) as u64;
-    let seconds = moment - (minutes as f64) * 60.0;
-    format!("{minutes}:{seconds:05.2}")
-}
-
 /// Says what the window was asked, to whoever is listening.
 fn send(event: ToolEvent) {
     EVENTS.with(|slot| {
@@ -1673,38 +1651,6 @@ unsafe fn cancel(window: HWND) {
     unsafe { ShowWindow(window, SW_HIDE) };
 }
 
-/// How much the display stretches everything.
-fn scale_factor(window: HWND) -> f32 {
-    unsafe {
-        let context = windows::Win32::Graphics::Gdi::GetDC(Some(window));
-        let dots = windows::Win32::Graphics::Gdi::GetDeviceCaps(
-            Some(context),
-            windows::Win32::Graphics::Gdi::LOGPIXELSY,
-        );
-        let _ = windows::Win32::Graphics::Gdi::ReleaseDC(Some(window), context);
-        dots as f32 / 96.0
-    }
-}
-
-/// How much the display stretches everything, before any window is made
-/// to ask it of.
-fn screen_scale() -> f32 {
-    unsafe {
-        let context = windows::Win32::Graphics::Gdi::GetDC(None);
-        let dots = windows::Win32::Graphics::Gdi::GetDeviceCaps(
-            Some(context),
-            windows::Win32::Graphics::Gdi::LOGPIXELSY,
-        );
-        let _ = windows::Win32::Graphics::Gdi::ReleaseDC(None, context);
-        dots as f32 / 96.0
-    }
-}
-
-/// Words in the wide letters the system reads.
-fn to_wide(text: &str) -> Vec<u16> {
-    text.encode_utf16().chain([0]).collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1826,15 +1772,9 @@ mod tests {
 #[cfg(test)]
 mod show_tests {
     use super::*;
-    use crate::media::runner::{ProcessRunner, SystemRunner};
-    use windows::Win32::Graphics::Gdi::{
-        CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDIBits,
-        GetWindowDC, ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER,
-        BI_RGB, DIB_RGB_COLORS,
-    };
-    use windows::Win32::Storage::Xps::{PrintWindow, PRINT_WINDOW_FLAGS};
+    use crate::platform::windows::windowhost::screenshot::{capture, make_test_video};
     use windows::Win32::UI::WindowsAndMessaging::{
-        DispatchMessageW, GetWindowRect, MSG, PM_REMOVE, PeekMessageW, TranslateMessage,
+        DispatchMessageW, MSG, PM_REMOVE, PeekMessageW, TranslateMessage,
     };
 
     /// Showing the card and pumping the messages that come of it must not
@@ -1862,103 +1802,6 @@ mod show_tests {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
         window.hide();
-    }
-
-    /// Makes a small test video the way the trim test does, so the
-    /// capture has a real frame and a real length to show.
-    fn make_test_video(folder: &std::path::Path) -> PathBuf {
-        use std::ffi::OsString;
-        let ffmpeg = std::path::Path::new("vendor")
-            .join("ffmpeg")
-            .join("ffmpeg.exe");
-        assert!(ffmpeg.is_file(), "the conversion program is not there");
-        let raw = folder.join("capture.raw");
-        std::fs::write(&raw, vec![255u8, 0, 0, 255].repeat(160 * 120 * 30))
-            .expect("the pixels could be written");
-        let video = folder.join("capture.mp4");
-        let arguments: Vec<OsString> = [
-            "-hide_banner",
-            "-nostdin",
-            "-y",
-            "-f",
-            "rawvideo",
-            "-pix_fmt",
-            "rgba",
-            "-s",
-            "160x120",
-            "-r",
-            "10",
-            "-i",
-        ]
-        .iter()
-        .map(|word| OsString::from(*word))
-        .chain([
-            raw.as_os_str().to_os_string(),
-            OsString::from("-c:v"),
-            OsString::from("mpeg4"),
-            OsString::from("-pix_fmt"),
-            OsString::from("yuv420p"),
-            OsString::from("-f"),
-            OsString::from("mov"),
-            video.as_os_str().to_os_string(),
-        ])
-        .collect();
-        let run = SystemRunner.run(&ffmpeg, &arguments, None).expect("the video was made");
-        assert!(run.succeeded(), "the capture video was not made: {}", run.stderr);
-        video
-    }
-
-    /// Puts what the window looks like into a picture, so the design can
-    /// be checked without someone sitting at the screen.
-    fn capture(window: HWND, path: &std::path::Path) {
-        unsafe {
-            let mut rect = RECT::default();
-            let _ = GetWindowRect(window, &mut rect);
-            let width = rect.right - rect.left;
-            let height = rect.bottom - rect.top;
-            let screen = GetWindowDC(Some(window));
-            let memory = CreateCompatibleDC(Some(screen));
-            let bitmap = CreateCompatibleBitmap(screen, width, height);
-            let old = SelectObject(memory, bitmap.into());
-            // PW_RENDERFULLCONTENT: the window is layered and rounded;
-            // plain PrintWindow would miss what the system composes.
-            const PW_RENDERFULLCONTENT: PRINT_WINDOW_FLAGS =
-                PRINT_WINDOW_FLAGS(2);
-            let _ = PrintWindow(window, memory, PW_RENDERFULLCONTENT);
-            let mut info = BITMAPINFO::default();
-            info.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
-            info.bmiHeader.biWidth = width;
-            info.bmiHeader.biHeight = -height;
-            info.bmiHeader.biPlanes = 1;
-            info.bmiHeader.biBitCount = 32;
-            info.bmiHeader.biCompression = BI_RGB.0 as u32;
-            let mut pixels = vec![0u8; (width.max(0) * height.max(0)) as usize * 4];
-            let _ = GetDIBits(
-                memory,
-                bitmap,
-                0,
-                height as u32,
-                Some(pixels.as_mut_ptr() as *mut core::ffi::c_void),
-                &mut info,
-                DIB_RGB_COLORS,
-            );
-            let _ = SelectObject(memory, old);
-            let _ = DeleteObject(bitmap.into());
-            let _ = DeleteDC(memory);
-            let _ = ReleaseDC(Some(window), screen);
-            // The bytes come back blue-first; the picture wants red-first.
-            for pixel in pixels.chunks_exact_mut(4) {
-                pixel.swap(0, 2);
-            }
-            image::save_buffer(
-                path,
-                &pixels,
-                width as u32,
-                height as u32,
-                image::ExtendedColorType::Rgba8,
-            )
-            .expect("the capture was written");
-        }
     }
 
     /// Opens the trim window on a real video, lets it come in and draw,
