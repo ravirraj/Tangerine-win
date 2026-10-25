@@ -596,6 +596,138 @@ Deliberate differences from the mockups, and why:
       shots and three buffer shots were regenerated through the shared
       helpers and are byte-identical (SHA-256) to the pre-refactor set.
 
+### B-10.8 Compress + Edit metadata (roadmap P3-9) — reference: tool-windows/compress.webp + removeMetadata.webp + CompressToolView.swift / Compressor.swift / MetadataToolView.swift / MetadataOps.swift
+
+Original behavior (Swift, authoritative — read 2026-10-25):
+- COMPRESS: file rows (icon, name, "size · saves as …"); Compression
+  preset with two cases, Balanced (default) and Strong, and a hint per
+  side ("Noticeably smaller with little visible change." / "Smallest
+  output; quality loss is visible."). Video-only rows when any video
+  (gif excluded) is in the batch: codec H.264 | HEVC with its hint,
+  resolution Original/4K/1080p/720p/480p by the long edge (never
+  enlarging), frame rate Original/60/30/24. A "Target file size"
+  toggle; when on, a numeric field + KB | MB + "per file", and the
+  hint says videos and audio take a bitrate from the duration and PDFs
+  get their pictures recompressed. Footnote: N files, total size,
+  originals untouched, copies beside. The numbers the presets carry:
+  image quality 0.72 / 0.5, video bitrate factor 0.6 / 0.35 (HEVC
+  ×0.65), audio bitrate 128k / 64k; strong PNG shrinks the long edge
+  to 0.7 when shrinking is allowed. A target size is searched for:
+  pictures binary-search the quality between 0.15 and 0.95 within 12
+  tries and shrink ×0.8 when nothing fits; transparent PNGs shrink
+  ×0.8 up to 12 times; video takes bitrate = bytes·8·0.94 / duration −
+  min(audio, 128k), floor 150k; audio clamps 32k…320k. Output format
+  rules: png stays png only with transparency, else jpg; bmp/tiff/svg
+  become jpg; webp/avif keep when encodable; video goes mp4; audio
+  mp3 when the program is there, else m4a. Results are named
+  "{base} compressed.{ext}".
+- METADATA: a list of every field grouped File, Media, Document,
+  Tags, Image, Exif, TIFF, GPS, IPTC, MakerApple, Chapters; a search
+  field filters by key, value and group; a "Fields" section holds the
+  common editable tags (image: title, description, author, keywords,
+  copyright, date taken, comment; audio adds album/genre/year; pdf:
+  title/author/subject/keywords) with a dot on the changed ones; only
+  changed fields are written. Two removal toggles — "Remove all
+  metadata" and "Remove camera, GPS and processing data" (the second
+  sleeps while the first holds; sensitive = GPS/Exif/TIFF/IPTC/XMP;
+  orientation and colour profile are kept). Save is enabled by any
+  change or removal. The write makes a COPY named
+  "{base} {clean|edited}.{ext}" beside the original. Video/audio go
+  through the program with the streams copied (`-map 0 -c copy`,
+  `-metadata k=v`; remove-all is `-map_metadata -1 -map_chapters
+  -1`); pictures keep their format when it can be written natively,
+  else png; PDF writes its document attributes.
+
+Audit of our backends (read before building — the truth is less than
+the handoff said):
+- `tools.compress` has NO handler branch: it falls through `run_one`
+  into the plain `build_convert_args` re-encode — no quality, no
+  target size, no image rules. It also requires a processor named
+  "compress" that the environment never carries, so the wheel has
+  never offered it. A stub, in two ways.
+- `tools.metadata` is worse: `Output::InPlace` is failed with
+  UnsupportedKind in `Handler::run` before anything runs, and its
+  "metadata" processor does not exist either. There is no metadata
+  backend at all.
+- `ToolSettings` carries nothing either tool needs — no preset, no
+  target bytes, no metadata entries. Both grow in Phase B.
+- Side finding, not this batch: `tools.merge` is in the same boat
+  (requires a "merge" processor that does not exist; no handler
+  branch) although HANDOFF/PLAYBOOK say "merge done" — pinned here so
+  P3-13 starts from the truth.
+
+Decisions asked and answered (2026-10-25, with the question tool):
+- Shared controls for this batch: **Slider + Checkbox**, the
+  handoff's original plan — the Slider is built for the library and
+  is not used by these two windows (a later batch, the Edit Photo
+  family, takes it first); no Segmented control is built.
+- The toggle draws as a **round checkbox** (the mockup), not the
+  Swift switch; the Swift keeps the behavior.
+
+- [x] Plan (this section) and evidence read in order: MAPPING-ROADMAP
+      re-read, both mockups, CompressToolView.swift, Compressor.swift,
+      VideoOps.compress, MetadataToolView.swift, MetadataOps.swift;
+      backends audited (findings above).
+- [ ] Backend compress (one `feat:`): ToolSettings grows what the
+      window needs (preset, target bytes); a real compress path per
+      kind — picture by our own hands (the image crate: quality or the
+      target search), video/audio/pdf through the program with the
+      Swift numbers — gated early in `Handler::run` like split, named
+      "{base} compressed.{ext}" beside the original; real-FFmpeg
+      ignored tests for at least one picture and one video.
+- [ ] Registry/eligibility: the two ops must be offered again — decide
+      in Phase B between synthetic processors in the environment and
+      an honest Requirement, whichever reads truest; the metadata
+      entry moves InPlace → BesideAsInput (Swift writes a copy; the
+      InPlace branch in `Handler::run` fails today).
+- [ ] Backend metadata (one `feat:`): read the fields per kind (our
+      probes: the image crate, ffprobe json tags, the pdf library) and
+      write them — ffmpeg `-c copy` tags for video/audio, the image
+      crate's native path, the pdf writer's attributes — as its own
+      gate like split; naming "{base} {clean|edited}.{ext}".
+- [ ] Shared controls: Slider (+ticks) and round Checkbox added to
+      `shell.slint`, drawn and pinned per the layout-twin rules, built
+      with the compress card and not before.
+- [ ] Compress window: compresswindow.rs + compress_window.slint —
+      file rows, the preset chips (Balanced/Strong, hint follows),
+      video-only rows (codec, resolution, frame rate) as chip rows,
+      the target-size checkbox with its numeric field + KB/MB chips,
+      the footnote line, footer Run/Cancel.
+- [ ] Metadata window: metadatawindow.rs + metadata_window.slint —
+      search field, the grouped list with the editable Fields section
+      on top and changed dots, the two removal checkboxes with the
+      kept-fields note, footer with Remove All + Save.
+- [ ] Dispatch: app.rs routes `tools.compress` and `tools.metadata` to
+      their windows; the plain card keeps the rest.
+- [ ] Tests green: unit pins for the args builders, the naming, the
+      eligibility answer and the layout stacks; runner lines quoted
+      exactly; captures for both windows read against their webps;
+      trim/split/crop shots unchanged.
+- [ ] Manual verification (a person): drag a file → wheel → Compress →
+      run with and without a target size; drag a picture → wheel →
+      Metadata → change a field, remove all; results beside.
+
+Deliberate differences from the mockups, and why:
+- Native title bars ("Compress", "Metadata") instead of the frameless
+  centred header — the B-10.4 chrome decision every window keeps.
+- The preset picker is a chip row (Balanced/Strong), not a segmented
+  control — the shared Segmented is deferred; the crop batch's chips
+  are the established in-card pattern for few-choice pickers.
+- The mockup's "Image size: Keep original dimensions" dropdown is not
+  built: the Swift compress view has no image-size control at all
+  (resolution is video-only, and resizeLongEdge is called with 0) —
+  Swift wins over the mockup.
+- "Compress to target file size" (mockup) vs "Target file size"
+  (Swift): the Swift label; drawn as a round checkbox, not a switch.
+- The metadata list loses the mockup's per-row minus circles: removal
+  in Swift lives in the two checkboxes, and only the Fields section
+  is editable — the rows are readings, not entries.
+- Swift's HEVC hint names Mac encoders (videotoolbox); our hint keeps
+  the sentence and drops the Mac's part.
+- Results are copies beside the original with the B-8 collision rule
+  ("compressed"/"clean"/"edited" suffixes), so the metadata entry's
+  InPlace is corrected rather than honoured.
+
 ### B-10.2 FFmpeg-backed windows (1-3 days each once template exists)
 - [ ] Change video speed (setpts/atempo, preserve pitch)
 - [ ] Split video (custom points or equal parts, one output folder)
