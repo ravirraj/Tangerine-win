@@ -63,13 +63,21 @@ export component ToolCard inherits Window {
     }
 
     CardHeader {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
         file-name: root.file-name;
         detail: root.detail;
         ui-scale: root.ui-scale;
         header-box: root.header-box;
         detail-box: root.detail-box;
     }
-    Hairline { box: root.hairline-top; }
+    Hairline {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.hairline-top;
+    }
 
     // The body: the file's own picture, filling its whole card.
     Rectangle {
@@ -89,21 +97,35 @@ export component ToolCard inherits Window {
     }
 
     if root.wants-size: FieldTile {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
         box: root.width-tile;
         label: "Width";
         focused: root.width-focused;
         ui-scale: root.ui-scale;
     }
     if root.wants-size: FieldTile {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
         box: root.height-tile;
         label: "Height";
         focused: root.height-focused;
         ui-scale: root.ui-scale;
     }
 
-    Hairline { box: root.hairline-bottom; }
+    Hairline {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.hairline-bottom;
+    }
 
     CardFooter {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
         ui-scale: root.ui-scale;
         helper-box: root.helper-box;
         cancel-box: root.cancel-box;

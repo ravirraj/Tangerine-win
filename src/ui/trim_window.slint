@@ -56,6 +56,8 @@ export component TrimCard inherits Window {
     in property <string> start-text;
     in property <string> end-text;
     in property <string> playhead-text;
+    // The video's own moments, for the strip to wear.
+    in property <image> filmstrip;
 
     // 0 no cap, 1 the start cap, 2 the end cap.
     in property <int> handle-focus;
@@ -76,13 +78,21 @@ export component TrimCard inherits Window {
     }
 
     CardHeader {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
         file-name: root.file-name;
         detail: root.detail;
         ui-scale: root.ui-scale;
         header-box: root.header-box;
         detail-box: root.detail-box;
     }
-    Hairline { box: root.hairline-top; }
+    Hairline {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.hairline-top;
+    }
 
     // The frame at the playhead, on the picture's own dark, with the
     // margins the reference gives its stages. (The picture is fitted
@@ -126,17 +136,18 @@ export component TrimCard inherits Window {
         horizontal-alignment: right;
     }
 
-    // The range: the strip with the two orange caps and the playhead.
-    Rectangle {
-        x: root.timeline-box.x; y: root.timeline-box.y;
-        width: root.timeline-box.width; height: root.timeline-box.height;
-        background: #00ff00;
-    }
-    Hairline {
-        box: root.hairline-bottom;
+    // The range: the video's own moments with the two orange caps and
+    // the playhead standing on the moment.
+    TimelineRange {
         x: 0; y: 0;
         width: root.card-width;
         height: root.card-height;
+        box: root.timeline-box;
+        filmstrip: root.filmstrip;
+        start-fraction: root.start-fraction;
+        end-fraction: root.end-fraction;
+        playhead-fraction: root.playhead-fraction;
+        handle-focus: root.handle-focus;
     }
     // Where the video begins and ends, said in the face where every
     // digit takes the same room.
@@ -164,12 +175,18 @@ export component TrimCard inherits Window {
     // The transport: bare glyphs to step the handle, and where the
     // playhead stands against the whole.
     IconButton {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
         box: root.step-back-box;
         glyph: "M 8 5 L 8 19 M 18 6 L 10 12 L 18 18";
         ui-scale: root.ui-scale;
         clicked => { root.step-backward(); }
     }
     IconButton {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
         box: root.step-forward-box;
         glyph: "M 16 5 L 16 19 M 6 6 L 14 12 L 6 18";
         ui-scale: root.ui-scale;
@@ -186,9 +203,17 @@ export component TrimCard inherits Window {
         horizontal-alignment: right;
     }
 
-    Hairline { box: root.hairline-bottom; }
+    Hairline {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.hairline-bottom;
+    }
 
     CardFooter {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
         ui-scale: root.ui-scale;
         run-label: "Trim";
         has-cancel: false;
