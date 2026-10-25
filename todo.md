@@ -580,6 +580,22 @@ Deliberate differences from the mockups, and why:
   shared Slider control — that control is built when P3-9 first needs it,
   per the handoff's note on speculative controls.
 
+### B-10.7.1 The window hosts share their plumbing (the approved refactor between batches)
+- [x] `src\platform\windows\windowhost.rs` is written and registered in
+      `mod.rs`: `scale_factor`, `screen_scale`, `to_wide`, `fixed_style`,
+      `timecode`, `fraction` and — under `#[cfg(test)] mod screenshot` —
+      the tests' `make_test_video` + `capture`, taken once.
+- [x] toolwindow imports three of them; timelinewindow and cropwindow
+      import all six plus the screenshot helpers and lost ~170 duplicate
+      lines each. Kept local on purpose: geometry and unit consts, cards,
+      STATE, timers (51/52/54 differ per window), `outer_size`,
+      `window_handle`, the capture tests' own pump loops, and crop's
+      `make_test_image`.
+- [x] Proof: `cargo check --tests` exit 0; `cargo test` **358 passed,
+      0 failed, 36 ignored** (windowhost adds three pins); the four window
+      shots and three buffer shots were regenerated through the shared
+      helpers and are byte-identical (SHA-256) to the pre-refactor set.
+
 ### B-10.2 FFmpeg-backed windows (1-3 days each once template exists)
 - [ ] Change video speed (setpts/atempo, preserve pitch)
 - [ ] Split video (custom points or equal parts, one output folder)
