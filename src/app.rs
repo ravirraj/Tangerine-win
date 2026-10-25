@@ -278,6 +278,8 @@ struct App {
     metadata_window: crate::platform::windows::metadatawindow::MetadataWindow,
     /// The window audio volume is normalized in, hidden until normalize is picked.
     normalize_window: crate::platform::windows::normalizewindow::NormalizeWindow,
+    /// The window audio channels are converted in, hidden until channels is picked.
+    channels_window: crate::platform::windows::channelswindow::ChannelsWindow,
 }
 
 /// The end of a drag that has not been acted on yet.
@@ -446,6 +448,20 @@ impl App {
         let normalize_window = crate::platform::windows::normalizewindow::NormalizeWindow::new(normalize_sender)
             .map_err(|reason| reason)?;
 
+        let (channels_sender, channels_receiver) = std::sync::mpsc::channel();
+        {
+            let sender = sender.clone();
+            std::thread::spawn(move || {
+                while let Ok(event) = channels_receiver.recv() {
+                    if sender.send(Message::ToolWindow(event)).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+        let channels_window = crate::platform::windows::channelswindow::ChannelsWindow::new(channels_sender)
+            .map_err(|reason| reason)?;
+
         Ok(Self {
             controller,
             animation: WheelAnimation::new(),
@@ -495,6 +511,7 @@ impl App {
             compress_window,
             metadata_window,
             normalize_window,
+            channels_window,
         })
     }
 
@@ -709,6 +726,12 @@ impl App {
         // A normalize operation asks for its own card: waveform, loudness and peak limit sliders.
         if segment.id == "tools.normalize" {
             self.normalize_window
+                .show_for(&segment.id, &segment.label, &segment.detail, files);
+            return;
+        }
+        // A channels operation asks for its own card: waveform, mode pills, and volume sliders.
+        if segment.id == "tools.channels" {
+            self.channels_window
                 .show_for(&segment.id, &segment.label, &segment.detail, files);
             return;
         }

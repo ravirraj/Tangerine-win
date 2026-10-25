@@ -1,0 +1,433 @@
+import { Tokens, Panel } from "tokens.slint";
+import { Hairline, LabeledSlider, CardFooter } from "shell.slint";
+
+export component ChannelsCard inherits Window {
+    in property <float> ui-scale: 1.0;
+    in property <length> card-width: 400px;
+    in property <length> card-height: 560px;
+
+    in property <Panel> header-box;
+    in property <Panel> hairline-top;
+    in property <Panel> file-info-box;
+    in property <string> file-name: "Audio track.wav";
+    in property <string> file-detail: "2 channels · 44100 Hz";
+
+    in property <Panel> waveform-box;
+    in property <image> waveform-strip;
+    in property <float> playhead-fraction: 0.0;
+
+    in property <Panel> transport-box;
+    in property <bool> is-playing: false;
+    in property <string> timecode-text: "0:00.00 / 0:02.00";
+
+    in property <Panel> modes-box;
+    in property <int> selected-mode: 0; // 0=Stereo, 1=Mono, 2=Left, 3=Right, 4=Swap
+
+    in property <Panel> left-box;
+    in property <float> left-gain: 100.0;
+    in property <string> left-text: "100%";
+
+    in property <Panel> right-box;
+    in property <float> right-gain: 100.0;
+    in property <string> right-text: "100%";
+
+    in property <Panel> footnote-box;
+    in property <string> footnote-text: "Stereo keeps both channels. Mono mixes channels equally. Left/Right duplicates one channel. Swap interchanges left and right.";
+
+    in property <Panel> hairline-bottom;
+    in property <Panel> helper-box;
+    in property <Panel> cancel-box;
+    in property <Panel> run-box;
+    in property <string> run-label: "Convert Channels";
+    in property <bool> run-enabled: true;
+    in property <int> button-focus: 0; // 0=none, 1=cancel, 2=run
+    in property <int> slider-focus: 0; // 1 = left, 2 = right
+
+    callback dismiss-chosen();
+    callback play-chosen();
+    callback mode-chosen(int);
+    callback left-changed(float);
+    callback right-changed(float);
+    callback reset-gains-chosen();
+    callback run-chosen();
+    callback cancel-chosen();
+
+    width: root.card-width;
+    height: root.card-height;
+    background: Tokens.content;
+
+    // 1. Header (dismiss circle on left, title centered)
+    Rectangle {
+        x: 16px * root.ui-scale;
+        y: (root.header-box.height - self.height) / 2;
+        width: 24px * root.ui-scale;
+        height: 24px * root.ui-scale;
+        border-radius: self.height / 2;
+        background: dismiss-touch.pressed ? Tokens.quiet-pressed
+                  : (dismiss-touch.has-hover ? Tokens.quiet-hover : Tokens.quiet);
+
+        dismiss-touch := TouchArea {
+            clicked => { root.dismiss-chosen(); }
+        }
+
+        Path {
+            commands: "M 7 7 L 17 17 M 17 7 L 7 17";
+            stroke: Tokens.text;
+            stroke-width: 1.5px;
+            stroke-line-cap: round;
+            width: parent.width;
+            height: parent.height;
+        }
+    }
+
+    Text {
+        x: root.header-box.x; y: root.header-box.y;
+        width: root.header-box.width; height: root.header-box.height;
+        text: "Audio Channels";
+        color: Tokens.text;
+        font-size: root.ui-scale * 15px;
+        font-weight: 600;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+        horizontal-alignment: center;
+    }
+
+    Hairline {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.hairline-top;
+    }
+
+    // 2. File info row (name on left, format & rate on right)
+    Text {
+        x: root.file-info-box.x;
+        y: root.file-info-box.y;
+        width: root.file-info-box.width * 0.55;
+        height: root.file-info-box.height;
+        text: root.file-name;
+        color: Tokens.text;
+        font-size: root.ui-scale * 13px;
+        font-weight: 600;
+        font-family: "Segoe UI";
+        overflow: elide;
+        vertical-alignment: center;
+    }
+
+    Text {
+        x: root.file-info-box.x + root.file-info-box.width * 0.45;
+        y: root.file-info-box.y;
+        width: root.file-info-box.width * 0.55;
+        height: root.file-info-box.height;
+        text: root.file-detail;
+        color: Tokens.text-muted;
+        font-size: root.ui-scale * 11px;
+        font-family: "Segoe UI";
+        horizontal-alignment: right;
+        vertical-alignment: center;
+    }
+
+    // 3. Waveform preview track
+    Rectangle {
+        x: root.waveform-box.x;
+        y: root.waveform-box.y;
+        width: root.waveform-box.width;
+        height: root.waveform-box.height;
+        background: Tokens.elevated; // #ECECEA
+        border-radius: 8px;
+        clip: true;
+
+        Image {
+            x: 0; y: 0;
+            width: parent.width;
+            height: parent.height;
+            source: root.waveform-strip;
+            image-fit: fill;
+        }
+
+        // Dotted centerline
+        Rectangle {
+            x: 0;
+            y: (parent.height - 1px) / 2;
+            width: parent.width;
+            height: 1px;
+            background: #FF5A1F;
+            opacity: 0.35;
+        }
+
+        // Playhead scrub vertical line
+        Rectangle {
+            x: (parent.width - 2px) * root.playhead-fraction;
+            y: 0;
+            width: 2px;
+            height: parent.height;
+            background: #FFFFFF;
+
+            Rectangle {
+                x: -3px;
+                y: 0;
+                width: 8px;
+                height: 8px;
+                border-radius: 4px;
+                background: #FFFFFF;
+            }
+        }
+    }
+
+    // 4. Transport Bar (Play/pause button left, timecode right)
+    Rectangle {
+        x: root.transport-box.x;
+        y: root.transport-box.y + (root.transport-box.height - self.height) / 2;
+        width: 28px * root.ui-scale;
+        height: 28px * root.ui-scale;
+        border-radius: self.height / 2;
+        background: play-touch.pressed ? Tokens.quiet-pressed
+                  : (play-touch.has-hover ? Tokens.quiet-hover : Tokens.quiet);
+
+        play-touch := TouchArea {
+            clicked => { root.play-chosen(); }
+        }
+
+        Text {
+            width: parent.width;
+            height: parent.height;
+            text: root.is-playing ? "⏸" : "▶";
+            color: Tokens.text;
+            font-size: root.ui-scale * 12px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    Text {
+        x: root.transport-box.x + root.transport-box.width - self.width;
+        y: root.transport-box.y;
+        width: 140px * root.ui-scale;
+        height: root.transport-box.height;
+        text: root.timecode-text;
+        color: Tokens.text-muted;
+        font-size: root.ui-scale * 12px;
+        font-family: "Cascadia Mono, Consolas, Courier New";
+        font-weight: 500;
+        horizontal-alignment: right;
+        vertical-alignment: center;
+    }
+
+    // 5. Channel Modes (Label + 5 segmented pill buttons)
+    Text {
+        x: root.modes-box.x;
+        y: root.modes-box.y;
+        width: root.modes-box.width;
+        height: 14px * root.ui-scale;
+        text: "CHANNEL MODE";
+        color: Tokens.text-muted;
+        font-size: root.ui-scale * 10px;
+        font-weight: 700;
+        font-family: "Segoe UI";
+    }
+
+    // Row of 5 pills: Stereo, Mono, Left, Right, Swap
+    Rectangle {
+        x: root.modes-box.x;
+        y: root.modes-box.y + 18px * root.ui-scale;
+        width: root.modes-box.width;
+        height: 28px * root.ui-scale;
+        background: Tokens.elevated;
+        border-radius: 6px;
+        clip: true;
+
+        property <length> pill-w: self.width / 5;
+
+        // Pill 0: Stereo
+        Rectangle {
+            x: 0 * parent.pill-w;
+            y: 2px;
+            width: parent.pill-w - 2px;
+            height: parent.height - 4px;
+            border-radius: 4px;
+            background: root.selected-mode == 0 ? Tokens.accent : (p0-touch.has-hover ? Tokens.quiet-hover : #00000000);
+
+            p0-touch := TouchArea {
+                clicked => { root.mode-chosen(0); }
+            }
+
+            Text {
+                width: parent.width; height: parent.height;
+                text: "Stereo";
+                color: root.selected-mode == 0 ? #FFFFFF : Tokens.text;
+                font-size: root.ui-scale * 11px;
+                font-weight: root.selected-mode == 0 ? 600 : 500;
+                font-family: "Segoe UI";
+                horizontal-alignment: center; vertical-alignment: center;
+            }
+        }
+
+        // Pill 1: Mono
+        Rectangle {
+            x: 1 * parent.pill-w;
+            y: 2px;
+            width: parent.pill-w - 2px;
+            height: parent.height - 4px;
+            border-radius: 4px;
+            background: root.selected-mode == 1 ? Tokens.accent : (p1-touch.has-hover ? Tokens.quiet-hover : #00000000);
+
+            p1-touch := TouchArea {
+                clicked => { root.mode-chosen(1); }
+            }
+
+            Text {
+                width: parent.width; height: parent.height;
+                text: "Mono";
+                color: root.selected-mode == 1 ? #FFFFFF : Tokens.text;
+                font-size: root.ui-scale * 11px;
+                font-weight: root.selected-mode == 1 ? 600 : 500;
+                font-family: "Segoe UI";
+                horizontal-alignment: center; vertical-alignment: center;
+            }
+        }
+
+        // Pill 2: Left
+        Rectangle {
+            x: 2 * parent.pill-w;
+            y: 2px;
+            width: parent.pill-w - 2px;
+            height: parent.height - 4px;
+            border-radius: 4px;
+            background: root.selected-mode == 2 ? Tokens.accent : (p2-touch.has-hover ? Tokens.quiet-hover : #00000000);
+
+            p2-touch := TouchArea {
+                clicked => { root.mode-chosen(2); }
+            }
+
+            Text {
+                width: parent.width; height: parent.height;
+                text: "Left";
+                color: root.selected-mode == 2 ? #FFFFFF : Tokens.text;
+                font-size: root.ui-scale * 11px;
+                font-weight: root.selected-mode == 2 ? 600 : 500;
+                font-family: "Segoe UI";
+                horizontal-alignment: center; vertical-alignment: center;
+            }
+        }
+
+        // Pill 3: Right
+        Rectangle {
+            x: 3 * parent.pill-w;
+            y: 2px;
+            width: parent.pill-w - 2px;
+            height: parent.height - 4px;
+            border-radius: 4px;
+            background: root.selected-mode == 3 ? Tokens.accent : (p3-touch.has-hover ? Tokens.quiet-hover : #00000000);
+
+            p3-touch := TouchArea {
+                clicked => { root.mode-chosen(3); }
+            }
+
+            Text {
+                width: parent.width; height: parent.height;
+                text: "Right";
+                color: root.selected-mode == 3 ? #FFFFFF : Tokens.text;
+                font-size: root.ui-scale * 11px;
+                font-weight: root.selected-mode == 3 ? 600 : 500;
+                font-family: "Segoe UI";
+                horizontal-alignment: center; vertical-alignment: center;
+            }
+        }
+
+        // Pill 4: Swap
+        Rectangle {
+            x: 4 * parent.pill-w;
+            y: 2px;
+            width: parent.pill-w - 2px;
+            height: parent.height - 4px;
+            border-radius: 4px;
+            background: root.selected-mode == 4 ? Tokens.accent : (p4-touch.has-hover ? Tokens.quiet-hover : #00000000);
+
+            p4-touch := TouchArea {
+                clicked => { root.mode-chosen(4); }
+            }
+
+            Text {
+                width: parent.width; height: parent.height;
+                text: "Swap";
+                color: root.selected-mode == 4 ? #FFFFFF : Tokens.text;
+                font-size: root.ui-scale * 11px;
+                font-weight: root.selected-mode == 4 ? 600 : 500;
+                font-family: "Segoe UI";
+                horizontal-alignment: center; vertical-alignment: center;
+            }
+        }
+    }
+
+    // 6. Left Volume Slider
+    LabeledSlider {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        ui-scale: root.ui-scale;
+        box: root.left-box;
+        label: "Left Volume";
+        value-text: root.left-text;
+        min: 0.0;
+        max: 200.0;
+        value: root.left-gain;
+        ticks: [0.0, 0.25, 0.5, 0.75, 1.0];
+        focused: root.slider-focus == 1;
+        value-changed(val) => { root.left-changed(val); }
+    }
+
+    // 7. Right Volume Slider
+    LabeledSlider {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        ui-scale: root.ui-scale;
+        box: root.right-box;
+        label: "Right Volume";
+        value-text: root.right-text;
+        min: 0.0;
+        max: 200.0;
+        value: root.right-gain;
+        ticks: [0.0, 0.25, 0.5, 0.75, 1.0];
+        focused: root.slider-focus == 2;
+        value-changed(val) => { root.right-changed(val); }
+    }
+
+    // 8. Footnote
+    Text {
+        x: root.footnote-box.x;
+        y: root.footnote-box.y;
+        width: root.footnote-box.width;
+        height: root.footnote-box.height;
+        text: root.footnote-text;
+        color: Tokens.text-muted;
+        font-size: root.ui-scale * 11px;
+        font-family: "Segoe UI";
+        wrap: word-wrap;
+        vertical-alignment: center;
+    }
+
+    // 9. Bottom Hairline & Footer
+    Hairline {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.hairline-bottom;
+    }
+
+    CardFooter {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        ui-scale: root.ui-scale;
+        run-label: root.run-label;
+        has-cancel: false;
+        run-enabled: root.run-enabled;
+        helper-box: root.helper-box;
+        cancel-box: root.cancel-box;
+        run-box: root.run-box;
+        button-focus: root.button-focus;
+        run-chosen => { root.run-chosen(); }
+        cancel-chosen => { root.cancel-chosen(); }
+    }
+}
