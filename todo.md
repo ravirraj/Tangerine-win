@@ -376,6 +376,113 @@ seeks behind a channel, worn by the window's timer; never spawn it on the
 draw thread. Also: TimelineRange's caps' hit-test still keys on
 HANDLE_REACH=16, valid for 28-wide caps.
 
+### B-10.5 Repo ↔ reference traceable mapping (audit round 2026-10-25)
+
+Reconciled against the external `reference/tangerine/MAPPING-ROADMAP.md`
+(123 lines, read in full) and `DESIGN-SPEC.md`; the Swift authority is
+`reference/extracted/Open-Tangerine-main/NativeApp/Sources/` inside THIS repo.
+Every `tools.*` operation in our registry, its reference window, its Swift
+source and its state:
+
+| Our op | Reference window (webp) | Swift source | Status |
+|---|---|---|---|
+| tools.compress | compress.webp (roadmap P3-9) | Compress tool views | Backend done (quality/slider window pending) |
+| tools.crop | cropVideo/cropImage (roadmap P3-8) | Crop views | Backend = center-half crop (placeholder); window = plain card, fields only |
+| tools.trim | trimVideo.webp (P3-6) | TrimSplitVideoToolViews.swift | DONE B-10.4, at parity |
+| tools.split | splitVideo.webp (P3-7) | TrimSplitVideoToolViews.swift | **This batch (B-10.6)** |
+| tools.rotate | — (no reference window; fold/rotate lives in editImage there) | — | Windows-original; runs via plain card |
+| tools.resize | — (NOT a reference tool; the external mapping routes "resize/crop" to cropVideo/cropImage, P3-8) | — | Windows-original ToolCard (B-10.0), already wears the B-10.4 tokens/shell |
+| tools.merge | joinVideos/mergePDF (P3-13) | — | Backend done; reorder-list window pending |
+| tools.metadata | removeMetadata (P3-9) | — | Backend partial; window pending |
+
+Evidence for the batch order after Trim: the external roadmap's P2 says the
+shared control library (Segmented, Dropdown, Stepper, Checkbox, Slider+ticks,
+IconButton, SwatchGrid, ValidationNote) is built BEFORE per-tool bodies, and
+its P3 list puts **Split video as item 7** (next after Trim, item 6) because
+it reuses TimelineRange + Stepper; Crop video/image is item 8. "Resize" is
+NOT one of the reference's 21 windows, so there is no reference window batch
+for it: our Resize keeps its working ToolCard (already pinned to the B-10.4
+shell) and the reference-parity work it touches lives under Crop (P3-8).
+The shared controls Split needs (aStepper with up/down chevrons, ghost-pill
+buttons, marker lines on the timeline) are built here and will be reused by
+the P3 tools that follow.
+
+### B-10.6 Split Video window (roadmap P3-7) — reference: tool-windows/splitVideo.webp + TrimSplitVideoToolViews.swift
+
+Original behavior (Swift, authoritative): mode `points`/`equal`; points are
+added at the playhead only when `0.1 < t < duration - 0.1` and no point stands
+within 0.05 s; equal parts computes `duration * i / parts` for `i in 1..<parts`
+(parts 2..50); the strip is the SAME TimelineRange track with markers instead
+of a dragged range (unusedStart/unusedEnd stay pinned); Save writes segments
+`[0] + points + [duration]`, skipping any part shorter than 0.05 s, into a
+`"{baseName} clips"` folder beside the original, each clip
+`"{base} part N.{ext}"`, stream-copied (no re-encode); progress per segment.
+The mockup (webp) carries a few lines the Swift does not: an equal-parts
+stepper with a `Set` commit button and "0 split points" count text. Both are
+taken (mockup is the visual authority; Swift is the behavior authority).
+
+- [x] Backend: `tools.split` operation (video-only, Batch::One) — splits at
+      the points carried in ToolSettings (milliseconds); segments mirror the
+      Swift math (0 and duration as the outer boundary, parts < 0.05 s
+      skipped); each part is stream-copied by the same trim_args a trim
+      takes; the folder is `"{base} clips"` beside the input, made unique
+      with " 2", " 3"… if it exists (ConversionMatrix.uniqueDirectory's
+      behavior); clips named `"{base} part N.{ext}"`.
+- [x] ToolSettings: `points_ms: Vec<u64>`; the window sends explicit points —
+      the manual ones exactly as placed, the equal ones computed by the
+      window from parts — so the backend stays small and the registry row
+      does not need a second op.
+- [x] Shared controls (shell.slint): PillButton — the quiet pill the footer
+      buttons are, one pressable with a label (and glyph) any body row can
+      take; TimelineRange gained `markers` (accent-coloured split markers on
+      the strip) and `has-range` (a split has no dragged range: no caps, no
+      dimming outside a stretch).
+- [x] Timeline window hosts the split card (timelinewindow.rs): the same
+      shell, exposure, filmstrip thread and transport; a split layout takes
+      its own stack — points row ("N split points" + Add Split pill),
+      the strip with markers, the transport, the equal row ("Equal clips" +
+      parts stepper + Set pill) — and the footer's Run says "Split Video"
+      (the mockup's label). Trim layout and behaviour unchanged (height tests
+      pin 582/646 as before; the split stack has its own pinned heights).
+- [x] Interaction: Add Split at the playhead (the Swift guards); the
+      stepper 2..50 (Swift's range), `Set` replaces the points with
+      N-1 equal ones; clicking a marker seeks; Delete removes the nearest
+      point within 0.5 s of the playhead (documented Windows replacement for
+      the Swift per-point trash rows — the mockup has no list); keyboard
+      walk: playhead → Add Split → Set → Run (Tab/Up/Down), arrows scrub,
+      Enter runs, Esc closes.
+- [x] Dispatch: app.rs routes `tools.split` to the timeline window like trim;
+      the plain card keeps the other tools.
+- [x] Tests green: 330 unit + 30 real-FFmpeg, 0 failures (the split stack's
+      layout pins, the segment-math and folder-naming unit tests, the real
+      3 s video split into "three clips" with the right lengths, and the
+      registry/menu pins updated — tools wheel now 8 segments). The capture
+      check writes target/shots/{split-buffer,split-window}.png, compared
+      against splitVideo.webp: preview, points row + Add Split, markers on
+      the strip (quarters for four parts), transport + timecode, the
+      Equal clips stepper with Set, and the enabled Split Video footer all
+      in place; trim-window.png retaken and unchanged from the B-10.4 shot.
+- [ ] Manual verification: drag a real video → Tools wheel → Split → add
+      points, Set equal parts, run; folder of numbered clips appears
+      beside the original; trim window unchanged.
+
+Deliberate differences from splitVideo.webp, and why:
+- Native title bar ("Split") instead of the mockup's frameless header — the
+  recorded B-10.4 chrome decision, kept for every tool window.
+- Footer runs "Split Video" always; Swift swaps the title to "Split into N
+  clips" — our footer label is static, the count is said in the points row.
+- The mockup's two transport glyphs are ours from B-10.4 (Step ±1 s, Shift
+  ±5 s); the Swift adds none for split, do the same job here.
+- The Add Split pill says its words only — the mockup draws a scissors on
+  it — because at 14 px the wheel's own cut mark would not read; the label
+  is the affordance, per the shared PillButton.
+- No per-point rows with a trash button (Swift) — the mockup shows no list;
+  markers + click-to-seek + Delete stand in for it, and "N split points"
+  says what exists.
+- The equal caption "Each clip lasts about X" (Swift) is said by appending
+  "· each about T" to the points row after Set, instead of a second caption
+  line the mockup does not carry.
+
 ### B-10.2 FFmpeg-backed windows (1-3 days each once template exists)
 - [ ] Change video speed (setpts/atempo, preserve pitch)
 - [ ] Split video (custom points or equal parts, one output folder)

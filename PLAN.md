@@ -25,9 +25,10 @@
 | B-9.3–B-9.6 | ✅ Done | SVG input; PDF via PDFium; Office COM + calamine documents; audio formats |
 | B-10.0–B-10.1 | ✅ Done | Tool window shell + the real Trim Video window |
 | P0/P1 design | ✅ Done | Reference tokens + trim window at parity (B-10.4 in todo.md) |
+| B-10.5–B-10.6 | ✅ Done | Repo↔reference audit with a traceable mapping + the Split Video window at parity (B-10.5/B-10.6 in todo.md; ordering per the external reference/tangerine/MAPPING-ROADMAP.md) |
 
 **Current branch:** `feature/image-conversion` → phase branches `phase/b-9-*`, `phase/b-10-*` (all local, no push; merge only when the user says)
-**Tests:** 324 unit + 29 real-FFmpeg, 0 failures
+**Tests:** 330 unit + 30 real-FFmpeg, 0 failures
 
 ---
 
@@ -74,10 +75,22 @@
 | PPT/PPTX → PDF/JPG/PNG | Supported | ❌ Missing |
 | SRT, VTT → TXT | Supported | ✅ Done |
 
-### 4. Advanced Tools (26 in reference — 7 implemented, 19 missing)
-**Implemented:** Compress, Crop, Trim, Rotate, Resize, Merge, Metadata
+### 4. Advanced Tools (26 in reference — 8 implemented, 18 missing)
+**Implemented:** Compress, Crop, Trim, Split, Rotate, Resize, Merge, Metadata
 
-**Missing (19):** Background removal, Remove metadata, Read QR, Split, plus ~13 others from reference tools page
+**Ordering note (verified 2026-10-25 against the external
+reference/tangerine/MAPPING-ROADMAP.md):** the roadmap's P2 is the shared
+control library (Stepper, Segmented, Slider+ticks, …) built before per-tool
+bodies; its P3 list puts Split video (7) next after Trim (6) — Crop video/
+image follows (8), then Compress+Metadata (9), the audio trio (10), Redact
+(11), Snapshots (12), Join/Merge (13), Organize PDF (14), Annotate/Frame/
+Collage (15). "Resize" is not one of the reference's 21 tool windows — the
+mapping routes resize/crop to the Crop window (P3-8); our Resize keeps its
+working ToolCard (already in the B-10.4 shared shell).
+
+**Missing (18):** Background removal, Remove metadata, Read QR, plus ~15
+others from the reference tools page (see the B-10.5 mapping table in
+todo.md for the per-tool traceability)
 
 ### 5. File Actions (Windows equivalents)
 | Reference | Windows Equivalent | Status |
