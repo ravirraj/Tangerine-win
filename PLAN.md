@@ -28,7 +28,7 @@
 | B-10.5–B-10.6 | ✅ Done | Repo↔reference audit with a traceable mapping + the Split Video window at parity (B-10.5/B-10.6 in todo.md; ordering per the external reference/tangerine/MAPPING-ROADMAP.md) |
 
 **Current branch:** `feature/image-conversion` → phase branches `phase/b-9-*`, `phase/b-10-*` (all local, no push; merge only when the user says)
-**Tests:** 330 unit + 30 real-FFmpeg, 0 failures
+**Tests:** 330 unit + 31 ignored (real-FFmpeg operations and the two window captures), 0 failures
 
 ---
 

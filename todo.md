@@ -453,7 +453,8 @@ taken (mockup is the visual authority; Swift is the behavior authority).
       Enter runs, Esc closes.
 - [x] Dispatch: app.rs routes `tools.split` to the timeline window like trim;
       the plain card keeps the other tools.
-- [x] Tests green: 330 unit + 30 real-FFmpeg, 0 failures (the split stack's
+- [x] Tests green: 330 unit + 31 ignored (real-FFmpeg operations and the two
+      window captures), 0 failures (the split stack's
       layout pins, the segment-math and folder-naming unit tests, the real
       3 s video split into "three clips" with the right lengths, and the
       registry/menu pins updated — tools wheel now 8 segments). The capture
