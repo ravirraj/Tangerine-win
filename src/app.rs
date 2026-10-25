@@ -620,10 +620,11 @@ impl App {
     fn open_tool_window(&mut self, segment: &Segment, files: &[std::path::PathBuf]) {
         // A trim asks for a timeline, not a form: the video is shown at
         // its own moments, and the window reads the length and the frames
-        // itself. The first picture of the drag is shown in the plain
-        // card, so that what the tool will do is done to something the
-        // person can see.
-        if segment.id == "tools.trim" {
+        // itself. A split asks for the same window in its split skin —
+        // the cuts stand on the same strip. The first picture of the
+        // drag is shown in the plain card, so that what the tool will do
+        // is done to something the person can see.
+        if segment.id == "tools.trim" || segment.id == "tools.split" {
             self.timeline_window
                 .show_for(&segment.id, &segment.label, &segment.detail, files);
             return;

@@ -11,7 +11,7 @@
 
 import { Tokens } from "tokens.slint";
 import { Panel } from "tokens.slint";
-import { CardHeader, Hairline, IconButton, TimelineRange, CardFooter } from "shell.slint";
+import { CardHeader, Hairline, IconButton, TimelineRange, CardFooter, PillButton } from "shell.slint";
 
 export component TrimCard inherits Window {
     // The size of the card, held here so the renderer reads what the
@@ -64,11 +64,38 @@ export component TrimCard inherits Window {
     // 0 nothing, 1 cancel, 2 run.
     in property <int> button-focus;
 
+    // The split card: the cuts the strip stands on, what the rows say,
+    // and where every split row is. A trim card leaves these all quiet.
+    in property <bool> split-mode: false;
+    in property <string> points-text: "";
+    in property <string> parts-text: "2";
+    in property <string> run-label: "Trim";
+    // Where the cuts stand, shares of the whole, said to the strip.
+    in property <[float]> markers;
+    in property <Panel> points-box;
+    in property <Panel> add-split-box;
+    in property <Panel> equal-label-box;
+    in property <Panel> stepper-box;
+    in property <Panel> step-up-box;
+    in property <Panel> step-down-box;
+    in property <Panel> set-box;
+    // 0 nothing, 1 add-split, 2 set.
+    in property <int> pill-focus: 0;
+    // Whether there is anything to do when go is said: a split with no
+    // cut yet has nothing, and its go button is retired.
+    in property <bool> run-enabled: true;
+
     callback run-chosen();
     callback cancel-chosen();
     // Step the handle the keyboard is on, back or forward.
     callback step-backward();
     callback step-forward();
+    // The split card's own rows: put a cut at the playhead, make the
+    // equal parts live, and turn the count.
+    callback add-split-chosen();
+    callback set-equal-chosen();
+    callback stepper-up();
+    callback stepper-down();
 
     width: root.card-width;
     height: root.card-height;
@@ -114,8 +141,9 @@ export component TrimCard inherits Window {
     }
 
     // The line of small words above the strip: what to do, and what is
-    // held.
+    // held. A split card says its own points row instead.
     Text {
+        visible: !root.split-mode;
         x: root.caption-box.x; y: root.caption-box.y;
         width: root.caption-box.width / 2; height: root.caption-box.height;
         text: "Drag the ends to trim";
@@ -125,6 +153,7 @@ export component TrimCard inherits Window {
         vertical-alignment: center;
     }
     Text {
+        visible: !root.split-mode;
         x: root.caption-box.x + root.caption-box.width / 2;
         y: root.caption-box.y;
         width: root.caption-box.width / 2; height: root.caption-box.height;
@@ -136,8 +165,34 @@ export component TrimCard inherits Window {
         horizontal-alignment: right;
     }
 
+    // The points row: how many cuts stand, and the pill that puts one
+    // where the playhead is.
+    Text {
+        visible: root.split-mode;
+        x: root.points-box.x; y: root.points-box.y;
+        width: root.points-box.width; height: root.points-box.height;
+        text: root.points-text;
+        color: Tokens.text;
+        font-size: root.ui-scale * 13px;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    PillButton {
+        visible: root.split-mode;
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.add-split-box;
+        label: "Add Split";
+        focused: root.pill-focus == 1;
+        ui-scale: root.ui-scale;
+        clicked => { root.add-split-chosen(); }
+    }
+
     // The range: the video's own moments with the two orange caps and
-    // the playhead standing on the moment.
+    // the playhead standing on the moment. A split card wears the same
+    // strip without the range: the cuts stand on it as markers.
     TimelineRange {
         x: 0; y: 0;
         width: root.card-width;
@@ -148,10 +203,13 @@ export component TrimCard inherits Window {
         end-fraction: root.end-fraction;
         playhead-fraction: root.playhead-fraction;
         handle-focus: root.handle-focus;
+        has-range: !root.split-mode;
+        markers: root.markers;
     }
     // Where the video begins and ends, said in the face where every
     // digit takes the same room.
     Text {
+        visible: !root.split-mode;
         x: root.times-box.x; y: root.times-box.y;
         width: root.times-box.width / 2; height: root.times-box.height;
         text: "Start " + root.start-text;
@@ -161,6 +219,7 @@ export component TrimCard inherits Window {
         vertical-alignment: center;
     }
     Text {
+        visible: !root.split-mode;
         x: root.times-box.x + root.times-box.width / 2;
         y: root.times-box.y;
         width: root.times-box.width / 2; height: root.times-box.height;
@@ -203,6 +262,101 @@ export component TrimCard inherits Window {
         horizontal-alignment: right;
     }
 
+    // The equal row: what a split card carries — the count of its equal
+    // parts, a stepper to turn it, and the pill that says where the cuts
+    // stand. A trim card says nothing here.
+    Text {
+        visible: root.split-mode;
+        x: root.equal-label-box.x; y: root.equal-label-box.y;
+        width: root.equal-label-box.width; height: root.equal-label-box.height;
+        text: "Equal clips";
+        color: Tokens.text;
+        font-size: root.ui-scale * 13px;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+    }
+    // The well the number is said in: white with a thin border, as every
+    // field on the card is.
+    Rectangle {
+        visible: root.split-mode;
+        x: root.stepper-box.x; y: root.stepper-box.y;
+        width: root.stepper-box.width; height: root.stepper-box.height;
+        border-radius: Tokens.radius-control;
+        background: Tokens.content;
+        border-width: 1px;
+        border-color: Tokens.field-border;
+
+        Text {
+            x: 4px; width: parent.width - 8px;
+            height: parent.height;
+            text: root.parts-text;
+            color: Tokens.text;
+            font-size: root.ui-scale * 13px;
+            font-family: Tokens.font-mono;
+            vertical-alignment: center;
+            horizontal-alignment: center;
+        }
+    }
+    // The two little wings of the stepper: the upper half turns the
+    // count up, the lower half turns it down.
+    Rectangle {
+        visible: root.split-mode;
+        x: root.step-up-box.x; y: root.step-up-box.y;
+        width: root.step-up-box.width;
+        height: root.step-up-box.height;
+        Path {
+            commands: "M 9 15 L 12 12 L 15 15";
+            viewbox-width: 24;
+            viewbox-height: 24;
+            width: root.ui-scale * 12px;
+            height: root.ui-scale * 12px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2 - 1px;
+            fill: transparent;
+            stroke: Tokens.transport;
+            stroke-width: 1.8px;
+            stroke-line-cap: round;
+            stroke-line-join: round;
+        }
+        stepper-up-touch := TouchArea {
+            clicked => { root.stepper-up(); }
+        }
+    }
+    Rectangle {
+        visible: root.split-mode;
+        x: root.step-down-box.x; y: root.step-down-box.y;
+        width: root.step-down-box.width;
+        height: root.step-down-box.height;
+        Path {
+            commands: "M 9 13 L 12 16 L 15 13";
+            viewbox-width: 24;
+            viewbox-height: 24;
+            width: root.ui-scale * 12px;
+            height: root.ui-scale * 12px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2 - 1px;
+            fill: transparent;
+            stroke: Tokens.transport;
+            stroke-width: 1.8px;
+            stroke-line-cap: round;
+            stroke-line-join: round;
+        }
+        stepper-down-touch := TouchArea {
+            clicked => { root.stepper-down(); }
+        }
+    }
+    PillButton {
+        visible: root.split-mode;
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.set-box;
+        label: "Set";
+        focused: root.pill-focus == 2;
+        ui-scale: root.ui-scale;
+        clicked => { root.set-equal-chosen(); }
+    }
+
     Hairline {
         x: 0; y: 0;
         width: root.card-width;
@@ -215,8 +369,9 @@ export component TrimCard inherits Window {
         width: root.card-width;
         height: root.card-height;
         ui-scale: root.ui-scale;
-        run-label: "Trim";
+        run-label: root.run-label;
         has-cancel: false;
+        run-enabled: root.run-enabled;
         helper-box: root.helper-box;
         cancel-box: root.cancel-box;
         run-box: root.run-box;

@@ -36,8 +36,8 @@ use windows::Win32::Graphics::Gdi::{BeginPaint, CreateSolidBrush, InvalidateRect
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::AdjustWindowRectExForDpi;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetKeyState, ReleaseCapture, SetCapture, SetFocus, VK_DOWN, VK_ESCAPE, VK_LEFT, VK_RETURN,
-    VK_RIGHT, VK_SHIFT, VK_SPACE, VK_TAB, VK_UP,
+    GetKeyState, ReleaseCapture, SetCapture, SetFocus, VK_DELETE, VK_DOWN, VK_ESCAPE, VK_LEFT,
+    VK_RETURN, VK_RIGHT, VK_SHIFT, VK_SPACE, VK_TAB, VK_UP,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, GetClientRect, GetWindowRect, KillTimer, LoadCursorW,
@@ -81,6 +81,22 @@ const MIN_SPAN: f64 = 0.5;
 /// little grace.
 const HANDLE_REACH: i32 = 16;
 
+/// How close a press must be to take a split marker instead of the
+/// playhead, in pixels of the drawing. A marker is 2 wide, but a needle
+/// nobody can take is no good.
+const MARKER_REACH: i32 = 8;
+
+/// The split's own rules, which the original's source carries: a point
+/// stands inside the video but not against its edge, no two points stand
+/// nearer than this, the count of equal parts turns between 2 and 50,
+/// and the Delete key takes a point no farther than this from the
+/// playhead.
+const POINT_MARGIN: f64 = 0.1;
+const MIN_POINT_GAP: f64 = 0.05;
+const PARTS_MIN: i32 = 2;
+const PARTS_MAX: i32 = 50;
+const DELETE_REACH: f64 = 0.5;
+
 /// How far the playhead must move before a new frame is asked of the
 /// conversion program, in seconds. A seek costs a moment; the frame does
 /// not need to follow the playhead any closer than a person can see.
@@ -95,7 +111,9 @@ enum Drag {
     Playhead,
 }
 
-/// What the window is open for, and where the video stands in it.
+/// What the window is open for, and where the video stands in it. A trim
+/// holds the two ends of a stretch; a split holds the points the video is
+/// cut at and the count of its equal parts.
 struct TrimState {
     duration: f64,
     start: f64,
@@ -110,6 +128,19 @@ struct TrimState {
     preview_units: f32,
     ffmpeg: Option<locator::Tools>,
     input: PathBuf,
+    /// Whether this window is asked for a split, not a trim: the strip is
+    /// worn with markers instead of a dragged range, and the words of the
+    /// rows say cuts, not ends.
+    split: bool,
+    /// The points a cut stands at, in seconds, in order. A trim carries
+    /// none of these.
+    points: Vec<f64>,
+    /// The count the equal row says, between its own least and most.
+    parts: i32,
+    /// What the equal saying said, when the last stand of points came
+    /// from the equal row: "each about 0:01.13". A cut added by hand or
+    /// taken away leaves, and the saying is gone.
+    equal_saying: Option<String>,
 }
 
 impl Default for TrimState {
@@ -124,6 +155,10 @@ impl Default for TrimState {
             preview_units: 236.0,
             ffmpeg: None,
             input: PathBuf::new(),
+            split: false,
+            points: Vec::new(),
+            parts: 2,
+            equal_saying: None,
         }
     }
 }
@@ -140,8 +175,8 @@ thread_local! {
     // so a callback fired in the middle of a drawing never has to borrow
     // what is already borrowed. A handle of zero means "not there".
     static WINDOW: std::cell::Cell<isize> = const { std::cell::Cell::new(0) };
-    // Where the keyboard is: 0 the start handle, 1 the end handle,
-    // 2 cancel, 3 run.
+    // Where the keyboard is. A trim: 0 the start cap, 1 the end cap,
+    // 2 run. A split: 0 the playhead, 1 add-split, 2 set, 3 run.
     static FOCUS_INDEX: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
     // How far along the soft coming-in is.
     static FADE_ALPHA: std::cell::Cell<u8> = const { std::cell::Cell::new(255) };
@@ -281,9 +316,13 @@ fn fixed_style() -> windows::Win32::UI::WindowsAndMessaging::WINDOW_STYLE {
 /// uses of it is the size the drawing asked for, at this stretch.
 fn outer_size(scale: f32) -> (i32, i32) {
     let client_w = (CARD_W as f32 * scale) as i32;
-    let client_h =
-        ((Layout::CONTENT_UNITS + client_preview_units() + Layout::FOOTER_UNITS) as f32 * scale)
-            as i32;
+    let content = if is_split() {
+        Layout::SPLIT_CONTENT_UNITS
+    } else {
+        Layout::CONTENT_UNITS
+    };
+    let client_h = ((content + client_preview_units() + Layout::FOOTER_UNITS) as f32 * scale)
+        as i32;
     let mut rect = RECT {
         left: 0,
         top: 0,
@@ -305,6 +344,12 @@ fn outer_size(scale: f32) -> (i32, i32) {
 /// The preview height the card is drawn with, in the drawing's own units.
 fn client_preview_units() -> f32 {
     STATE.with(|slot| slot.borrow().preview_units)
+}
+
+/// Whether the window is asked for a split and not a trim: the layout,
+/// the hits and the words of the card all follow it.
+fn is_split() -> bool {
+    STATE.with(|slot| slot.borrow().split)
 }
 
 impl TimelineWindow {
@@ -397,6 +442,30 @@ impl TimelineWindow {
                     unsafe { step(window, 1.0) };
                 }
             });
+            card.on_add_split_chosen(move || {
+                let window = window_handle();
+                if !window.0.is_null() {
+                    unsafe { add_split(window) };
+                }
+            });
+            card.on_set_equal_chosen(move || {
+                let window = window_handle();
+                if !window.0.is_null() {
+                    unsafe { set_equal(window) };
+                }
+            });
+            card.on_stepper_up(move || {
+                let window = window_handle();
+                if !window.0.is_null() {
+                    unsafe { turn_parts(window, 1) };
+                }
+            });
+            card.on_stepper_down(move || {
+                let window = window_handle();
+                if !window.0.is_null() {
+                    unsafe { turn_parts(window, -1) };
+                }
+            });
         }
 
         let mut host = Host {
@@ -424,6 +493,7 @@ impl TimelineWindow {
         OPEN_FOR.with(|slot| {
             *slot.borrow_mut() = Some((operation.to_string(), inputs.to_vec()));
         });
+        let split = operation == "tools.split";
 
         let said = if inputs.len() == 1 {
             inputs[0]
@@ -465,6 +535,10 @@ impl TimelineWindow {
                 preview_units,
                 ffmpeg: ffmpeg.clone(),
                 input: input.clone(),
+                split,
+                points: Vec::new(),
+                parts: PARTS_MIN,
+                equal_saying: None,
             };
         });
         // The strip of the video's own moments is asked for apart: it is
@@ -492,6 +566,9 @@ impl TimelineWindow {
             };
             host.card.set_file_name(said.into());
             host.card.set_detail(detail.into());
+            host.card.set_split_mode(split);
+            host.card
+                .set_run_label(if split { "Split Video" } else { "Trim" }.into());
             host.lay_out();
             // The frame that was asked for before sizing is put on now,
             // at the size of its own box.
@@ -551,8 +628,8 @@ impl TimelineWindow {
             // The strip is being worked out elsewhere: the window asks it
             // every few beats whether some of it has come.
             let _ = SetTimer(Some(card_window), STRIP_TIMER_ID, 40, None);
-            // The keyboard starts on the handle that holds where the
-            // video begins.
+            // The keyboard starts on the first stop: a trim's start cap,
+            // a split's playhead.
             FOCUS_INDEX.with(|slot| slot.set(0));
             apply_focus(card_window, 0);
         }
@@ -629,6 +706,13 @@ impl Host {
         self.card.set_helper_box(panel(layout.helper));
         self.card.set_cancel_box(panel(layout.cancel));
         self.card.set_run_box(panel(layout.run));
+        self.card.set_points_box(panel(layout.points));
+        self.card.set_add_split_box(panel(layout.add_split));
+        self.card.set_equal_label_box(panel(layout.equal_label));
+        self.card.set_stepper_box(panel(layout.stepper));
+        self.card.set_step_up_box(panel(layout.step_up));
+        self.card.set_step_down_box(panel(layout.step_down));
+        self.card.set_set_box(panel(layout.set));
         layout
     }
 
@@ -692,7 +776,8 @@ impl Host {
 /// The card is a stack: a header, a hairline, the picture at the height
 /// its shape wants, a line of small words, the track, the moments, the
 /// transport, a hairline, and the footer. The Rust side works the stack
-/// out once and both sides read it.
+/// out once and both sides read it. A split card says cut points and the
+/// equal row instead of the moments, and its stack answers for it.
 #[derive(Clone, Copy, Debug, Default)]
 struct Layout {
     file_name: RECT,
@@ -709,6 +794,15 @@ struct Layout {
     helper: RECT,
     cancel: RECT,
     run: RECT,
+    // The split rows: the count of the cuts, the pill that puts one at
+    // the playhead, and the equal row's label, stepper and Set pill.
+    points: RECT,
+    add_split: RECT,
+    equal_label: RECT,
+    stepper: RECT,
+    step_up: RECT,
+    step_down: RECT,
+    set: RECT,
 }
 
 impl Layout {
@@ -717,6 +811,10 @@ impl Layout {
     /// and the strip and the moments and the transport, and the closing
     /// hairline.
     const CONTENT_UNITS: f32 = 282.0;
+    /// The same for a split card: its points row stands taller than the
+    /// trim caption, it has no moments row, and after its transport the
+    /// equal row takes the room.
+    const SPLIT_CONTENT_UNITS: f32 = 308.0;
     /// The footer: the hairline's gap to the buttons, the buttons, and
     /// the air under them.
     const FOOTER_UNITS: f32 = 64.0;
@@ -728,23 +826,57 @@ impl Layout {
         Self::CONTENT_UNITS + preview_units + Self::FOOTER_UNITS
     }
 
+    /// How tall a split window of this preview wants to be.
+    fn height_for_split(preview_units: f32) -> f32 {
+        Self::SPLIT_CONTENT_UNITS + preview_units + Self::FOOTER_UNITS
+    }
+
     fn of(whole: i32, side: i32, scale: f32) -> Layout {
         let at = |value: f32| (value * scale) as i32;
         let margin = at(24.0);
         let preview_units = client_preview_units();
+        let split = is_split();
 
         // The stack, top to bottom, all worked out from the one number.
         let header_top = at(16.0);
         let hairline_top = at(62.0);
         let preview_top = hairline_top + at(20.0);
         let preview_bottom = preview_top + at(preview_units);
-        let caption_top = preview_bottom + at(16.0);
-        let timeline_top = caption_top + at(16.0) + at(12.0);
-        let times_top = timeline_top + at(STRIP_UNITS) + at(10.0);
-        let transport_top = times_top + at(18.0) + at(10.0);
-        let hairline_bottom = transport_top + at(30.0) + at(18.0);
 
-        Layout {
+        // A trim: the caption, then the moments row, and the closing
+        // hairline two units nearer the footer than a rounded count
+        // would put it — the way the trim card was measured in. A split:
+        // a taller points row with its pill, no moments row, and after
+        // the transport the equal row, and the hairline under it.
+        let caption_top = preview_bottom + at(16.0);
+        let timeline_top = if split {
+            caption_top + at(30.0) + at(12.0)
+        } else {
+            caption_top + at(16.0) + at(12.0)
+        };
+        let (times_top, transport_top) = if split {
+            let after_strip = timeline_top + at(STRIP_UNITS) + at(10.0);
+            (after_strip, after_strip)
+        } else {
+            let times = timeline_top + at(STRIP_UNITS) + at(10.0);
+            (times, times + at(18.0) + at(10.0))
+        };
+        let transport_row = at(28.0);
+        let equal_top = transport_top + transport_row + at(10.0);
+        let hairline_bottom = if split {
+            equal_top + at(30.0) + at(18.0)
+        } else {
+            transport_top + at(30.0) + at(18.0)
+        };
+
+        // The equal row is laid to the right: the count, the two little
+        // wings of its stepper, and the pill that lives where the cuts
+        // are told to stand. The label keeps what is left of them.
+        let set_right = whole - margin;
+        let set_left = set_right - at(56.0);
+        let stepper_left = set_left - at(8.0) - at(24.0) - at(6.0) - at(44.0);
+
+        let mut layout = Layout {
             file_name: RECT {
                 left: margin,
                 top: header_top,
@@ -773,7 +905,7 @@ impl Layout {
                 left: margin,
                 top: caption_top,
                 right: whole - margin,
-                bottom: caption_top + at(16.0),
+                bottom: caption_top + if split { at(30.0) } else { at(16.0) },
             },
             timeline: RECT {
                 left: margin,
@@ -832,7 +964,67 @@ impl Layout {
                 right: whole - margin,
                 bottom: side - at(16.0),
             },
+            points: RECT::default(),
+            add_split: RECT::default(),
+            equal_label: RECT::default(),
+            stepper: RECT::default(),
+            step_up: RECT::default(),
+            step_down: RECT::default(),
+            set: RECT::default(),
+        };
+
+        if split {
+            // The points row: the count on the left, the pill at the
+            // right hand of it, standing where the caption stands.
+            let pill_left = whole - margin - at(110.0);
+            layout.points = RECT {
+                left: margin,
+                top: caption_top,
+                right: pill_left - at(10.0),
+                bottom: caption_top + at(30.0),
+            };
+            layout.add_split = RECT {
+                left: pill_left,
+                top: caption_top,
+                right: whole - margin,
+                bottom: caption_top + at(30.0),
+            };
+            // And the equal row after the transport.
+            layout.equal_label = RECT {
+                left: margin,
+                top: equal_top,
+                right: stepper_left - at(16.0),
+                bottom: equal_top + at(30.0),
+            };
+            layout.stepper = RECT {
+                left: stepper_left,
+                top: equal_top,
+                right: stepper_left + at(44.0),
+                bottom: equal_top + at(30.0),
+            };
+            let wings_left = stepper_left + at(44.0) + at(6.0);
+            layout.step_up = RECT {
+                left: wings_left,
+                top: equal_top,
+                right: wings_left + at(24.0),
+                bottom: equal_top + at(15.0),
+            };
+            layout.step_down = RECT {
+                left: wings_left,
+                top: equal_top + at(15.0),
+                right: wings_left + at(24.0),
+                bottom: equal_top + at(30.0),
+            };
+            let set_right = whole - margin;
+            layout.set = RECT {
+                left: set_right - at(56.0),
+                top: equal_top,
+                right: set_right,
+                bottom: equal_top + at(30.0),
+            };
         }
+
+        layout
     }
 }
 
@@ -864,17 +1056,29 @@ fn send(event: ToolEvent) {
     });
 }
 
-/// Puts the keyboard on one stop of the card: a cap or the go button.
+/// Puts the keyboard on one stop of the card: a cap or the go button. A
+/// split's stops say themselves: the playhead keeps no ring, and the two
+/// pills and the go button do.
 unsafe fn apply_focus(window: HWND, index: i32) {
     // The focus is the window's own everywhere: the caps are drawn, not
     // made of the system's stuff, and the keyboard is read here.
     unsafe { let _ = SetFocus(Some(window)); }
+    let split = is_split();
     HOST.with(|slot| {
         let mut borrowed = slot.borrow_mut();
         if let Some(host) = borrowed.as_mut() {
-            host.card
-                .set_handle_focus(if index == 0 || index == 1 { index + 1 } else { 0 });
-            host.card.set_button_focus(if index == 2 { 2 } else { 0 });
+            if split {
+                // 0 the playhead (no ring), 1 add-split, 2 set, 3 run.
+                host.card.set_handle_focus(0);
+                host.card
+                    .set_button_focus(if index == 3 { 2 } else { 0 });
+                host.card
+                    .set_pill_focus(if index == 1 { 1 } else { if index == 2 { 2 } else { 0 } });
+            } else {
+                host.card
+                    .set_handle_focus(if index == 0 || index == 1 { index + 1 } else { 0 });
+                host.card.set_button_focus(if index == 2 { 2 } else { 0 });
+            }
             host.software.request_redraw();
         }
     });
@@ -882,9 +1086,10 @@ unsafe fn apply_focus(window: HWND, index: i32) {
 }
 
 /// Walks the keyboard to the next stop of the card, or the one before:
-/// the start cap, the end cap, and go.
+/// a trim walks the start cap, the end cap, and go; a split walks the
+/// playhead, the two pills, and go.
 unsafe fn cycle_focus(window: HWND, forward: bool) {
-    let stops: [i32; 3] = [0, 1, 2];
+    let stops: &[i32] = if is_split() { &[0, 1, 2, 3] } else { &[0, 1, 2] };
     let current = FOCUS_INDEX.with(|slot| slot.get());
     let at = stops
         .iter()
@@ -901,8 +1106,10 @@ unsafe fn cycle_focus(window: HWND, forward: bool) {
 }
 
 /// Tells the card where the video begins and ends, and where the
-/// playhead stands, and what all of it says in words.
+/// playhead stands, and what all of it says in words. A trim card says
+/// its stretch; a split card says how many cuts stand and wears them.
 fn refresh_times() {
+    let split = is_split();
     HOST.with(|slot| {
         let mut borrowed = slot.borrow_mut();
         if let Some(host) = borrowed.as_mut() {
@@ -919,6 +1126,27 @@ fn refresh_times() {
                 host.card.set_playhead_text(
                     format!("{} / {}", timecode(state.playhead), timecode(state.duration)).into(),
                 );
+                if split {
+                    let mut said = match state.points.len() {
+                        0 => "0 split points".to_string(),
+                        1 => "1 split point".to_string(),
+                        n => format!("{n} split points"),
+                    };
+                    if let Some(about) = state.equal_saying.as_deref() {
+                        said.push_str(&format!(" \u{b7} each about {about}"));
+                    }
+                    host.card.set_points_text(said.into());
+                    host.card.set_parts_text(state.parts.to_string().into());
+                    host.card.set_run_enabled(!state.points.is_empty());
+                    let markers: Vec<f32> = state
+                        .points
+                        .iter()
+                        .map(|&point| fraction(point, state.duration))
+                        .collect();
+                    host.card.set_markers(
+                        std::rc::Rc::new(slint::VecModel::from(markers)).into(),
+                    );
+                }
             });
             host.software.request_redraw();
         }
@@ -1014,15 +1242,30 @@ fn timeline_touched(window: HWND, x: i32, y: i32, pressed: bool) {
             if state.duration <= 0.0 {
                 return;
             }
-            let take_start = (x - along(state.start)).abs() <= at(HANDLE_REACH as f32);
-            let take_end = (x - along(state.end)).abs() <= at(HANDLE_REACH as f32);
-            state.dragging = if take_start && !take_end {
-                Drag::Start
-            } else if take_end {
-                Drag::End
+            if state.split {
+                // A split takes no ends: a press on a marker stands the
+                // playhead on the cut it took, anywhere else takes the
+                // playhead itself.
+                let on_marker = state
+                    .points
+                    .iter()
+                    .any(|&point| (x - along(point)).abs() <= at(MARKER_REACH as f32));
+                state.dragging = if on_marker {
+                    Drag::Nothing
+                } else {
+                    Drag::Playhead
+                };
             } else {
-                Drag::Playhead
-            };
+                let take_start = (x - along(state.start)).abs() <= at(HANDLE_REACH as f32);
+                let take_end = (x - along(state.end)).abs() <= at(HANDLE_REACH as f32);
+                state.dragging = if take_start && !take_end {
+                    Drag::Start
+                } else if take_end {
+                    Drag::End
+                } else {
+                    Drag::Playhead
+                };
+            }
         });
         unsafe { let _ = SetCapture(window); };
     }
@@ -1050,6 +1293,32 @@ fn timeline_touched(window: HWND, x: i32, y: i32, pressed: bool) {
         refresh_times();
         let _ = unsafe { InvalidateRect(Some(window), None, true) };
     }
+    // A press that took a marker stands the playhead on the cut it took:
+    // the pointer need not hold on to anything to say where to go.
+    if pressed {
+        let duration = STATE.with(|slot| slot.borrow().duration);
+        let moment = ((x - bar.left) as f64 / (bar.right - bar.left) as f64).clamp(0.0, 1.0)
+            * duration;
+        let reach = MARKER_REACH as f64 * duration / (bar.right - bar.left) as f64;
+        let took = STATE.with(|slot| {
+            slot.borrow()
+                .points
+                .iter()
+                .copied()
+                .min_by(|a, b| {
+                    let da = (*a - moment).abs();
+                    let db = (*b - moment).abs();
+                    da.partial_cmp(&db).expect("the moments are not nothing")
+                })
+                .filter(|&point| (point - moment).abs() <= reach)
+        });
+        if let Some(point) = took {
+            STATE.with(|slot| slot.borrow_mut().playhead = point);
+            refresh_frame(false);
+            refresh_times();
+            let _ = unsafe { InvalidateRect(Some(window), None, true) };
+        }
+    }
 }
 
 /// Lets go of whatever the pointer was holding.
@@ -1060,7 +1329,8 @@ fn released(window: HWND) {
 }
 
 /// Steps the handle the keyboard is on, back or forward a second — or
-/// five, when Shift is held.
+/// five, when Shift is held. A split card has no handles: the playhead
+/// moves.
 unsafe fn step(window: HWND, direction: f64) {
     let shift = unsafe { GetKeyState(VK_SHIFT.0 as i32) < 0 };
     let by = direction * if shift { 5.0 } else { 1.0 };
@@ -1070,15 +1340,110 @@ unsafe fn step(window: HWND, direction: f64) {
         if state.duration <= 0.0 {
             return;
         }
-        match focused {
-            0 => state.start = (state.start + by).clamp(0.0, state.end - MIN_SPAN),
-            1 => state.end = (state.end + by).clamp(state.start + MIN_SPAN, state.duration),
-            _ => state.playhead = (state.playhead + by).clamp(0.0, state.duration),
+        if state.split {
+            state.playhead = (state.playhead + by).clamp(0.0, state.duration);
+        } else {
+            match focused {
+                0 => state.start = (state.start + by).clamp(0.0, state.end - MIN_SPAN),
+                1 => state.end = (state.end + by).clamp(state.start + MIN_SPAN, state.duration),
+                _ => state.playhead = (state.playhead + by).clamp(0.0, state.duration),
+            }
         }
     });
     refresh_frame(false);
     refresh_times();
     let _ = unsafe { InvalidateRect(Some(window), None, true) };
+}
+
+/// Puts a cut where the playhead stands, if the playhead stands where a
+/// cut may go: inside the video, but not against either end, and not so
+/// close to another cut that the two make no clip of their own.
+unsafe fn add_split(window: HWND) {
+    let made = STATE.with(|slot| {
+        let mut state = slot.borrow_mut();
+        let stand = state.playhead;
+        let may = state.duration > 0.0
+            && stand > POINT_MARGIN
+            && stand < state.duration - POINT_MARGIN
+            && !state
+                .points
+                .iter()
+                .any(|&point| (point - stand).abs() < MIN_POINT_GAP);
+        if may {
+            state.points.push(stand);
+            state.points.sort_by(|a, b| a.partial_cmp(b).expect("the moments are not nothing"));
+            state.equal_saying = None;
+        }
+        may
+    });
+    if made {
+        refresh_times();
+        let _ = unsafe { InvalidateRect(Some(window), None, true) };
+    }
+}
+
+/// Says where the equal parts cut: as many stands inside the video as
+/// the count has gaps, spread evenly, the way the original works its
+/// equal saying out.
+unsafe fn set_equal(window: HWND) {
+    STATE.with(|slot| {
+        let mut state = slot.borrow_mut();
+        if state.duration <= 0.0 {
+            return;
+        }
+        let parts = state.parts;
+        state.points = (1..parts)
+            .map(|step| state.duration * step as f64 / parts as f64)
+            .collect();
+        state.equal_saying = Some(timecode(state.duration / parts as f64));
+    });
+    refresh_times();
+    let _ = unsafe { InvalidateRect(Some(window), None, true) };
+}
+
+/// Turns the count of the equal parts between its least and most.
+unsafe fn turn_parts(window: HWND, direction: i32) {
+    let said = STATE.with(|slot| {
+        let mut state = slot.borrow_mut();
+        let next = (state.parts + direction).clamp(PARTS_MIN, PARTS_MAX);
+        let turn = next != state.parts;
+        state.parts = next;
+        turn
+    });
+    if said {
+        refresh_times();
+        let _ = unsafe { InvalidateRect(Some(window), None, true) };
+    }
+}
+
+/// Takes away the cut nearest the playhead, when one stands near enough.
+unsafe fn take_point_near(window: HWND) {
+    let took = STATE.with(|slot| {
+        let mut state = slot.borrow_mut();
+        let stand = state.playhead;
+        let share = state
+            .points
+            .iter()
+            .copied()
+            .enumerate()
+            .min_by(|(_, a), (_, b)| {
+                let da = (*a - stand).abs();
+                let db = (*b - stand).abs();
+                da.partial_cmp(&db).expect("the moments are not nothing")
+            });
+        match share {
+            Some((index, point)) if (point - stand).abs() <= DELETE_REACH => {
+                state.points.remove(index);
+                state.equal_saying = None;
+                true
+            }
+            _ => false,
+        }
+    });
+    if took {
+        refresh_times();
+        let _ = unsafe { InvalidateRect(Some(window), None, true) };
+    }
 }
 
 unsafe extern "system" fn window_procedure(
@@ -1193,10 +1558,25 @@ unsafe extern "system" fn window_procedure(
                 unsafe { step(window, 1.0) };
                 LRESULT(0)
             } else if key == VK_RETURN.0 || key == VK_SPACE.0 {
-                unsafe { run(window) };
+                // A split card's keyboard says its rows too: Space takes
+                // what the keyboard stands on — a cut at the playhead, or
+                // the equal row's own doing. Enter always says go.
+                if is_split() && key == VK_SPACE.0 {
+                    let stop = FOCUS_INDEX.with(|slot| slot.get());
+                    match stop {
+                        0 | 1 => unsafe { add_split(window) },
+                        2 => unsafe { set_equal(window) },
+                        _ => unsafe { run(window) },
+                    }
+                } else {
+                    unsafe { run(window) };
+                }
                 LRESULT(0)
             } else if key == VK_ESCAPE.0 {
                 unsafe { cancel(window) };
+                LRESULT(0)
+            } else if key == VK_DELETE.0 && is_split() {
+                unsafe { take_point_near(window) };
                 LRESULT(0)
             } else {
                 unsafe { DefWindowProcW(window, message, wparam, lparam) }
@@ -1240,18 +1620,38 @@ unsafe extern "system" fn window_procedure(
     }
 }
 
-/// Runs what the window was open for, with the range the handles hold.
+/// Runs what the window was open for, with the range the handles hold —
+/// or, when the window is asked for a split, with the cuts standing.
 unsafe fn run(window: HWND) {
+    let (split, empty_points) = STATE.with(|slot| {
+        let state = slot.borrow();
+        (
+            state.split,
+            state.split && state.points.is_empty(),
+        )
+    });
+    // A split with no cut yet has nothing to say: the go button is
+    // already retired, and the key says nothing either.
+    if split && empty_points {
+        return;
+    }
     let settings = STATE.with(|slot| {
         let state = slot.borrow();
-        if state.duration > 0.0 {
+        if state.points.is_empty() {
             ToolSettings {
                 start_ms: Some((state.start * 1000.0).round() as u64),
                 end_ms: Some((state.end * 1000.0).round() as u64),
                 ..Default::default()
             }
         } else {
-            ToolSettings::default()
+            ToolSettings {
+                points_ms: state
+                    .points
+                    .iter()
+                    .map(|point| (point * 1000.0).round() as u64)
+                    .collect(),
+                ..Default::default()
+            }
         }
     });
     OPEN_FOR.with(|slot| {
@@ -1377,6 +1777,49 @@ mod tests {
         assert_eq!(narrow.run.left, wide.run.left);
         assert_eq!(narrow.timeline.top - narrow.timeline.bottom,
                    wide.timeline.top - wide.timeline.bottom);
+    }
+
+    #[test]
+    fn the_height_of_a_split_window_is_its_own_content_and_its_preview() {
+        assert_eq!(Layout::height_for_split(236.0), 608.0);
+        assert_eq!(Layout::height_for_split(300.0), 672.0);
+    }
+
+    #[test]
+    fn a_split_layout_stands_the_rows_the_card_says() {
+        STATE.with(|slot| {
+            slot.borrow_mut().preview_units = 236.0;
+            slot.borrow_mut().split = true;
+        });
+        let whole = 420;
+        let side = 608;
+        let layout = Layout::of(whole, side, 1.0);
+        // The points row is two stops: the count on the left, the pill at
+        // the right, on the same line.
+        assert_eq!(layout.points.top, layout.add_split.top);
+        assert!(layout.points.right + 10 <= layout.add_split.left, "the count does not run into the pill");
+        assert_eq!(layout.add_split.right, whole - 24);
+        // The strip stands where the trim card wears it, as tall as ever.
+        assert_eq!(
+            layout.timeline.bottom - layout.timeline.top,
+            (STRIP_UNITS * 1.0) as i32
+        );
+        // The moments row is not a split card's: the transport follows
+        // the strip, and the equal row after it, both on one line.
+        assert_eq!(layout.step_back.top, layout.step_forward.top);
+        assert!(layout.step_forward.bottom + 10 <= layout.equal_label.top,
+                "the equal row stands under the transport");
+        assert_eq!(layout.equal_label.top, layout.stepper.top);
+        assert_eq!(layout.stepper.top, layout.set.top);
+        assert!(layout.equal_label.right < layout.stepper.left);
+        assert!(layout.step_down.right < layout.set.left,
+                "the Set pill stands at the right, clear of the wings");
+        assert_eq!(layout.set.right, whole - 24);
+        // The stack still closes: hairline above and below, the footer
+        // inside the window.
+        assert!(layout.timeline.bottom < layout.hairline_bottom.top);
+        assert!(layout.run.right <= whole && layout.run.bottom <= side);
+        STATE.with(|slot| slot.borrow_mut().split = false);
     }
 }
 
@@ -1573,6 +2016,101 @@ mod show_tests {
             }
         });
         capture(window.window, &shots.join("trim-window.png"));
+        window.hide();
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    /// Showing the split card and pumping its messages must not panic
+    /// either: the same loop the program runs when a split is picked.
+    #[test]
+    fn showing_and_pumping_the_split_card_does_not_panic() {
+        crate::ui::wheel::install_platform();
+        let (sender, _receiver) = std::sync::mpsc::channel();
+        let mut window = TimelineWindow::new(sender).expect("the window was made");
+        window.show_for(
+            "tools.split",
+            "Split",
+            "Cut the video into clips",
+            &[PathBuf::from("not-there.mp4")],
+        );
+        for _ in 0..40 {
+            unsafe {
+                let mut message = MSG::default();
+                while PeekMessageW(&mut message, None, 0, 0, PM_REMOVE).as_bool() {
+                    let _ = TranslateMessage(&message);
+                    DispatchMessageW(&message);
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        window.hide();
+    }
+
+    /// Opens the split window on a real video, stands the cuts on it the
+    /// way a person's hands would, and captures what they would see.
+    #[test]
+    #[ignore = "needs the conversion program; writes a screenshot"]
+    fn capture_the_split_window() {
+        crate::ui::wheel::install_platform();
+        let folder = std::env::temp_dir().join("open-tangerine-capture");
+        std::fs::create_dir_all(&folder).expect("the capture folder was made");
+        let video = make_test_video(&folder);
+        let (sender, _receiver) = std::sync::mpsc::channel();
+        let mut window = TimelineWindow::new(sender).expect("the window was made");
+        window.show_for("tools.split", "Split", "Cut the video into clips", &[video]);
+        // The strip is a run of seeks behind the window, and the shot
+        // wants it there; the pump below serves its timer.
+        for round in 0..2400 {
+            unsafe {
+                let mut message = MSG::default();
+                while PeekMessageW(&mut message, None, 0, 0, PM_REMOVE).as_bool() {
+                    let _ = TranslateMessage(&message);
+                    DispatchMessageW(&message);
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            if get_strip_worn() && round > 400 {
+                break;
+            }
+        }
+        // The hands: one cut put where the playhead stands, a scrub to
+        // where the next goes, and the equal row said for four parts —
+        // which puts three markers on the strip and says how long every
+        // clip lasts about.
+        unsafe { add_split(window.window) };
+        STATE.with(|slot| slot.borrow_mut().playhead = 1.5);
+        STATE.with(|slot| slot.borrow_mut().parts = 4);
+        unsafe { set_equal(window.window) };
+        for _ in 0..60 {
+            unsafe {
+                let mut message = MSG::default();
+                while PeekMessageW(&mut message, None, 0, 0, PM_REMOVE).as_bool() {
+                    let _ = TranslateMessage(&message);
+                    DispatchMessageW(&message);
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let shots = std::path::Path::new("target").join("shots");
+        std::fs::create_dir_all(&shots).expect("the shots folder was made");
+        HOST.with(|slot| {
+            let borrowed = slot.borrow();
+            if let Some(host) = borrowed.as_ref() {
+                let mut rgba = Vec::with_capacity(host.buffer.len() * 4);
+                for pixel in &host.buffer {
+                    let (_, r, g, b) = pixel.parts();
+                    rgba.extend_from_slice(&[r, g, b, 255]);
+                }
+                let _ = image::save_buffer(
+                    shots.join("split-buffer.png"),
+                    &rgba,
+                    host.width,
+                    host.height,
+                    image::ExtendedColorType::Rgba8,
+                );
+            }
+        });
+        capture(window.window, &shots.join("split-window.png"));
         window.hide();
         let _ = std::fs::remove_dir_all(&folder);
     }
