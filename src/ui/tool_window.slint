@@ -1,12 +1,15 @@
 // The card a tool is asked on.
 //
-// The geometry is worked out in Rust, where the fields the person types
-// into are placed by the same numbers: the card only draws what it is
-// told, where it is told. Every position and size is in the pixels of the
-// window, so what is drawn and where the typing fields sit can never
-// disagree.
+// The skeleton is the reference's: a header of the file's name and the
+// tool's words, a hairline, the body (the file's own picture, edge to
+// edge), another hairline, and a footer whose left says the shortcuts and
+// whose right says no and go. The geometry is worked out in Rust, where
+// the fields the person types into are placed by the same numbers: the
+// card only draws what it is told, where it is told.
 
-struct Panel {
+import { Tokens } from "tokens.slint";
+
+export struct Panel {
     x: length,
     y: length,
     width: length,
@@ -15,99 +18,164 @@ struct Panel {
 
 export component ToolCard inherits Window {
     // What the card says.
-    in property <string> title-text;
-    in property <string> file-text;
+    in property <string> file-name;
+    in property <string> detail;
     in property <image> preview;
     in property <bool> has-preview;
     in property <bool> wants-size;
+    // How much the display stretches everything: the words grow with it.
+    in property <float> ui-scale: 1.0;
 
     // Where everything is.
-    in property <Panel> title-box;
-    in property <Panel> file-box;
+    in property <Panel> header-box;
+    in property <Panel> detail-box;
+    in property <Panel> hairline-top;
+    in property <Panel> hairline-bottom;
     in property <Panel> preview-box;
-    in property <Panel> width-box;
-    in property <Panel> height-box;
+    in property <Panel> width-tile;
+    in property <Panel> height-tile;
+    in property <Panel> helper-box;
     in property <Panel> cancel-box;
     in property <Panel> run-box;
 
-    // The colours, the same tokens the wheel is drawn with.
-    in property <color> surface: #ffffff;
-    in property <color> card: #ecedef;
-    in property <color> card-hover: #e3e5eb;
-    in property <color> accent: #ff5a1f;
-    in property <color> accent-hover: #ff7138;
-    in property <color> text: #242424;
-    in property <color> text-dim: #737373;
+    // What is being written in, and what the keyboard is on.
+    in property <bool> width-focused;
+    in property <bool> height-focused;
+    // 0 nothing, 1 cancel, 2 run.
+    in property <int> button-focus;
 
     callback run-chosen();
     callback cancel-chosen();
 
     Rectangle {
-        background: root.surface;
+        background: Tokens.surface;
     }
 
-    // The words of the tool, and the file it will work on.
+    // The header: the file this is about, and what the tool will do.
     Text {
-        x: root.title-box.x; y: root.title-box.y;
-        width: root.title-box.width; height: root.title-box.height;
-        text: root.title-text;
-        color: root.text;
-        font-size: 19px;
-        font-weight: 700;
+        x: root.header-box.x; y: root.header-box.y;
+        width: root.header-box.width; height: root.header-box.height;
+        text: root.file-name;
+        color: Tokens.text;
+        font-size: root.ui-scale * 15px;
+        font-weight: 600;
         font-family: "Segoe UI";
         vertical-alignment: center;
-        horizontal-alignment: center;
         overflow: elide;
     }
     Text {
-        x: root.file-box.x; y: root.file-box.y;
-        width: root.file-box.width; height: root.file-box.height;
-        text: root.file-text;
-        color: root.text-dim;
-        font-size: 13px;
+        x: root.detail-box.x; y: root.detail-box.y;
+        width: root.detail-box.width; height: root.detail-box.height;
+        text: root.detail;
+        color: Tokens.text-dim;
+        font-size: root.ui-scale * 12px;
         font-family: "Segoe UI";
         vertical-alignment: center;
-        horizontal-alignment: center;
         overflow: elide;
     }
 
-    // The picture of the file, on a card of its own.
+    Rectangle {
+        x: root.hairline-top.x; y: root.hairline-top.y;
+        width: root.hairline-top.width; height: 1px;
+        background: Tokens.hairline;
+    }
+
+    // The body: the file's own picture, edge to edge, on a neutral card.
     Rectangle {
         x: root.preview-box.x; y: root.preview-box.y;
         width: root.preview-box.width; height: root.preview-box.height;
-        border-radius: 10px;
-        background: root.card;
+        border-radius: 8px;
+        background: Tokens.canvas;
         clip: true;
 
         if root.has-preview: Image {
-            x: 12px; y: 12px;
-            width: parent.width - 24px;
-            height: parent.height - 24px;
+            x: 0; y: 0;
+            width: parent.width;
+            height: parent.height;
             source: root.preview;
             image-fit: contain;
         }
     }
 
-    // The boxes the typing fields sit in, when the tool asks a size.
+    // The tiles the typing fields sit in. The word on the left and the
+    // unit on the right are the card's; the typing itself is a real
+    // system field laid between them.
     if root.wants-size: Rectangle {
-        x: root.width-box.x; y: root.width-box.y;
-        width: root.width-box.width; height: root.width-box.height;
-        border-radius: 8px;
-        background: root.card;
+        x: root.width-tile.x; y: root.width-tile.y;
+        width: root.width-tile.width; height: root.width-tile.height;
+        border-radius: 6px;
+        background: Tokens.surface;
+        border-width: 1px;
+        border-color: root.width-focused ? Tokens.accent : Tokens.field-border;
+
+        Text {
+            x: 10px; width: 44px; height: parent.height;
+            text: "Width";
+            color: Tokens.text-dim;
+            font-size: root.ui-scale * 12px;
+            font-family: "Segoe UI";
+            vertical-alignment: center;
+        }
+        Text {
+            x: parent.width - 26px; width: 18px; height: parent.height;
+            text: "px";
+            color: Tokens.text-dim;
+            font-size: root.ui-scale * 12px;
+            font-family: "Segoe UI";
+            vertical-alignment: center;
+        }
     }
     if root.wants-size: Rectangle {
-        x: root.height-box.x; y: root.height-box.y;
-        width: root.height-box.width; height: root.height-box.height;
-        border-radius: 8px;
-        background: root.card;
+        x: root.height-tile.x; y: root.height-tile.y;
+        width: root.height-tile.width; height: root.height-tile.height;
+        border-radius: 6px;
+        background: Tokens.surface;
+        border-width: 1px;
+        border-color: root.height-focused ? Tokens.accent : Tokens.field-border;
+
+        Text {
+            x: 10px; width: 44px; height: parent.height;
+            text: "Height";
+            color: Tokens.text-dim;
+            font-size: root.ui-scale * 12px;
+            font-family: "Segoe UI";
+            vertical-alignment: center;
+        }
+        Text {
+            x: parent.width - 26px; width: 18px; height: parent.height;
+            text: "px";
+            color: Tokens.text-dim;
+            font-size: root.ui-scale * 12px;
+            font-family: "Segoe UI";
+            vertical-alignment: center;
+        }
     }
 
-    // The buttons. Cancel is quiet; Run is the colour of the product.
+    Rectangle {
+        x: root.hairline-bottom.x; y: root.hairline-bottom.y;
+        width: root.hairline-bottom.width; height: 1px;
+        background: Tokens.hairline;
+    }
+
+    // The footer: the shortcuts on the left, no and go on the right.
+    Text {
+        x: root.helper-box.x; y: root.helper-box.y;
+        width: root.helper-box.width; height: root.helper-box.height;
+        text: "Enter to run \u{b7} Esc to close";
+        color: Tokens.text-dim;
+        font-size: root.ui-scale * 11px;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
     Rectangle {
         x: root.cancel-box.x; y: root.cancel-box.y;
         width: root.cancel-box.width; height: root.cancel-box.height;
-        border-radius: 8px;
-        background: cancel-touch.has-hover ? root.card-hover : root.card;
+        border-radius: 6px;
+        background: cancel-touch.pressed ? #ececea : (cancel-touch.has-hover ? #f3f3f1 : Tokens.surface);
+        border-width: 1px;
+        border-color: root.button-focus == 1 ? Tokens.accent : Tokens.outline;
 
         cancel-touch := TouchArea {
             clicked => { root.cancel-chosen(); }
@@ -115,18 +183,28 @@ export component ToolCard inherits Window {
 
         Text {
             text: "Cancel";
-            color: root.text;
-            font-size: 14px;
+            color: Tokens.text;
+            font-size: root.ui-scale * 13px;
             font-family: "Segoe UI";
             vertical-alignment: center;
             horizontal-alignment: center;
         }
     }
+    // A ring the keyboard puts around the go button when that is what
+    // the keyboard is on.
+    Rectangle {
+        x: root.run-box.x - 3px; y: root.run-box.y - 3px;
+        width: root.run-box.width + 6px; height: root.run-box.height + 6px;
+        border-radius: 9px;
+        border-width: 2px;
+        border-color: Tokens.accent;
+        visible: root.button-focus == 2;
+    }
     Rectangle {
         x: root.run-box.x; y: root.run-box.y;
         width: root.run-box.width; height: root.run-box.height;
-        border-radius: 8px;
-        background: run-touch.has-hover ? root.accent-hover : root.accent;
+        border-radius: 6px;
+        background: run-touch.pressed ? Tokens.accent-pressed : Tokens.accent;
 
         run-touch := TouchArea {
             clicked => { root.run-chosen(); }
@@ -134,8 +212,8 @@ export component ToolCard inherits Window {
 
         Text {
             text: "Run";
-            color: #ffffff;
-            font-size: 14px;
+            color: #1a1a1a;
+            font-size: root.ui-scale * 13px;
             font-weight: 600;
             font-family: "Segoe UI";
             vertical-alignment: center;

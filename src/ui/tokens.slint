@@ -1,0 +1,27 @@
+// The one set of colours every surface of the product is drawn with.
+//
+// The wheel is dark glass and the cards are daylight; the orange is the
+// same orange on both, because it is the product's own colour. One place
+// holds the values, so the surfaces cannot drift apart.
+
+export global Tokens {
+    // The one orange: what the wheel lights a choice with, and what a
+    // card says "go" with.
+    out property <color> accent: #ff8a3d;
+    // The orange a little deeper, for pressing.
+    out property <color> accent-pressed: #f0792a;
+
+    // The daylight card.
+    out property <color> surface: #ffffff;
+    // The neutral a picture sits on.
+    out property <color> canvas: #f5f5f5;
+    // A field that is not being written in.
+    out property <color> field-border: #d0d0d0;
+    // The words.
+    out property <color> text: #1a1a1a;
+    out property <color> text-dim: #8a8a8e;
+    // The hairlines that hold the card together.
+    out property <color> hairline: #e3e3e1;
+    // A quiet button's outline.
+    out property <color> outline: #d6d6d4;
+}

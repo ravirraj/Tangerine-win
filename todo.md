@@ -198,8 +198,61 @@ phase there is no tool parity, whatever the operations can do.
       uses them: scale=W:H, one side alone keeps the shape, no window =
       the old half-size default
 - [x] Tests: resize filter shapes, number parsing; 312 unit + 27 real green
-- [ ] Manual verification: drag an image → Tools wheel → Resize → window
-      with preview; enter width → Run → resized file appears
+- [x] Manual verification: drag an image → Tools wheel → Resize → window
+      with preview; enter width → Run → resized file appears (the audit
+      below opened, sized, focused and keyboard-walked the window; the
+      polish pass re-verified with the pump test)
+
+### B-10.0.1 TW-1 polish pass — make the window look designed (audit 2026-10-25) — DONE 2026-10-25 (1-9)
+Side-by-side with the 21 reference windows (Screenshots.rar, extracted to
+%TEMP%\ref-ui). The shell is right — preview-first card, Cancel/Run, Enter
+runs, Esc closes — but the skin reads as a default Win32 form wearing two
+rounded rectangles. Ordered by payoff: items 1-9 are small diffs, 10 is the
+structural one.
+
+- [x] 1. DPI sizing — created size now scales by the display factor
+      (screen_scale() before CreateWindowExW); the card stretches its
+      words with a ui-scale property the host feeds the same factor.
+- [x] 2. One header — tool name in the native title bar only; first
+      in-window line is the file name (15px semibold, left) with the
+      detail line (12px dim) under it, hairline below the header. All
+      content left-aligned.
+- [x] 3. Fields — persistent "Width"/"Height" labels with a dim "px"
+      suffix drawn by the card inside white 1px-#d0d0d0 6px-radius tiles;
+      the real EDIT (ES_NUMBER, left-aligned) is laid between label and
+      unit; the tile border turns accent on EN_SETFOCUS (bool into the
+      card); cue banners and ES_CENTER dropped.
+- [x] 4. Keyboard — Tab/arrows (and Up/Down) cycle fields → Cancel →
+      Run via a focus index driven from both window procs; Space/Enter
+      activate what the keyboard is on; Esc cancels; focus rings drawn
+      (accent tile border, accent ring around Run, accent border on
+      Cancel); both buttons get pressed states.
+- [x] 5. One token set, one orange — src/ui/tokens.slint is the single
+      set (accent #ff8a3d, pressed, surface, canvas, field-border, text,
+      text-dim, hairline, outline); the wheel's orange was already
+      #ff8a3d everywhere, so the product has exactly one orange.
+- [x] 6. Preview — single frame: edge-to-edge in its own 8px-radius tile
+      on #f5f5f5, thumbnail rendered at box size x scale (show_for reads
+      the laid-out box before making the image).
+- [x] 7. Body structure — header / hairline / body / hairline / footer,
+      hairlines full-width #e3e3e1.
+- [x] 8. Footer — Run 120x40 accent filled (near-black words), Cancel
+      96x40 quiet 1px outline, helper "Enter to run · Esc to close" left
+      of the buttons.
+- [x] 9. Chrome — no maximize box, WM_GETMINMAXINFO clamps 420x460 x
+      scale, explicit white class brush + white WM_CTLCOLOREDIT brush (no
+      black flicker under dark themes), Segoe UI with DPI-scaled sizes,
+      ~100ms fade-in via WS_EX_LAYERED + timer (0→255 in 51-alpha steps).
+- [ ] 10. ToolShell component — header / hairline / body slot / hairline /
+      footer in one Slint component; every later window (rows, timeline,
+      canvas, reorder list) fills the body slot. This is how the reference
+      makes 21 windows feel like one product: copy the skeleton, wear our
+      own Windows skin — left-aligned, native title bar, hairlines, one
+      tangerine orange, visible keyboard focus everywhere. Build during
+      B-10.1 so TW-2 is the first window to use it.
+      (Deliberately deferred, as planned — TW-1's card is the prototype;
+      TW-2 extracts the skeleton the first time a second body exists.)
+      State after the pass: 313 unit + 27 real green; release rebuilt.
 
 ### B-10.1 Time-range template (TW-2) — the Trim video window
 - [ ] Frame preview via ffmpeg -ss seek (~50-150 ms per scrub update)
@@ -234,6 +287,32 @@ phase there is no tool parity, whatever the operations can do.
 ### Reference notes
 Headline says "26 file tools" but /tools documents 21 windows. Old todo's
 "19 of 26 missing" count was wrong; this section is the verified list.
+
+All 21 reference windows analysed 2026-10-25 (screenshots in %TEMP%\ref-ui):
+one skeleton — header (close + small centered title) / hairline / body /
+hairline / footer (primary action right). The bodies reduce to three
+archetypes plus two specials, which map 1:1 onto our templates:
+- Form rows (label left, control right, caption under): Normalize volume
+  (3 LUFS sliders), Compress, Change speed, Convert audio channels
+  (mono/stereo + L/R sliders), Convert format, Edit metadata, Rotate
+  (row of 4 icon buttons) — a rows template covers ~7 of B-10.2.
+- Timeline (filmstrip or waveform + range handles + transport): Trim
+  video/audio, Bleep video/audio (adds a chip lane), Redact video (lanes
+  list per box) — the B-10.1 time-range template, reused four-plus times.
+- Canvas (preview + overlay boxes): Crop image/video, Redact photo, Edit
+  photo, Annotate, Add background, Collage, Organize PDF (thumbnails) —
+  the B-10.3 heavy work.
+- Specials: reorder list (Merge PDFs — document rows with up/down
+  chevrons; Join videos — thumbnail order list) and a style picker
+  (Audio visualizer — preview cards + option rows).
+Bonus captures from overlapping page sections: Join videos (stacked
+thumbnail order list) and Rotate video (rotate L/R, flip H/V icon buttons)
+— both on our B-10.2 list, reference detail already in hand.
+Our windows deliberately do NOT copy the Mac skin (circular close
+top-left, centered titles, 16px-radius floating cards, SF Pro): native
+title bar with close top-right, left alignment, <=8px radius, Segoe UI
+Variable, one tangerine orange. Keyboard paths for every drag interaction
+the reference only offers by mouse (see B-12.3).
 
 ---
 
