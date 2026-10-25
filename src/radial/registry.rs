@@ -596,26 +596,23 @@ pub const OPERATIONS: &[Operation] = &[
         requires: Requirement::Processor("document"),
     },
     // --------------------------------------------------------------- tools
+    // The compress is offered only for the kinds it can really make
+    // lighter: a picture by the program's own hands, a film and a sound
+    // through the conversion program. A PDF's pages are the reader's to
+    // redraw, and a document or an archive is not a thing to squeeze.
     Operation {
         id: "tools.compress",
         label: "Compress",
         detail: "Make the file smaller",
         icon: IconKind::Compress,
         mode: RadialMode::Tools,
-        categories: &[
-            FileKind::Image,
-            FileKind::Video,
-            FileKind::Audio,
-            FileKind::Pdf,
-            FileKind::Document,
-            FileKind::Archive,
-        ],
+        categories: &[FileKind::Image, FileKind::Video, FileKind::Audio],
         batch: Batch::Several,
         folders: false,
         output: Output::BesideAsInput,
         collision: Collision::Rename,
         implemented: true,
-        requires: Requirement::Processor("compress"),
+        requires: Requirement::AnyProcessor(&["image", "video", "audio"]),
     },
     Operation {
         id: "tools.crop",

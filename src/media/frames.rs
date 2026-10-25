@@ -42,6 +42,68 @@ fn parse_duration(said: &str) -> Option<f64> {
         .filter(|seconds| seconds.is_finite() && *seconds > 0.0)
 }
 
+/// How wide and tall a video stands, and how many frames it shows in a
+/// second, if the probe can say.
+///
+/// The first video stream is the one that counts — the same one a frame
+/// is taken from. A rate said as a fraction ("30000/1001") is divided
+/// out; a stream that keeps no picture answers nothing.
+pub fn shape_of(tools: &Tools, input: &Path) -> Option<(u32, u32, f64)> {
+    let arguments: Vec<OsString> = [
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=width,height,avg_frame_rate",
+        "-of",
+        "default=noprint_wrappers=1",
+    ]
+    .iter()
+    .map(|word| OsString::from(*word))
+    .chain([input.as_os_str().to_os_string()])
+    .collect();
+    let run = SystemRunner
+        .run(&tools.ffprobe, &arguments, None)
+        .ok()?;
+    if !run.succeeded() {
+        return None;
+    }
+    parse_shape(&String::from_utf8_lossy(&run.stdout))
+}
+
+/// Reads the probe's answer about a video's shape: width, height and the
+/// frames a second, each on a line of its own.
+fn parse_shape(said: &str) -> Option<(u32, u32, f64)> {
+    let mut width = None;
+    let mut height = None;
+    let mut rate = 0.0;
+    for line in said.lines() {
+        let Some((name, value)) = line.split_once('=') else {
+            continue;
+        };
+        match name.trim() {
+            "width" => width = value.trim().parse::<u32>().ok(),
+            "height" => height = value.trim().parse::<u32>().ok(),
+            "avg_frame_rate" => rate = parse_fraction(value.trim()).unwrap_or(0.0),
+            _ => {}
+        }
+    }
+    let (width, height) = width.zip(height)?;
+    Some((width, height, rate))
+}
+
+/// A rate said as "one over the other" — "30000/1001" — divided out.
+fn parse_fraction(said: &str) -> Option<f64> {
+    let (top, bottom) = said.split_once('/')?;
+    let top = top.trim().parse::<f64>().ok()?;
+    let bottom = bottom.trim().parse::<f64>().ok()?;
+    if bottom == 0.0 {
+        return None;
+    }
+    Some(top / bottom)
+}
+
 /// What the video looks like at a moment of it.
 ///
 /// The seek is put before the input, which makes it fast: the program
@@ -127,6 +189,26 @@ mod tests {
         assert_eq!(parse_duration("N/A\n"), None);
         assert_eq!(parse_duration("0"), None);
         assert_eq!(parse_duration("-4.0"), None);
+    }
+
+    #[test]
+    fn a_shape_is_read_from_what_the_probe_says() {
+        let said = "width=1920\nheight=1080\navg_frame_rate=30000/1001\n";
+        let (width, height, rate) = parse_shape(said).expect("the shape is there");
+        assert_eq!((width, height), (1920, 1080));
+        assert!((rate - 29.97).abs() < 0.01);
+        // A stream that keeps no picture, or a line the probe did not
+        // fill, answers nothing.
+        assert_eq!(parse_shape("width=640\n"), None);
+        assert_eq!(parse_shape("width=abc\nheight=480\n"), None);
+    }
+
+    #[test]
+    fn a_rate_said_as_a_fraction_is_divided_out() {
+        assert_eq!(parse_fraction("30/1"), Some(30.0));
+        assert!((parse_fraction("30000/1001").expect("a rate") - 29.97).abs() < 0.01);
+        assert_eq!(parse_fraction("0/0"), None);
+        assert_eq!(parse_fraction("30"), None);
     }
 
     #[test]

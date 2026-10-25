@@ -53,6 +53,39 @@ pub struct ToolSettings {
     pub crop_y: Option<u32>,
     pub crop_w: Option<u32>,
     pub crop_h: Option<u32>,
+    /// Whether the compress preset is the strong one. Nothing said, the
+    /// balanced preset is what runs — the way the wheel compressed before
+    /// there was a window to ask in.
+    ///
+    /// Only `tools.compress` reads this.
+    pub compress_strong: bool,
+    /// A size the compressed file is asked to fit under, in bytes, each
+    /// file on its own.
+    ///
+    /// Only `tools.compress` reads this.
+    pub target_bytes: Option<u64>,
+    /// The longest edge a compressed video may stand, in pixels, and the
+    /// most frames it may show in a second. Nothing said, a video keeps
+    /// its size and its rate.
+    ///
+    /// Only `tools.compress` reads these.
+    pub max_long_edge: Option<u32>,
+    pub max_fps: Option<u32>,
+    /// The entries to write into what a file says about itself, in order:
+    /// the tag's name and what it is to say. An empty value takes the tag
+    /// away.
+    ///
+    /// Only `tools.metadata` reads these.
+    pub metadata_tags: Vec<(String, String)>,
+    /// Whether every tag a file carries is to be taken away.
+    ///
+    /// Only `tools.metadata` reads this.
+    pub metadata_remove_all: bool,
+    /// Whether the tags that say where a file was made and by whom are to
+    /// be taken away.
+    ///
+    /// Only `tools.metadata` reads this.
+    pub metadata_remove_sensitive: bool,
 }
 
 /// A request to run an operation.

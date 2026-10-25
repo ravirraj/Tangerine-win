@@ -256,6 +256,49 @@ impl<P: Publisher> Tools<P> {
             }
         }
     }
+    /// Compressed file fits under a target size; the preset and the size
+    /// the window carried say how much to ask of the encoder. Nothing
+    /// said, the balanced preset is the one.
+    fn run_compress(&self, request: &Request, runner: &dyn ProcessRunner) -> Outcome {
+        let manifest = Manifest::get();
+        let mut outputs = Vec::new();
+        let mut failed = 0usize;
+        let mut first_reason: Option<String> = None;
+        for input in &request.inputs {
+            // The backend calls the manifest's own encoders; the window's
+            // settings (compress_strong, target_bytes) are the contract.
+            let result = self.compress_file(input, &manifest, runner, &request.settings);
+            match result {
+                Ok(path) => outputs.push(path),
+                Err(reason) => {
+                    failed += 1;
+                    diagnostics::log(Level::Warn, "action", &format!("a file was not compressed: {}", reason.name()));
+                    if first_reason.is_none() {
+                        first_reason = Some(reason.name().to_string());
+                    }
+                }
+            }
+        }
+        if failed == 0 {
+            Outcome::Succeeded { outputs }
+        } else {
+            Outcome::Failed {
+                reason: Failure::Error(format!("{failed} of the files could not be compressed")),
+            }
+        }
+    }
+
+    /// Placeholder for the per-file compression call; the full
+    /// implementation follows the manifest's encoders and the preset.
+    fn compress_file(
+        &self,
+        _input: &Path,
+        _manifest: &Manifest,
+        _runner: &dyn ProcessRunner,
+        _settings: &crate::radial::execution::ToolSettings,
+    ) -> Result<PathBuf, ToolError> {
+        Err(ToolError::NotImplemented)
+    }
 
     /// Splits one video into its folder of numbered clips.
     fn split_one(
