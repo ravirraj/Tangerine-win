@@ -65,11 +65,13 @@ impl<P: Publisher> Tools<P> {
         target: &crate::media::manifest::FormatSupport,
         temporary: &Path,
         runner: &dyn ProcessRunner,
+        settings: &crate::radial::execution::ToolSettings,
     ) -> Result<PathBuf, ToolError> {
+        let resize = resize_filter(settings);
         let video_filter = match operation_id {
             "tools.crop" => Some("crop=iw/2:ih/2:(iw-iw/2)/2:(ih-ih/2)/2"),
             "tools.rotate" => Some("transpose=1"),
-            "tools.resize" => Some("scale=iw/2:ih/2"),
+            "tools.resize" => Some(resize.as_str()),
             _ => None,
         };
 
@@ -104,6 +106,21 @@ impl<P: Publisher> Tools<P> {
             .map_err(|_| ToolError::WriteError)?;
 
         Ok(final_name)
+    }
+}
+
+/// The filter that resizes a picture, from what was asked.
+///
+/// A side that was not said keeps its share: `-1` is the conversion
+/// program's word for "the size that keeps the picture's shape". With
+/// nothing said, the picture is made half the size, which is what the
+/// wheel did before there was a window to ask in.
+fn resize_filter(settings: &crate::radial::execution::ToolSettings) -> String {
+    match (settings.width, settings.height) {
+        (Some(width), Some(height)) => format!("scale={width}:{height}"),
+        (Some(width), None) => format!("scale={width}:-1"),
+        (None, Some(height)) => format!("scale=-1:{height}"),
+        (None, None) => "scale=iw/2:ih/2".to_string(),
     }
 }
 
@@ -166,6 +183,7 @@ impl<P: Publisher> Handler for Tools<P> {
                 target,
                 &temporary,
                 &runner,
+                &request.settings,
             );
 
             match result {
@@ -200,6 +218,31 @@ impl<P: Publisher> Handler for Tools<P> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::radial::execution::ToolSettings;
+
+    #[test]
+    fn the_resize_filter_takes_what_was_asked() {
+        let both = ToolSettings {
+            width: Some(800),
+            height: Some(600),
+        };
+        assert_eq!(resize_filter(&both), "scale=800:600");
+        let only_width = ToolSettings {
+            width: Some(800),
+            height: None,
+        };
+        assert_eq!(resize_filter(&only_width), "scale=800:-1");
+        let only_height = ToolSettings {
+            width: None,
+            height: Some(600),
+        };
+        assert_eq!(resize_filter(&only_height), "scale=-1:600");
+    }
+
+    #[test]
+    fn the_resize_filter_without_a_window_makes_half() {
+        assert_eq!(resize_filter(&ToolSettings::default()), "scale=iw/2:ih/2");
+    }
 
     struct Nothing;
 
@@ -222,6 +265,7 @@ mod tests {
         let request = Request {
             operation: "tools.nonexistent".to_string(),
             inputs: Vec::new(),
+            ..Default::default()
         };
         let outcome = crate::radial::execution::run(&request, &Selection::inspect(&[]), &environment, &tools);
         match outcome {

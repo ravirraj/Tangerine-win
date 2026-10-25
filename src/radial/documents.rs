@@ -136,6 +136,7 @@ mod tests {
         let request = Request {
             operation: "convert.srt".to_string(),
             inputs: vec![path.clone()],
+            ..Default::default()
         };
         let documents = Documents {
             publisher: Nothing,

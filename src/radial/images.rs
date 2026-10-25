@@ -141,6 +141,7 @@ mod tests {
         let request = Request {
             operation: "convert.png".to_string(),
             inputs: vec![path.clone()],
+            ..Default::default()
         };
         let pictures = Pictures {
             tools: Tools::default(),
@@ -169,6 +170,7 @@ mod tests {
         let request = Request {
             operation: "convert.png".to_string(),
             inputs: vec![path.clone()],
+            ..Default::default()
         };
         let pictures = Pictures {
             tools: Tools::default(),

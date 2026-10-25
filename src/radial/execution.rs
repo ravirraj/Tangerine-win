@@ -23,8 +23,20 @@ use std::path::PathBuf;
 use crate::radial::registry::{Environment, Ineligible, eligibility, operation_by_id};
 use crate::radial::selection::Selection;
 
+/// The settings a tool was given in its window.
+///
+/// A tool that is run with no window — from a drag that never opened one —
+/// has none, and does what it does on its own.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ToolSettings {
+    /// A width, in pixels.
+    pub width: Option<u32>,
+    /// A height, in pixels.
+    pub height: Option<u32>,
+}
+
 /// A request to run an operation.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Request {
     /// The operation, by its stable name.
     pub operation: String,
@@ -33,6 +45,8 @@ pub struct Request {
     /// These have to be the files that were dragged: an operation is run on
     /// what the user chose, and on nothing else.
     pub inputs: Vec<PathBuf>,
+    /// What the tool's window said, when it was asked.
+    pub settings: ToolSettings,
 }
 
 /// What came of running an operation.
@@ -254,6 +268,7 @@ mod tests {
         let request = Request {
             operation: "there.is.no.such.operation".to_string(),
             inputs: vec![path],
+            ..Default::default()
         };
         let outcome = run(&request, &selection, &Environment::none(), &NotImplemented);
         assert_eq!(
@@ -273,6 +288,7 @@ mod tests {
             // Putting files in an archive is not something that is implemented.
             operation: "actions.zip".to_string(),
             inputs: vec![path],
+            ..Default::default()
         };
         let outcome = run(&request, &selection, &Environment::none(), &NotImplemented);
         assert_eq!(
@@ -293,6 +309,7 @@ mod tests {
         let request = Request {
             operation: "convert.png".to_string(),
             inputs: vec![other],
+            ..Default::default()
         };
         let outcome = run(&request, &selection, &Environment::none(), &NotImplemented);
         match outcome {
@@ -311,6 +328,7 @@ mod tests {
         let request = Request {
             operation: "convert.png".to_string(),
             inputs: vec![path],
+            ..Default::default()
         };
         let outcome = run(&request, &selection, &Environment::none(), &NotImplemented);
         match outcome {
@@ -329,6 +347,7 @@ mod tests {
         let request = Request {
             operation: "convert.png".to_string(),
             inputs: vec![path],
+            ..Default::default()
         };
         let outcome = run(&request, &selection, &Environment::none(), &NotImplemented);
         let name = match &outcome {
@@ -348,6 +367,7 @@ mod tests {
         let request = Request {
             operation: "convert.png".to_string(),
             inputs: vec![path],
+            ..Default::default()
         };
         let environment = Environment {
             processors: vec![crate::radial::registry::Processor {

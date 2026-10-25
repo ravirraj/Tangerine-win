@@ -172,11 +172,26 @@ as a DEDICATED CONFIGURATION WINDOW (preview, controls, Cancel/action).
 Our tools currently run immediately with hardcoded defaults — without this
 phase there is no tool parity, whatever the operations can do.
 
-### B-10.0 Tool window shell (TW-1)
-- [ ] Create src/ui/tool_window.slint — shared chrome: title, file strip,
-      preview area, controls column, Cancel + action footer
-- [ ] Controller effect: OpenToolWindow(op, files) instead of immediate Run
-- [ ] First window: Compress or Resize (image preview, no timeline)
+### B-10.0 Tool window shell (TW-1) — DONE 2026-10-25
+- [x] The shell is a real Win32 window (src/platform/windows/toolwindow.rs):
+      title/detail, file name, picture preview of the first dragged image
+      (decoded + thumbnailed via the image crate, SVG rasterised first),
+      width/height fields for the tools that take a size (resize for now),
+      Cancel + Run (Enter runs, Esc closes), DPI-aware layout. Native
+      controls — keyboard/focus/accessibility are Windows' own.
+      NOTE: the app's Slint setup is a custom software platform for the
+      wheel overlay, so a second Slint window would mean hand-rolled input
+      plumbing; a native window is the honest seam. Visual polish (comctl6
+      manifest) is a later pass.
+- [x] Picking any tools.* segment opens the window instead of running
+      immediately (app.rs); the window's answer comes back through the
+      message channel and runs on a worker like everything else
+- [x] execution::Request carries ToolSettings (width/height); tools.resize
+      uses them: scale=W:H, one side alone keeps the shape, no window =
+      the old half-size default
+- [x] Tests: resize filter shapes, number parsing; 312 unit + 27 real green
+- [ ] Manual verification: drag an image → Tools wheel → Resize → window
+      with preview; enter width → Run → resized file appears
 
 ### B-10.1 Time-range template (TW-2) — the Trim video window
 - [ ] Frame preview via ffmpeg -ss seek (~50-150 ms per scrub update)

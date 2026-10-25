@@ -233,6 +233,7 @@ mod tests {
         let request = Request {
             operation: "actions.nonexistent".to_string(),
             inputs: Vec::new(),
+            ..Default::default()
         };
         let outcome = crate::radial::execution::run(&request, &Selection::inspect(&[]), &environment, &actions);
         match outcome {

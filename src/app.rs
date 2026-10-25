@@ -123,6 +123,8 @@ enum Message {
     /// An operation has finished: the name of the operation, and what came
     /// of it.
     Finished(String, execution::Outcome),
+    /// What the tool window was asked, when its buttons were pressed.
+    ToolWindow(crate::platform::windows::toolwindow::ToolEvent),
 }
 
 /// Asks the programs what they can do.
@@ -263,6 +265,8 @@ struct App {
     messages: std::sync::mpsc::Receiver<Message>,
     /// The end of the channel the workers are given.
     sender: std::sync::mpsc::Sender<Message>,
+    /// The window a tool is asked in, hidden until a tool is picked.
+    tool_window: crate::platform::windows::toolwindow::ToolWindow,
 }
 
 /// The end of a drag that has not been acted on yet.
@@ -328,6 +332,26 @@ impl App {
         let (sender, messages) = std::sync::mpsc::channel::<Message>();
         ask_what_the_machine_can_do(sender.clone());
 
+        // The window a tool opens in. What its buttons say comes back the
+        // way everything the workers say comes back: through the channel,
+        // picked up when the next frame is drawn. A small thread carries it
+        // from the window's own channel into the program's one.
+        let (tool_sender, tool_messages) =
+            std::sync::mpsc::channel::<crate::platform::windows::toolwindow::ToolEvent>();
+        {
+            let sender = sender.clone();
+            std::thread::spawn(move || {
+                while let Ok(event) = tool_messages.recv() {
+                    if sender.send(Message::ToolWindow(event)).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+        let tool_window =
+            crate::platform::windows::toolwindow::ToolWindow::new(tool_sender)
+                .map_err(|reason| reason)?;
+
         Ok(Self {
             controller,
             animation: WheelAnimation::new(),
@@ -371,6 +395,7 @@ impl App {
             capabilities: None,
             messages,
             sender: sender.clone(),
+            tool_window,
         })
     }
 
@@ -539,6 +564,14 @@ impl App {
             ),
         );
 
+        // A tool opens its window before it runs: the person is asked what
+        // the tool should do, with the file in front of them. Everything
+        // else runs as it was picked.
+        if segment.id.starts_with("tools.") {
+            self.open_tool_window(segment, files);
+            return;
+        }
+
         // What the registry knows about the operation that was chosen. The
         // name of the operation is its identity, so this is also the check
         // that the menu and the registry agree.
@@ -550,8 +583,35 @@ impl App {
         let request = execution::Request {
             operation: segment.id.clone(),
             inputs: files.to_vec(),
+            ..Default::default()
         };
         self.start_operation(request);
+    }
+
+    /// Opens the window a tool is asked in.
+    ///
+    /// A tool does not run the moment it is picked: the person is asked
+    /// what the tool should do, with the file in front of them and a way
+    /// to say no. When the window is answered, what it was asked comes
+    /// back as a message and the work starts then.
+    fn open_tool_window(&mut self, segment: &Segment, files: &[std::path::PathBuf]) {
+        // The first picture of the drag is shown, so that what the tool
+        // will do is done to something the person can see.
+        let preview = files.iter().find_map(|path| {
+            let is_svg = path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("svg"));
+            if is_svg {
+                crate::media::svg::rasterise(path)
+                    .ok()
+                    .and_then(|bytes| image::load_from_memory(&bytes).ok())
+            } else {
+                image::open(path).ok()
+            }
+        });
+        self.tool_window
+            .show_for(&segment.id, &segment.label, &segment.detail, files, preview.as_ref());
     }
 
     /// Starts the work of an operation.
@@ -644,6 +704,33 @@ impl App {
                 Message::Finished(operation, outcome) => {
                     self.report_outcome(&operation, &outcome);
                 }
+                Message::ToolWindow(tool_event) => match tool_event {
+                    crate::platform::windows::toolwindow::ToolEvent::Run {
+                        operation,
+                        inputs,
+                        settings,
+                    } => {
+                        diagnostics::log(
+                            Level::Info,
+                            "action",
+                            &format!(
+                                "the tool {operation} was answered in its window: \
+                                 width {:?}, height {:?}",
+                                settings.width, settings.height
+                            ),
+                        );
+                        let request = execution::Request {
+                            operation,
+                            inputs,
+                            settings,
+                            ..Default::default()
+                        };
+                        self.start_operation(request);
+                    }
+                    crate::platform::windows::toolwindow::ToolEvent::Cancelled => {
+                        // Nothing runs. The person was the one who said no.
+                    }
+                },
             }
         }
     }
