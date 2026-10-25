@@ -9,6 +9,7 @@ pub mod explorer;
 pub mod input;
 pub mod metadatawindow;
 pub mod monitors;
+pub mod normalizewindow;
 pub mod overlay;
 pub mod publish;
 pub mod shell;

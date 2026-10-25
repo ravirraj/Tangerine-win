@@ -16,6 +16,7 @@ fn main() {
     println!("cargo:rerun-if-changed=src/ui/crop_window.slint");
     println!("cargo:rerun-if-changed=src/ui/compress_window.slint");
     println!("cargo:rerun-if-changed=src/ui/metadata_window.slint");
+    println!("cargo:rerun-if-changed=src/ui/normalize_window.slint");
     println!("cargo:rerun-if-changed=src/ui/shell.slint");
     println!("cargo:rerun-if-changed=src/ui/tokens.slint");
     // The revision is part of what the program is, so the program is made
