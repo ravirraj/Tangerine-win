@@ -48,7 +48,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WS_EX_LAYERED, WS_MAXIMIZEBOX, WS_OVERLAPPEDWINDOW, WS_THICKFRAME,
 };
 
-use crate::media::frames::{duration_of, frame_at};
+use crate::media::frames::{duration_of, frame_at, pillar_of};
 use crate::media::locator;
 use crate::platform::windows::toolwindow::ToolEvent;
 use crate::radial::execution::ToolSettings;
@@ -57,12 +57,20 @@ use crate::ui::wheel::{window_for_next_component, Bgra8, Panel, TrimCard};
 /// The timer the window comes in softly on.
 const FADE_TIMER_ID: usize = 52;
 
+/// The timer the strip is waited on with.
+const STRIP_TIMER_ID: usize = 54;
+
 /// The card's width, in the drawing's own units.
 const CARD_W: i32 = 420;
 /// The least and the most a preview may be tall, so a landscape video
 /// keeps its shape and a portrait one does not tower.
 const PREVIEW_MIN: f32 = 190.0;
 const PREVIEW_MAX: f32 = 300.0;
+
+/// The strip the range is worn on: tall enough that the video's own
+/// moments read inside it, and cut into pillars ~16 units wide.
+const STRIP_UNITS: f32 = 72.0;
+const PILLAR_UNITS: f32 = 16.0;
 
 /// The least a trim may keep, in seconds. Less than this and the video
 /// is not being trimmed, it is being cut to a blink.
@@ -137,6 +145,107 @@ thread_local! {
     static FOCUS_INDEX: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
     // How far along the soft coming-in is.
     static FADE_ALPHA: std::cell::Cell<u8> = const { std::cell::Cell::new(255) };
+    // The strip a background thread is building arrives here: the window
+    // is drawn at once, and the strip arrives as it is worked out, one
+    // picture at the end. Opening a new trim replaces it, and a strip
+    // finished for the last trim can land nowhere.
+    static STRIP_INBOX: std::cell::RefCell<Option<std::sync::mpsc::Receiver<StripPiece>>> =
+        const { std::cell::RefCell::new(None) };
+    // Whether a strip has been worn: the judgement the capture check
+    // waits on, answered without touching the strip's own inbox.
+    static STRIP_WORN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether a strip has been worn, without touching what still may come.
+fn get_strip_worn() -> bool {
+    STRIP_WORN.with(|slot| slot.get())
+}
+
+/// One finished strip, as plain bytes: pixels, then how wide and how
+/// tall. Slint's pictures do not travel between threads, so the thread
+/// sends what a picture is made of and the window makes it here.
+type StripPiece = (Vec<u8>, u32, u32);
+
+/// Asks the strip for the video in the background: its moments evenly
+/// spread over its length, each the middle pillar of its frame, standing
+/// side by side. The conversion program is gone to once per pillar, the
+/// way the frame at the playhead is gone to — seek first, so nothing has
+/// to be decoded through.
+fn ask_for_strip(tools: locator::Tools, input: PathBuf, duration: f64, width: u32, height: u32) {
+
+    let tiles = ((width as f32 / PILLAR_UNITS).round() as u32).clamp(6, 30);
+    let tile_w = (width / tiles).max(1);
+    let tile_h = height.max(1);
+    let (sender, receiver) = std::sync::mpsc::channel::<StripPiece>();
+    std::thread::spawn(move || {
+        let step = (duration / tiles as f64).max(0.05);
+        let mut strip = image::RgbaImage::new(tile_w * tiles, tile_h);
+        for index in 0..tiles {
+            let moment = ((index as f64 + 0.5) * step).min(duration);
+            let Some(frame) = frame_at(&tools, &input, moment) else {
+                continue;
+            };
+            let pillar = pillar_of(&frame, tile_w, tile_h);
+            image::imageops::overlay(&mut strip, &pillar, (index * tile_w) as i64, 0);
+        }
+        let (wide, tall) = (strip.width(), strip.height());
+        let _ = sender.send((strip.into_raw(), wide, tall));
+    });
+    STRIP_INBOX.with(|slot| {
+        *slot.borrow_mut() = Some(receiver);
+    });
+    STRIP_WORN.with(|slot| slot.set(false));
+}
+
+/// What the strip thread has been up to since last asked.
+enum StripTick {
+    /// A finished strip has arrived.
+    Arrived(StripPiece),
+    /// Still being worked out.
+    Working,
+    /// Gone, or never there.
+    Gone,
+}
+
+/// Takes one turn of the strip's arriving, without waiting.
+fn strip_tick() -> StripTick {
+    STRIP_INBOX.with(|slot| {
+        let mut buried = slot.borrow_mut();
+        let Some(receiver) = buried.as_ref() else {
+            return StripTick::Gone;
+        };
+        match receiver.try_recv() {
+            Ok(piece) => StripTick::Arrived(piece),
+            Err(std::sync::mpsc::TryRecvError::Empty) => StripTick::Working,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                *buried = None;
+                StripTick::Gone
+            }
+        }
+    })
+}
+
+/// Puts a finished strip on the card.
+unsafe fn wear_strip(piece: StripPiece) {
+    let (pixels, width, height) = piece;
+    if width == 0 || height == 0 {
+        return;
+    }
+    let buffer = SharedPixelBuffer::clone_from_slice(&pixels, width, height);
+    let image = slint::Image::from_rgba8(buffer);
+    HOST.with(|slot| {
+        if let Some(host) = slot.borrow_mut().as_mut() {
+            host.card.set_filmstrip(image);
+            host.software.request_redraw();
+        }
+    });
+    // The strip is drawn by the window's own paint, and the paint comes
+    // only when the window is told the card has changed under it.
+    let window = window_handle();
+    if !window.0.is_null() {
+        let _ = InvalidateRect(Some(window), None, true);
+    }
+    STRIP_WORN.with(|slot| slot.set(true));
 }
 
 /// The window handle, if there is one.
@@ -358,6 +467,19 @@ impl TimelineWindow {
                 input: input.clone(),
             };
         });
+        // The strip of the video's own moments is asked for apart: it is
+        // many seeks, and the window must not wait on them. It arrives
+        // with the minutes, one picture, and is worn as soon as it is
+        // there. The card opens on the plain well.
+        if ffmpeg.is_some() && duration > 0.0 {
+            ask_for_strip(
+                ffmpeg.clone().unwrap(),
+                input.clone(),
+                duration,
+                (CARD_W - 48).max(1) as u32,
+                STRIP_UNITS as u32,
+            );
+        }
 
         // Everything the card needs is set first, while the host is held
         // only for that and nothing is shown yet. Where the video stands
@@ -426,6 +548,9 @@ impl TimelineWindow {
             let _ = SetForegroundWindow(card_window);
             ShowWindow(card_window, SW_SHOW);
             let _ = SetTimer(Some(card_window), FADE_TIMER_ID, 16, None);
+            // The strip is being worked out elsewhere: the window asks it
+            // every few beats whether some of it has come.
+            let _ = SetTimer(Some(card_window), STRIP_TIMER_ID, 40, None);
             // The keyboard starts on the handle that holds where the
             // video begins.
             FOCUS_INDEX.with(|slot| slot.set(0));
@@ -510,14 +635,6 @@ impl Host {
     /// Draws the card if it changed, and puts what was drawn on the
     /// window.
     fn draw(&mut self) {
-        #[cfg(test)]
-        eprintln!(
-            "draw: timeline={:?} run={:?} hair={:?} frame={}",
-            self.card.get_timeline_box(),
-            self.card.get_run_box(),
-            self.card.get_hairline_bottom(),
-            self.card.get_has_frame(),
-        );
         let stride = self.width as usize;
         let mut buffer = std::mem::take(&mut self.buffer);
         self.software
@@ -599,7 +716,7 @@ impl Layout {
     /// drawing's own units: header, hairline, the gap and the caption
     /// and the strip and the moments and the transport, and the closing
     /// hairline.
-    const CONTENT_UNITS: f32 = 243.0;
+    const CONTENT_UNITS: f32 = 282.0;
     /// The footer: the hairline's gap to the buttons, the buttons, and
     /// the air under them.
     const FOOTER_UNITS: f32 = 64.0;
@@ -623,7 +740,7 @@ impl Layout {
         let preview_bottom = preview_top + at(preview_units);
         let caption_top = preview_bottom + at(16.0);
         let timeline_top = caption_top + at(16.0) + at(12.0);
-        let times_top = timeline_top + at(30.0) + at(10.0);
+        let times_top = timeline_top + at(STRIP_UNITS) + at(10.0);
         let transport_top = times_top + at(18.0) + at(10.0);
         let hairline_bottom = transport_top + at(30.0) + at(18.0);
 
@@ -662,7 +779,7 @@ impl Layout {
                 left: margin,
                 top: timeline_top,
                 right: whole - margin,
-                bottom: timeline_top + at(30.0),
+                bottom: timeline_top + at(STRIP_UNITS),
             },
             times: RECT {
                 left: margin,
@@ -1096,6 +1213,17 @@ unsafe extern "system" fn window_procedure(
                         let _ = KillTimer(Some(window), FADE_TIMER_ID);
                     }
                 }
+            } else if wparam.0 == STRIP_TIMER_ID {
+                // The strip is asked after; one that has arrived is put
+                // on the card, which redraws the window with it. Nothing
+                // left to come and the timer is let go of.
+                let tick = strip_tick();
+                if let StripTick::Arrived(piece) = &tick {
+                    wear_strip(piece.clone());
+                }
+                if matches!(tick, StripTick::Gone) {
+                    let _ = unsafe { KillTimer(Some(window), STRIP_TIMER_ID) };
+                }
             }
             LRESULT(0)
         }
@@ -1200,17 +1328,23 @@ mod tests {
 
     #[test]
     fn the_height_of_a_window_is_its_content_and_its_preview() {
-        assert_eq!(Layout::height_for(236.0), 543.0);
+        assert_eq!(Layout::height_for(236.0), 582.0);
         // A portrait video is held at the most a preview may be.
-        assert_eq!(Layout::height_for(300.0), 607.0);
+        assert_eq!(Layout::height_for(300.0), 646.0);
     }
 
     #[test]
     fn the_layout_stacks_the_body_top_to_bottom() {
         STATE.with(|slot| slot.borrow_mut().preview_units = 236.0);
         let whole = 420;
-        let side = 543;
+        let side = 582;
         let layout = Layout::of(whole, side, 1.0);
+        // The picture keeps the margins the reference gives its stages.
+        assert_eq!(layout.preview.left, 24);
+        assert_eq!(layout.preview.right, whole - 24);
+        // The strip is as tall as the reference's is, in units.
+        assert_eq!(layout.timeline.bottom - layout.timeline.top,
+                   (STRIP_UNITS * 1.0) as i32);
         // The picture keeps the margins the reference gives its stages.
         assert_eq!(layout.preview.left, 24);
         assert_eq!(layout.preview.right, whole - 24);
@@ -1233,9 +1367,9 @@ mod tests {
     #[test]
     fn a_taller_preview_makes_a_taller_window_and_the_same_widths() {
         STATE.with(|slot| slot.borrow_mut().preview_units = 300.0);
-        let narrow = Layout::of(420, 607, 1.0);
+        let narrow = Layout::of(420, 646, 1.0);
         STATE.with(|slot| slot.borrow_mut().preview_units = 236.0);
-        let wide = Layout::of(420, 543, 1.0);
+        let wide = Layout::of(420, 582, 1.0);
         // The picture takes all the height the shape asked for; nothing
         // else in the stack moves by a pixel.
         assert_eq!(narrow.preview.bottom - narrow.preview.top, 300);
@@ -1396,8 +1530,14 @@ mod show_tests {
         let (sender, _receiver) = std::sync::mpsc::channel();
         let mut window = TimelineWindow::new(sender).expect("the window was made");
         window.show_for("tools.trim", "Trim", "Cut the beginning or the end", &[video]);
-        // Long enough for the fade to finish and the first frame to land.
-        for _ in 0..80 {
+        // Long enough for the fade to finish, the first frame to land and
+        // the strip's own moments to be asked for one after another: the
+        // strip is a run of seeks in the background, and the shot wants
+        // it there. The window's own bell serves the strip while the
+        // messages are pumped; the shot waits only for a strip worn, and
+        // gives the whole thing up after a while so a window without the
+        // conversion program still takes its picture.
+        for round in 0..2400 {
             unsafe {
                 let mut message = MSG::default();
                 while PeekMessageW(&mut message, None, 0, 0, PM_REMOVE).as_bool() {
@@ -1406,6 +1546,9 @@ mod show_tests {
                 }
             }
             std::thread::sleep(std::time::Duration::from_millis(5));
+            if get_strip_worn() && round > 400 {
+                break;
+            }
         }
         let shots = std::path::Path::new("target").join("shots");
         std::fs::create_dir_all(&shots).expect("the shots folder was made");

@@ -95,6 +95,26 @@ pub fn frame_at(tools: &Tools, input: &Path, at_seconds: f64) -> Option<image::D
     image::load_from_memory(&run.stdout).ok()
 }
 
+/// One narrow pillar of a picture: the middle of it, squeezed to the
+/// tile a filmstrip wants. The strip is made of these standing side by
+/// side, the way the reference runs its range over the video's own
+/// moments.
+pub fn pillar_of(
+    frame: &image::DynamicImage,
+    tile_width: u32,
+    tile_height: u32,
+) -> image::RgbaImage {
+    // The middle slice that shares the tile's own shape, wide enough to
+    // fill it: taller than the frame's own opening ratio.
+    let slice_width = ((tile_width as f64 / tile_height as f64) * frame.height() as f64)
+        .ceil() as u32;
+    let slice_width = slice_width.max(1).min(frame.width());
+    let slice = frame.crop_imm((frame.width() - slice_width) / 2, 0, slice_width, frame.height());
+    slice
+        .resize_exact(tile_width, tile_height, image::imageops::FilterType::Triangle)
+        .to_rgba8()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -107,5 +127,29 @@ mod tests {
         assert_eq!(parse_duration("N/A\n"), None);
         assert_eq!(parse_duration("0"), None);
         assert_eq!(parse_duration("-4.0"), None);
+    }
+
+    #[test]
+    fn a_pillar_is_the_middle_of_the_frame_at_the_tiles_shape() {
+        let frame = image::RgbImage::from_fn(100, 50, |x, _| {
+            image::Rgb([(x * 2) as u8, 0, 0])
+        })
+        .into();
+        let pillar = pillar_of(&frame, 16, 64);
+        assert_eq!(pillar.dimensions(), (16, 64));
+        // The middle is kept: the middle of the tile looks at the
+        // middle of the frame's own middle.
+        let last = *pillar.get_pixel(8, 32);
+        let middle = frame.to_rgb8().get_pixel(50, 25).0[0];
+        // The squeeze is a soft one: the middle of the tile is the
+        // middle of the frame, within a degree of it.
+        assert!((last.0[0] as i32 - middle as i32).abs() <= 3, "{}", last.0[0]);
+    }
+
+    #[test]
+    fn a_narrow_frame_is_pillarised_without_panicking() {
+        let frame = image::RgbImage::from_fn(10, 90, |_, _| image::Rgb([0, 255, 0])).into();
+        let pillar = pillar_of(&frame, 16, 64);
+        assert_eq!(pillar.dimensions(), (16, 64));
     }
 }

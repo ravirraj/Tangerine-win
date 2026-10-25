@@ -148,6 +148,9 @@ export component IconButton {
 // 0 no handle is under the keyboard, 1 the start cap, 2 the end cap.
 export component TimelineRange {
     in property <Panel> box;
+    // The video's own moments, side by side: the strip the reference
+    // runs its range over. Empty, the strip is a plain well.
+    in property <image> filmstrip;
     in property <float> start-fraction: 0;
     in property <float> end-fraction: 1;
     in property <float> playhead-fraction: 0;
@@ -160,51 +163,65 @@ export component TimelineRange {
         background: Tokens.elevated;
         clip: true;
 
+        // The video's own moments, one strip of them.
+        Image {
+            x: 0; y: 0;
+            width: parent.width;
+            height: parent.height;
+            source: root.filmstrip;
+            image-fit: ImageFit.fill;
+        }
+
         // Outside the chosen stretch the strip sits back; inside it the
-        // strip is clear, the way the reference dims what is cut away.
+        // strip is clear: the cut-away is darkened, the way the
+        // reference withdraws what is not kept.
         Rectangle {
             x: 0; y: 0;
             width: root.start-fraction * parent.width;
             height: parent.height;
-            background: #F7F6F48C;
+            background: #1A1A1A8C;
         }
         Rectangle {
             x: root.end-fraction * parent.width; y: 0;
             width: (1 - root.end-fraction) * parent.width;
             height: parent.height;
-            background: #F7F6F48C;
+            background: #1A1A1A8C;
         }
 
-        // The end caps: solid orange, each carrying a white grip.
+        // The end caps: solid orange columns the full height of the
+        // strip, each carrying a white grip to take hold of. Drawn to
+        // stand out past the strip's own corners, so at the rim they are
+        // cut to its rounding. At the very ends they stand inside, flush
+        // with the strip's rim.
         Rectangle {
-            x: root.start-fraction * parent.width - 14px;
-            y: (parent.height - 28px) / 2;
+            x: root.start-fraction * parent.width - 14px > 0px
+                    ? root.start-fraction * parent.width - 14px : 0px;
+            y: 0;
             width: 28px;
-            height: 28px;
-            border-radius: 7px;
+            height: parent.height;
+            border-radius: 10px;
             background: root.handle-focus == 1 ? Tokens.accent-pressed : Tokens.accent;
 
             Rectangle {
                 width: 4px;
-                height: 14px;
-                border-radius: 2px;
+                height: parent.height / 3;
                 background: Tokens.content;
                 x: (parent.width - self.width) / 2;
                 y: (parent.height - self.height) / 2;
             }
         }
         Rectangle {
-            x: root.end-fraction * parent.width - 14px;
-            y: (parent.height - 28px) / 2;
+            x: root.end-fraction * parent.width + 14px < parent.width
+                    ? root.end-fraction * parent.width - 14px : parent.width - 28px;
+            y: 0;
             width: 28px;
-            height: 28px;
-            border-radius: 7px;
+            height: parent.height;
+            border-radius: 10px;
             background: root.handle-focus == 2 ? Tokens.accent-pressed : Tokens.accent;
 
             Rectangle {
                 width: 4px;
-                height: 14px;
-                border-radius: 2px;
+                height: parent.height / 3;
                 background: Tokens.content;
                 x: (parent.width - self.width) / 2;
                 y: (parent.height - self.height) / 2;
