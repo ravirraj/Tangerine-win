@@ -39,6 +39,12 @@ pub enum ToolError {
     /// The settings named no work: a split with no points inside the
     /// video, or no points at all.
     NothingToDo,
+    /// The size that was asked is smaller than the file can be made.
+    ///
+    /// A picture asked to fit a target size keeps being made less until
+    /// there is almost nothing left of it; a target under that is not a
+    /// size, it is a wish.
+    TooSmall,
 }
 
 impl ToolError {
@@ -50,6 +56,7 @@ impl ToolError {
             ToolError::ReadError => "the source file could not be read",
             ToolError::WriteError => "the result could not be written",
             ToolError::NothingToDo => "there is nothing to do",
+            ToolError::TooSmall => "the asked size is smaller than the file can be made",
         }
     }
 }
@@ -256,49 +263,6 @@ impl<P: Publisher> Tools<P> {
             }
         }
     }
-    /// Compressed file fits under a target size; the preset and the size
-    /// the window carried say how much to ask of the encoder. Nothing
-    /// said, the balanced preset is the one.
-    fn run_compress(&self, request: &Request, runner: &dyn ProcessRunner) -> Outcome {
-        let manifest = Manifest::get();
-        let mut outputs = Vec::new();
-        let mut failed = 0usize;
-        let mut first_reason: Option<String> = None;
-        for input in &request.inputs {
-            // The backend calls the manifest's own encoders; the window's
-            // settings (compress_strong, target_bytes) are the contract.
-            let result = self.compress_file(input, &manifest, runner, &request.settings);
-            match result {
-                Ok(path) => outputs.push(path),
-                Err(reason) => {
-                    failed += 1;
-                    diagnostics::log(Level::Warn, "action", &format!("a file was not compressed: {}", reason.name()));
-                    if first_reason.is_none() {
-                        first_reason = Some(reason.name().to_string());
-                    }
-                }
-            }
-        }
-        if failed == 0 {
-            Outcome::Succeeded { outputs }
-        } else {
-            Outcome::Failed {
-                reason: Failure::Error(format!("{failed} of the files could not be compressed")),
-            }
-        }
-    }
-
-    /// Placeholder for the per-file compression call; the full
-    /// implementation follows the manifest's encoders and the preset.
-    fn compress_file(
-        &self,
-        _input: &Path,
-        _manifest: &Manifest,
-        _runner: &dyn ProcessRunner,
-        _settings: &crate::radial::execution::ToolSettings,
-    ) -> Result<PathBuf, ToolError> {
-        Err(ToolError::NotImplemented)
-    }
 
     /// Splits one video into its folder of numbered clips.
     fn split_one(
@@ -314,7 +278,8 @@ impl<P: Publisher> Tools<P> {
             .unwrap_or("")
             .to_lowercase();
         let source = manifest
-            .format(&source_ext)
+            .format_of_extension(&source_ext)
+            .or_else(|| manifest.format(&source_ext))
             .ok_or(ToolError::UnsupportedKind)?;
 
         // The video says how long it stands: the points stand inside it,
@@ -354,6 +319,151 @@ impl<P: Publisher> Tools<P> {
             }
         }
         Ok(outputs)
+    }
+
+    /// Makes files lighter, at the preset and the target size the window
+    /// carried.
+    ///
+    /// Every kind answers with its own pair of hands, so the compress is
+    /// run apart from the conversions the way a split is: a picture is
+    /// made lighter here, by the program itself; a video and a sound go
+    /// to the conversion program with a bitrate; a WebP goes to the
+    /// conversion program too, because its quality is a dial only the
+    /// program has. Each result is published beside the original, under
+    /// the shared naming, and nothing is written over.
+    fn run_compress(&self, request: &Request, runner: &dyn ProcessRunner) -> Outcome {
+        let manifest = Manifest::get();
+        let mut outputs = Vec::new();
+        let mut failed = 0usize;
+        let mut first_reason: Option<String> = None;
+        for input in &request.inputs {
+            let result = self.compress_one(input, &manifest, runner, &request.settings);
+            match result {
+                Ok(path) => outputs.push(path),
+                Err(reason) => {
+                    failed += 1;
+                    let name = reason.name();
+                    diagnostics::log(Level::Warn, "action", &format!("a file was not processed: {name}"));
+                    if first_reason.is_none() {
+                        first_reason = Some(name.to_string());
+                    }
+                }
+            }
+        }
+
+        if failed == 0 {
+            Outcome::Succeeded { outputs }
+        } else {
+            let because = match first_reason {
+                Some(reason) => format!(": {reason}"),
+                None => String::new(),
+            };
+            Outcome::Failed {
+                reason: Failure::Error(format!(
+                    "{failed} of the files could not be processed{because}"
+                )),
+            }
+        }
+    }
+
+    /// Compresses one file, whichever kind it is.
+    fn compress_one(
+        &self,
+        input: &Path,
+        manifest: &Manifest,
+        runner: &dyn ProcessRunner,
+        settings: &crate::radial::execution::ToolSettings,
+    ) -> Result<PathBuf, ToolError> {
+        let source_ext = input
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        let source = manifest
+            .format_of_extension(&source_ext)
+            .or_else(|| manifest.format(&source_ext))
+            .ok_or(ToolError::UnsupportedKind)?;
+        let temporary = input.with_extension(format!("{source_ext}.part"));
+
+        match crate::media::probe::kind_of(&source.format) {
+            Some(crate::media::probe::Kind::Image) => match source.format.as_str() {
+                // A JPEG is written again at a quality; a PNG is written
+                // again as itself, made less only when the preset or a
+                // target size asks.
+                "jpeg" | "png" => {
+                    compress_picture(input, &temporary, settings)?;
+                    let finals = final_names(input, &source_ext);
+                    self.publish(&finals, &temporary)
+                }
+                // A WebP is squeezed by the conversion program: its
+                // encoder carries a quality the picture library does not.
+                "webp" => {
+                    match settings.target_bytes {
+                        Some(bytes) if bytes > 0 => {
+                            search_webp_quality(
+                                input,
+                                source,
+                                &temporary,
+                                &self.ffmpeg_tools,
+                                runner,
+                                bytes,
+                            )?;
+                            let finals = final_names(input, &source_ext);
+                            self.publish(&finals, &temporary)
+                        }
+                        _ => {
+                            let arguments = webp_args(
+                                input,
+                                source,
+                                Some(&temporary),
+                                webp_quality(settings.compress_strong),
+                            );
+                            let finals = final_names(input, &source_ext);
+                            self.finish(&arguments, source, &temporary, &finals, runner)
+                        }
+                    }
+                }
+                _ => Err(ToolError::UnsupportedKind),
+            },
+            Some(crate::media::probe::Kind::Video) => {
+                let duration = crate::media::frames::duration_of(&self.ffmpeg_tools, input)
+                    .ok_or(ToolError::ReadError)?;
+                let (width, height, fps) =
+                    crate::media::frames::shape_of(&self.ffmpeg_tools, input)
+                        .ok_or(ToolError::ReadError)?;
+                let weight = fs::metadata(input).map(|meta| meta.len()).unwrap_or(0);
+                let picture_bits = video_bitrate(
+                    weight,
+                    duration,
+                    settings.compress_strong,
+                    settings.target_bytes,
+                );
+                let sound_bits = audio_bitrate(settings.compress_strong);
+                let filter = compress_video_filter(width, height, fps, settings);
+                let arguments = video_compress_args(
+                    input,
+                    source,
+                    Some(&temporary),
+                    filter,
+                    picture_bits,
+                    sound_bits,
+                );
+                let finals = final_names(input, &source_ext);
+                self.finish(&arguments, source, &temporary, &finals, runner)
+            }
+            Some(crate::media::probe::Kind::Audio) => {
+                let duration = crate::media::frames::duration_of(&self.ffmpeg_tools, input)
+                    .ok_or(ToolError::ReadError)?;
+                let bits = match settings.target_bytes {
+                    Some(bytes) if bytes > 0 => audio_bitrate_for_target(bytes, duration),
+                    _ => audio_bitrate(settings.compress_strong),
+                };
+                let arguments = audio_compress_args(input, source, Some(&temporary), bits);
+                let finals = final_names(input, &source_ext);
+                self.finish(&arguments, source, &temporary, &finals, runner)
+            }
+            _ => Err(ToolError::UnsupportedKind),
+        }
     }
 }
 
@@ -611,6 +721,454 @@ fn resize_filter(settings: &crate::radial::execution::ToolSettings) -> String {
     }
 }
 
+/// The quality the two presets write a JPEG with, in the hundredths the
+/// picture library takes: balanced keeps most of the look, strong takes
+/// half of it away.
+fn jpeg_quality(strong: bool) -> u8 {
+    if strong {
+        50
+    } else {
+        72
+    }
+}
+
+/// The quality the two presets ask of the WebP encoder — the same two
+/// answers, said the program's way.
+fn webp_quality(strong: bool) -> u32 {
+    if strong {
+        50
+    } else {
+        72
+    }
+}
+
+/// The bits a second a compressed sound is written with: the balanced
+/// preset keeps twice what the strong one keeps.
+fn audio_bitrate(strong: bool) -> u64 {
+    if strong {
+        64_000
+    } else {
+        128_000
+    }
+}
+
+/// The bits a second a compressed video's picture is written with.
+///
+/// With no target size, the video's own weight is spread over its
+/// seconds to estimate the bits it carries now, and the preset keeps a
+/// share of that — the strong one a smaller share, never fewer than
+/// three hundred thousand. With a target size, the sound takes its
+/// share of the bits first, and the picture divides what is left over
+/// the seconds the video stands, never fewer than a hundred and fifty
+/// thousand. A video whose length could not be said takes the floor.
+fn video_bitrate(weight: u64, duration: f64, strong: bool, target: Option<u64>) -> u64 {
+    match (target, duration > 0.0) {
+        (Some(bytes), true) if bytes > 0 => {
+            let total_bits = bytes as f64 * 8.0 * 0.94;
+            let sound_bits = audio_bitrate(strong) as f64;
+            (total_bits / duration - sound_bits).max(150_000.0) as u64
+        }
+        (_, true) => {
+            let estimated = weight as f64 * 8.0 / duration;
+            let share = if strong { 0.35 } else { 0.6 };
+            (estimated * share).max(300_000.0) as u64
+        }
+        _ => 300_000,
+    }
+}
+
+/// The bits a second a compressed sound takes when a target size was
+/// asked: the size is spread over the seconds, kept between thirty-two
+/// and three hundred and twenty thousand. A sound whose length could not
+/// be said keeps the balanced rate.
+fn audio_bitrate_for_target(target: u64, duration: f64) -> u64 {
+    if duration <= 0.0 {
+        return 128_000;
+    }
+    let bits = target as f64 * 8.0 * 0.96 / duration;
+    (bits.max(32_000.0).min(320_000.0)) as u64
+}
+
+/// The picture filter a compressed video carries, if it carries one.
+///
+/// The strong preset squeezes the long edge to three quarters, and a
+/// resolution cap squeezes it further; whichever limit is smaller wins,
+/// and a video is never made larger than it stood. A frame-rate cap
+/// drops the rate only when the video shows more than it was asked to.
+/// Both sides of a scale are even — the encoders take nothing else.
+fn compress_video_filter(
+    width: u32,
+    height: u32,
+    fps: f64,
+    settings: &crate::radial::execution::ToolSettings,
+) -> Option<String> {
+    let mut filters: Vec<String> = Vec::new();
+    let long_now = width.max(height) as f64;
+    if long_now > 0.0 {
+        let share = if settings.compress_strong {
+            0.75
+        } else {
+            1.0
+        };
+        let mut limit = long_now * share;
+        if let Some(cap) = settings.max_long_edge {
+            if cap > 0 {
+                limit = limit.min(cap as f64);
+            }
+        }
+        if limit < long_now - 1.0 {
+            let even = |edge: f64| ((edge / 2.0).round() as u32).max(1) * 2;
+            if width >= height {
+                filters.push(format!("scale={}:{}", even(limit), "-2"));
+            } else {
+                filters.push(format!("scale=-2:{}", even(limit)));
+            }
+        }
+    }
+    if let Some(cap) = settings.max_fps {
+        if cap > 0 && fps > cap as f64 + 0.5 {
+            filters.push(format!("fps={cap}"));
+        }
+    }
+    if filters.is_empty() {
+        None
+    } else {
+        Some(filters.join(","))
+    }
+}
+
+/// The arguments that make a video lighter: the picture made again at
+/// the bitrate the preset and the target decided, the sound with it at
+/// the preset's rate — the sound is written as AAC, the encoder this
+/// program always has. The streams keep the file's own container, the
+/// way every tool here writes beside the original.
+fn video_compress_args(
+    input: &Path,
+    source: &crate::media::manifest::FormatSupport,
+    output_path: Option<&Path>,
+    filter: Option<String>,
+    picture_bits: u64,
+    sound_bits: u64,
+) -> Vec<OsString> {
+    let mut args = vec![
+        OsString::from("-hide_banner"),
+        OsString::from("-nostdin"),
+        OsString::from("-y"),
+        OsString::from("-f"),
+        OsString::from(&source.read.demuxer),
+        OsString::from("-i"),
+        input.as_os_str().to_os_string(),
+    ];
+    if let Some(filter) = filter {
+        args.push(OsString::from("-vf"));
+        args.push(OsString::from(filter));
+    }
+    args.push(OsString::from("-c:v"));
+    args.push(OsString::from(&source.write.encoder));
+    args.push(OsString::from("-b:v"));
+    args.push(OsString::from(picture_bits.to_string()));
+    args.push(OsString::from("-c:a"));
+    args.push(OsString::from("aac"));
+    args.push(OsString::from("-b:a"));
+    args.push(OsString::from(sound_bits.to_string()));
+    args.push(OsString::from("-f"));
+    args.push(OsString::from(&source.write.muxer));
+    match output_path {
+        Some(path) => args.push(path.as_os_str().to_os_string()),
+        None => args.push(OsString::from("pipe:1")),
+    }
+    args
+}
+
+/// The arguments that make a sound lighter: the sound made again at the
+/// bitrate that was decided, in the container it came in.
+fn audio_compress_args(
+    input: &Path,
+    source: &crate::media::manifest::FormatSupport,
+    output_path: Option<&Path>,
+    bits: u64,
+) -> Vec<OsString> {
+    let mut args = vec![
+        OsString::from("-hide_banner"),
+        OsString::from("-nostdin"),
+        OsString::from("-y"),
+        OsString::from("-f"),
+        OsString::from(&source.read.demuxer),
+        OsString::from("-i"),
+        input.as_os_str().to_os_string(),
+        OsString::from("-c:a"),
+        OsString::from(&source.write.encoder),
+        OsString::from("-b:a"),
+        OsString::from(bits.to_string()),
+        OsString::from("-f"),
+        OsString::from(&source.write.muxer),
+    ];
+    match output_path {
+        Some(path) => args.push(path.as_os_str().to_os_string()),
+        None => args.push(OsString::from("pipe:1")),
+    }
+    args
+}
+
+/// The arguments that write a WebP at a quality: the picture made again
+/// by the program's WebP encoder, which takes its quality out of a
+/// hundred.
+fn webp_args(
+    input: &Path,
+    source: &crate::media::manifest::FormatSupport,
+    output_path: Option<&Path>,
+    quality: u32,
+) -> Vec<OsString> {
+    let mut args = vec![
+        OsString::from("-hide_banner"),
+        OsString::from("-nostdin"),
+        OsString::from("-y"),
+        OsString::from("-f"),
+        OsString::from(&source.read.demuxer),
+        OsString::from("-i"),
+        input.as_os_str().to_os_string(),
+        OsString::from("-c:v"),
+        OsString::from(&source.write.encoder),
+        OsString::from("-q:v"),
+        OsString::from(quality.to_string()),
+        OsString::from("-frames:v"),
+        OsString::from("1"),
+        OsString::from("-f"),
+        OsString::from(&source.write.muxer),
+    ];
+    match output_path {
+        Some(path) => args.push(path.as_os_str().to_os_string()),
+        None => args.push(OsString::from("pipe:1")),
+    }
+    args
+}
+
+/// Writes a JPEG into the temporary at a quality, in the hundredths the
+/// picture library takes.
+fn write_jpeg(
+    picture: &image::DynamicImage,
+    path: &Path,
+    quality: u8,
+) -> Result<(), ToolError> {
+    let file = fs::File::create(path).map_err(|_| ToolError::WriteError)?;
+    let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(file, quality);
+    picture
+        .write_with_encoder(encoder)
+        .map_err(|_| ToolError::WriteError)
+}
+
+/// A picture made a share smaller, its shape kept, never nothing.
+fn scale_by(picture: &image::DynamicImage, share: f64) -> image::DynamicImage {
+    let width = ((picture.width() as f64) * share).round().max(1.0) as u32;
+    let height = ((picture.height() as f64) * share).round().max(1.0) as u32;
+    picture.resize_exact(width, height, image::imageops::FilterType::Lanczos3)
+}
+
+/// A picture whose long edge stands at most where it is asked, its shape
+/// kept. A picture that already fits is given back as it is.
+fn shrink_long_edge(picture: &image::DynamicImage, limit: u32) -> image::DynamicImage {
+    let long = picture.width().max(picture.height());
+    if long == 0 || limit == 0 || long <= limit {
+        return picture.clone();
+    }
+    picture.resize(limit, limit, image::imageops::FilterType::Lanczos3)
+}
+
+/// Makes a picture lighter with the program's own hands.
+///
+/// A JPEG is written again at the preset's quality, or at the quality a
+/// target size searched out. A PNG is written again as itself — the
+/// format keeps every colour it was given, so lighter means less
+/// picture: the strong preset takes a quarter off the long edge, and a
+/// target size keeps shrinking the picture by a fifth until it fits or
+/// until there is almost nothing left to shrink. The picture stays the
+/// kind of file it was — a format change is a conversion, not a
+/// compressing.
+fn compress_picture(
+    input: &Path,
+    temporary: &Path,
+    settings: &crate::radial::execution::ToolSettings,
+) -> Result<(), ToolError> {
+    let extension = input
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    match extension.as_str() {
+        "jpeg" | "jpg" => {
+            let picture = image::open(input).map_err(|_| ToolError::ReadError)?;
+            match settings.target_bytes {
+                Some(bytes) if bytes > 0 => {
+                    search_jpeg_quality(picture, temporary, bytes)
+                }
+                _ => write_jpeg(&picture, temporary, jpeg_quality(settings.compress_strong)),
+            }
+        }
+        "png" => {
+            let mut picture = image::open(input).map_err(|_| ToolError::ReadError)?;
+            if settings.compress_strong && settings.target_bytes.is_none() {
+                let long = picture.width().max(picture.height());
+                picture = shrink_long_edge(&picture, (long as f64 * 0.7) as u32);
+            }
+            match settings.target_bytes {
+                Some(bytes) if bytes > 0 => {
+                    let mut candidate = picture;
+                    let mut fits = false;
+                    for _ in 0..12 {
+                        candidate
+                            .save_with_format(temporary, image::ImageFormat::Png)
+                            .map_err(|_| ToolError::WriteError)?;
+                        let size = fs::metadata(temporary)
+                            .map(|meta| meta.len())
+                            .unwrap_or(u64::MAX);
+                        if size <= bytes {
+                            fits = true;
+                            break;
+                        }
+                        if candidate.width() < 2 || candidate.height() < 2 {
+                            break;
+                        }
+                        candidate = scale_by(&candidate, 0.8);
+                    }
+                    if fits {
+                        Ok(())
+                    } else {
+                        Err(ToolError::TooSmall)
+                    }
+                }
+                _ => picture
+                    .save_with_format(temporary, image::ImageFormat::Png)
+                    .map_err(|_| ToolError::WriteError),
+            }
+        }
+        _ => Err(ToolError::UnsupportedKind),
+    }
+}
+
+/// Searches for the highest JPEG quality whose file fits the size that
+/// was asked, the way the original searches: twelve writes at most,
+/// closing in from both sides, and when the search closes without a
+/// fit, the picture is made a fifth smaller and the search starts over.
+/// The best quality that fitted is written last; when nothing fitted,
+/// the last thing written stands.
+fn search_jpeg_quality(
+    mut candidate: image::DynamicImage,
+    temporary: &Path,
+    target: u64,
+) -> Result<(), ToolError> {
+    let mut low = 0.15f64;
+    let mut high = 0.95f64;
+    let mut best: Option<u8> = None;
+    for _ in 0..12 {
+        let quality = (low + high) / 2.0;
+        let said = (quality * 100.0).round() as u8;
+        write_jpeg(&candidate, temporary, said)?;
+        let size = fs::metadata(temporary)
+            .map(|meta| meta.len())
+            .unwrap_or(u64::MAX);
+        if size <= target {
+            best = Some(said);
+            low = quality;
+            if (size as f64) > target as f64 * 0.9 {
+                break;
+            }
+        } else {
+            high = quality;
+        }
+        if high - low < 0.03 {
+            if best.is_some() {
+                break;
+            }
+            candidate = scale_by(&candidate, 0.8);
+            low = 0.15;
+            high = 0.95;
+            if candidate.width() <= 64 {
+                break;
+            }
+        }
+    }
+    if let Some(said) = best {
+        write_jpeg(&candidate, temporary, said)?;
+    }
+    Ok(())
+}
+
+/// Runs the program once to write a WebP into the temporary at a
+/// quality, and says how heavy the file came out.
+fn run_webp_once(
+    input: &Path,
+    source: &crate::media::manifest::FormatSupport,
+    temporary: &Path,
+    tools: &FfmpegTools,
+    runner: &dyn ProcessRunner,
+    quality: u32,
+) -> Result<u64, ToolError> {
+    let arguments = webp_args(input, source, Some(temporary), quality);
+    let size = if muxer_needs_file(&source.write.muxer) {
+        let result = runner
+            .run(&tools.ffmpeg, &arguments, None)
+            .map_err(|_| ToolError::ToolFailed)?;
+        if !result.succeeded() {
+            return Err(ToolError::ToolFailed);
+        }
+        fs::metadata(temporary).map(|meta| meta.len()).unwrap_or(0)
+    } else {
+        let mut file = fs::File::create(temporary).map_err(|_| ToolError::WriteError)?;
+        let result = runner
+            .run(&tools.ffmpeg, &arguments, Some(&mut file))
+            .map_err(|_| ToolError::ToolFailed)?;
+        drop(file);
+        if !result.succeeded() {
+            return Err(ToolError::ToolFailed);
+        }
+        fs::metadata(temporary).map(|meta| meta.len()).unwrap_or(0)
+    };
+    Ok(size)
+}
+
+/// Searches for the WebP quality whose file fits the size that was
+/// asked — twelve whole runs of the program at most, closing in from
+/// both sides, the best quality that fitted kept — and leaves the
+/// winner written in the temporary. When no quality fits, the smallest
+/// file seen stands.
+fn search_webp_quality(
+    input: &Path,
+    source: &crate::media::manifest::FormatSupport,
+    temporary: &Path,
+    tools: &FfmpegTools,
+    runner: &dyn ProcessRunner,
+    target: u64,
+) -> Result<(), ToolError> {
+    let mut low = 15u32;
+    let mut high = 95u32;
+    let mut best: Option<u32> = None;
+    let mut smallest: Option<u32> = None;
+    let mut smallest_size = u64::MAX;
+    for _ in 0..12 {
+        let quality = (low + high) / 2;
+        let size = run_webp_once(input, source, temporary, tools, runner, quality)?;
+        if size < smallest_size {
+            smallest_size = size;
+            smallest = Some(quality);
+        }
+        if size <= target {
+            best = Some(quality);
+            low = quality;
+            if size > target / 10 * 9 {
+                break;
+            }
+        } else {
+            high = quality;
+        }
+        if high.saturating_sub(low) < 3 {
+            break;
+        }
+    }
+    let quality = best.or(smallest).ok_or(ToolError::ToolFailed)?;
+    run_webp_once(input, source, temporary, tools, runner, quality)?;
+    Ok(())
+}
+
 impl<P: Publisher> Handler for Tools<P> {
     fn run(&self, request: &Request, _selection: &Selection) -> Outcome {
         let Some(operation) = operation_by_id(&request.operation) else {
@@ -624,6 +1182,15 @@ impl<P: Publisher> Handler for Tools<P> {
         // the original, not one file under the Beside policy.
         if request.operation == "tools.split" {
             return self.run_split(request, &SystemRunner);
+        }
+
+        // A compress is run apart from the rest: every kind answers with
+        // its own pair of hands — a picture is made lighter by the
+        // program itself, a video and a sound at a bitrate the preset and
+        // the target size decide — and a PDF's pages are the reader's to
+        // redraw, so nothing here pretends otherwise.
+        if request.operation == "tools.compress" {
+            return self.run_compress(request, &SystemRunner);
         }
 
         let manifest = Manifest::get();
@@ -748,6 +1315,154 @@ mod tests {
     #[test]
     fn the_resize_filter_without_a_window_makes_half() {
         assert_eq!(resize_filter(&ToolSettings::default()), "scale=iw/2:ih/2");
+    }
+
+    #[test]
+    fn the_preset_numbers_are_the_two_the_originals_keep() {
+        // Balanced keeps most of the look; strong takes half of it away.
+        // The same two answers, said each writer's way.
+        assert_eq!(jpeg_quality(false), 72);
+        assert_eq!(jpeg_quality(true), 50);
+        assert_eq!(webp_quality(false), 72);
+        assert_eq!(webp_quality(true), 50);
+        assert_eq!(audio_bitrate(false), 128_000);
+        assert_eq!(audio_bitrate(true), 64_000);
+    }
+
+    #[test]
+    fn the_video_bits_come_from_the_weight_and_the_length() {
+        // A megabyte over ten seconds carries eight hundred thousand bits
+        // a second; balanced keeps six tenths of that.
+        let estimated = video_bitrate(1_000_000, 10.0, false, None);
+        assert_eq!(estimated, 480_000);
+        // Strong keeps a smaller share — here, the floor.
+        assert_eq!(video_bitrate(1_000_000, 10.0, true, None), 300_000);
+        // A target size takes the sound's share first and divides the
+        // rest over the seconds.
+        let asked = video_bitrate(0, 10.0, false, Some(1_000_000));
+        assert_eq!(asked, 1_000_000 * 8 * 94 / 100 / 10 - 128_000);
+        // Both floors hold, and a video whose length could not be said
+        // takes the floor too.
+        assert_eq!(video_bitrate(0, 10.0, false, Some(1)), 150_000);
+        assert_eq!(video_bitrate(1_000_000, 0.0, false, None), 300_000);
+        assert_eq!(video_bitrate(0, 0.0, false, Some(100_000)), 300_000);
+    }
+
+    #[test]
+    fn the_sound_bits_for_a_target_stay_between_the_two_walls() {
+        assert_eq!(audio_bitrate_for_target(1_000_000, 10.0), 320_000);
+        assert_eq!(audio_bitrate_for_target(1_000, 10.0), 32_000);
+        assert_eq!(audio_bitrate_for_target(100_000, 10.0), 76_800);
+        // A sound whose length could not be said keeps the balanced rate.
+        assert_eq!(audio_bitrate_for_target(100_000, 0.0), 128_000);
+    }
+
+    #[test]
+    fn the_compress_filter_squeezes_only_what_was_asked() {
+        // Nothing asked, nothing carried.
+        assert_eq!(
+            compress_video_filter(1920, 1080, 30.0, &ToolSettings::default()),
+            None
+        );
+        // The strong preset squeezes the long edge to three quarters,
+        // evened, on whichever side the long edge stands.
+        let strong = ToolSettings {
+            compress_strong: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            compress_video_filter(1920, 1080, 30.0, &strong).as_deref(),
+            Some("scale=1440:-2")
+        );
+        assert_eq!(
+            compress_video_filter(1080, 1920, 30.0, &strong).as_deref(),
+            Some("scale=-2:1440")
+        );
+        // A resolution cap squeezes further when it is the smaller limit,
+        // and a video is never made larger than it stood.
+        let capped = ToolSettings {
+            max_long_edge: Some(720),
+            ..Default::default()
+        };
+        assert_eq!(
+            compress_video_filter(1920, 1080, 30.0, &capped).as_deref(),
+            Some("scale=720:-2")
+        );
+        assert_eq!(
+            compress_video_filter(640, 360, 30.0, &capped),
+            None
+        );
+        // A frame-rate cap drops the rate only when the video shows more
+        // than it was asked to, and it rides behind the scale.
+        let fast = ToolSettings {
+            max_fps: Some(30),
+            compress_strong: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            compress_video_filter(1920, 1080, 60.0, &fast).as_deref(),
+            Some("scale=1440:-2,fps=30")
+        );
+        assert_eq!(compress_video_filter(1920, 1080, 30.0, &fast).as_deref(), Some("scale=1440:-2"));
+        assert_eq!(compress_video_filter(1920, 1080, 24.0, &fast).as_deref(), Some("scale=1440:-2"));
+    }
+
+    #[test]
+    fn the_compress_args_say_what_the_program_should_make() {
+        let mp4 = Manifest::get().format("mp4").expect("mp4 is in the manifest");
+        let strong = ToolSettings {
+            compress_strong: true,
+            ..Default::default()
+        };
+        let filter = compress_video_filter(1920, 1080, 60.0, &strong);
+        let args = video_compress_args(
+            Path::new("one.mp4"),
+            mp4,
+            Some(Path::new("one.mp4.part")),
+            filter,
+            480_000,
+            128_000,
+        );
+        assert_eq!(at(&args, "-i"), 5);
+        assert_eq!(at(&args, "-vf"), 7);
+        assert_eq!(args[8], OsString::from("scale=1440:-2"));
+        let picture = at(&args, "-c:v");
+        assert_eq!(args[picture + 1], OsString::from("mpeg4"), "the container's own encoder");
+        let bits_at = at(&args, "-b:v");
+        assert_eq!(args[bits_at + 1], OsString::from("480000"));
+        let sound = at(&args, "-c:a");
+        assert_eq!(args[sound + 1], OsString::from("aac"), "the sound is written as AAC");
+        let tail = args.last().expect("somewhere for the result to go");
+        assert_eq!(tail, &OsString::from("one.mp4.part"));
+    }
+
+    #[test]
+    fn the_sound_args_carry_the_rate_they_were_given() {
+        let mp3 = Manifest::get().format("mp3").expect("mp3 is in the manifest");
+        let args = audio_compress_args(
+            Path::new("song.mp3"),
+            mp3,
+            None,
+            96_000,
+        );
+        assert_eq!(at(&args, "-c:a"), 7);
+        assert_eq!(args[8], OsString::from("libmp3lame"));
+        assert_eq!(at(&args, "-b:a"), 9);
+        assert_eq!(args[10], OsString::from("96000"));
+        assert_eq!(args.last(), Some(&OsString::from("pipe:1")));
+    }
+
+    #[test]
+    fn the_webp_args_ask_the_programs_encoder_for_a_quality() {
+        let webp = Manifest::get().format("webp").expect("webp is in the manifest");
+        let args = webp_args(Path::new("one.webp"), webp, None, 72);
+        assert_eq!(at(&args, "-c:v"), 7);
+        assert_eq!(args[8], OsString::from("libwebp"));
+        assert_eq!(at(&args, "-q:v"), 9);
+        assert_eq!(args[10], OsString::from("72"));
+        // One frame: a webp that carries a still is the one to make
+        // lighter, and the encoder stops at the first.
+        assert_eq!(at(&args, "-frames:v"), 11);
     }
 
     /// Where a word sits in the arguments, if it is there.
@@ -1420,6 +2135,331 @@ mod tests {
             Outcome::Failed { reason } => panic!("the trim failed: {:?}", reason),
             Outcome::Cancelled => panic!("the trim was not asked to stop"),
         }
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    /// A picture with detail in it — noise, so no encoder gets it for
+    /// free — written as a JPEG at the quality the test asks for.
+    fn make_noisy_jpeg(scratch: &Path, name: &str, quality: u8) -> PathBuf {
+        let mut picture = image::DynamicImage::new_rgb8(320, 240);
+        let mut seed = 0x2545F491u32;
+        for (x, y, pixel) in picture.as_mut_rgb8().expect("rgb").enumerate_pixels_mut() {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let (x, y) = (x as u8, y as u8);
+            *pixel = image::Rgb([seed as u8, (seed >> 8) as u8 ^ x, (seed >> 16) as u8 ^ y]);
+        }
+        let input = scratch.join(name);
+        write_jpeg(&picture, &input, quality).expect("the picture was made");
+        input
+    }
+
+    #[test]
+    #[ignore = "needs the picture library and nothing more"]
+    fn a_jpeg_is_made_lighter_at_the_preset() {
+        let scratch = std::env::temp_dir().join("open-tangerine-compress-jpeg-test");
+        let _ = std::fs::remove_dir_all(&scratch);
+        std::fs::create_dir_all(&scratch).expect("the scratch folder was made");
+        // The original is written at the top quality, so the balanced
+        // preset has room to make it lighter.
+        let input = make_noisy_jpeg(&scratch, "photo.jpg", 100);
+        let weight = std::fs::metadata(&input).expect("the original weighs").len();
+
+        let tools = Tools {
+            ffmpeg_tools: crate::media::locator::Tools {
+                ffmpeg: PathBuf::from("ffmpeg"),
+                ffprobe: PathBuf::from("ffprobe"),
+            },
+            publisher: CopyPublisher,
+        };
+        let request = Request {
+            operation: "tools.compress".to_string(),
+            inputs: vec![input.clone()],
+            settings: ToolSettings::default(),
+            ..Default::default()
+        };
+        let outcome = tools.run(&request, &Selection::inspect(&[input.clone()]));
+        let outputs = match outcome {
+            Outcome::Succeeded { outputs } => outputs,
+            Outcome::Failed { reason } => panic!("the compress failed: {:?}", reason),
+            Outcome::Cancelled => panic!("the compress was not asked to stop"),
+        };
+        assert_eq!(outputs.len(), 1, "one file in, one file out");
+        let made = outputs.first().expect("the compress is there");
+        assert!(made.is_file(), "the lighter file exists");
+        assert_ne!(made, &input, "the original stands untouched");
+        let again = image::open(made).expect("the result is a picture");
+        assert_eq!((again.width(), again.height()), (320, 240), "the shape is kept");
+        let lighter = std::fs::metadata(made).expect("the result weighs").len();
+        assert!(lighter < weight, "{lighter} should be under {weight}");
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    #[ignore = "needs the picture library and nothing more"]
+    fn a_jpeg_searches_for_the_quality_that_fits() {
+        let scratch = std::env::temp_dir().join("open-tangerine-compress-target-test");
+        let _ = std::fs::remove_dir_all(&scratch);
+        std::fs::create_dir_all(&scratch).expect("the scratch folder was made");
+        let input = make_noisy_jpeg(&scratch, "photo.jpg", 100);
+
+        let tools = Tools {
+            ffmpeg_tools: crate::media::locator::Tools {
+                ffmpeg: PathBuf::from("ffmpeg"),
+                ffprobe: PathBuf::from("ffprobe"),
+            },
+            publisher: CopyPublisher,
+        };
+        let target = std::fs::metadata(&input).expect("the original weighs").len() / 2;
+        let request = Request {
+            operation: "tools.compress".to_string(),
+            inputs: vec![input.clone()],
+            settings: ToolSettings {
+                target_bytes: Some(target),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let outcome = tools.run(&request, &Selection::inspect(&[input.clone()]));
+        let outputs = match outcome {
+            Outcome::Succeeded { outputs } => outputs,
+            Outcome::Failed { reason } => panic!("the search failed: {:?}", reason),
+            Outcome::Cancelled => panic!("the search was not asked to stop"),
+        };
+        let made = outputs.first().expect("the compress is there");
+        let weight = std::fs::metadata(made).expect("the result weighs").len();
+        assert!(
+            weight <= target,
+            "{weight} should fit under the asked {target}"
+        );
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    #[ignore = "needs the picture library and nothing more"]
+    fn a_picture_asked_for_an_impossible_size_says_so() {
+        let scratch = std::env::temp_dir().join("open-tangerine-compress-small-test");
+        let _ = std::fs::remove_dir_all(&scratch);
+        std::fs::create_dir_all(&scratch).expect("the scratch folder was made");
+        let input = scratch.join("photo.png");
+        image::DynamicImage::new_rgb8(400, 300)
+            .save(&input)
+            .expect("the picture was made");
+
+        let tools = Tools {
+            ffmpeg_tools: crate::media::locator::Tools {
+                ffmpeg: PathBuf::from("ffmpeg"),
+                ffprobe: PathBuf::from("ffprobe"),
+            },
+            publisher: CopyPublisher,
+        };
+        // A picture keeps being made less until there is almost nothing
+        // left of it; sixty-four bytes is not a size, it is a wish.
+        let request = Request {
+            operation: "tools.compress".to_string(),
+            inputs: vec![input.clone()],
+            settings: ToolSettings {
+                target_bytes: Some(64),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let outcome = tools.run(&request, &Selection::inspect(&[input.clone()]));
+        match outcome {
+            Outcome::Failed { reason } => {
+                assert!(
+                    reason.message().contains("smaller than the file can be made"),
+                    "the failure says what went wrong: {:?}",
+                    reason
+                );
+            }
+            Outcome::Succeeded { .. } => panic!("an impossible size was honoured"),
+            Outcome::Cancelled => panic!("the compress was not asked to stop"),
+        }
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    #[ignore = "needs the conversion program"]
+    fn a_video_is_made_lighter_at_a_target_size() {
+        let folder = Path::new("vendor").join("ffmpeg");
+        let ffmpeg = folder.join("ffmpeg.exe");
+        let ffprobe = folder.join("ffprobe.exe");
+        if !ffmpeg.is_file() || !ffprobe.is_file() {
+            eprintln!("the program is not there; this test needs it");
+            return;
+        }
+        let scratch = std::env::temp_dir().join("open-tangerine-compress-video-test");
+        let _ = std::fs::remove_dir_all(&scratch);
+        std::fs::create_dir_all(&scratch).expect("the scratch folder was made");
+        // A video with detail in it — noise, so the encoder has to spend
+        // real bits on it, and a target of half its weight stands above
+        // the floors the bitrate keeps.
+        let raw = scratch.join("noise.raw");
+        let mut seed = 0x2545F491u32;
+        let mut pixels = Vec::with_capacity(160 * 120 * 30 * 3);
+        for _ in 0..160 * 120 * 30 {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            pixels.extend_from_slice(&[seed as u8, (seed >> 8) as u8, (seed >> 16) as u8]);
+        }
+        std::fs::write(&raw, &pixels).expect("the pixels could be written");
+        let input = scratch.join("clip.mp4");
+        let making: Vec<OsString> = [
+            "-hide_banner",
+            "-nostdin",
+            "-y",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            "-s",
+            "160x120",
+            "-r",
+            "10",
+            "-i",
+        ]
+        .iter()
+        .map(|word| OsString::from(*word))
+        .chain([
+            raw.as_os_str().to_os_string(),
+            OsString::from("-c:v"),
+            OsString::from("mpeg4"),
+            OsString::from("-pix_fmt"),
+            OsString::from("yuv420p"),
+            OsString::from("-f"),
+            OsString::from("mov"),
+            input.as_os_str().to_os_string(),
+        ])
+        .collect();
+        let made_video = SystemRunner
+            .run(&ffmpeg, &making, None)
+            .expect("the video was made");
+        assert!(made_video.succeeded(), "the test video was not made: {}", made_video.stderr);
+        let input = input;
+        let weight = std::fs::metadata(&input).expect("the original weighs").len();
+
+        let tools = Tools {
+            ffmpeg_tools: crate::media::locator::Tools {
+                ffmpeg,
+                ffprobe: ffprobe.clone(),
+            },
+            publisher: CopyPublisher,
+        };
+        let request = Request {
+            operation: "tools.compress".to_string(),
+            inputs: vec![input.clone()],
+            settings: ToolSettings {
+                target_bytes: Some(weight / 2),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let outcome = tools.run(&request, &Selection::inspect(&[input.clone()]));
+        let outputs = match outcome {
+            Outcome::Succeeded { outputs } => outputs,
+            Outcome::Failed { reason } => panic!("the compress failed: {:?}", reason),
+            Outcome::Cancelled => panic!("the compress was not asked to stop"),
+        };
+        let made = outputs.first().expect("the compress is there").clone();
+        assert!(made.is_file(), "the lighter video exists");
+        let (w, h) = video_size(&ffprobe, &made);
+        assert_eq!((w, h), (160, 120), "the shape is kept");
+        let lighter = std::fs::metadata(&made).expect("the result weighs").len();
+        assert!(
+            lighter < weight,
+            "{lighter} should be under the original's {weight}"
+        );
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    #[ignore = "needs the conversion program"]
+    fn a_sound_is_made_lighter_at_the_strong_preset() {
+        let folder = Path::new("vendor").join("ffmpeg");
+        let ffmpeg = folder.join("ffmpeg.exe");
+        if !ffmpeg.is_file() {
+            eprintln!("the program is not there; this test needs it");
+            return;
+        }
+        let scratch = std::env::temp_dir().join("open-tangerine-compress-audio-test");
+        let _ = std::fs::remove_dir_all(&scratch);
+        std::fs::create_dir_all(&scratch).expect("the scratch folder was made");
+        // A second of a tone, written as an MP3 at the balanced rate.
+        let wav = scratch.join("tone.wav");
+        let rate: u32 = 44100;
+        let data_len: u32 = rate * 2;
+        let mut wav_bytes = Vec::with_capacity(44 + data_len as usize);
+        wav_bytes.extend_from_slice(b"RIFF");
+        wav_bytes.extend_from_slice(&(36 + data_len).to_le_bytes());
+        wav_bytes.extend_from_slice(b"WAVEfmt ");
+        wav_bytes.extend_from_slice(&16u32.to_le_bytes());
+        wav_bytes.extend_from_slice(&1u16.to_le_bytes());
+        wav_bytes.extend_from_slice(&1u16.to_le_bytes());
+        wav_bytes.extend_from_slice(&rate.to_le_bytes());
+        wav_bytes.extend_from_slice(&(rate * 2).to_le_bytes());
+        wav_bytes.extend_from_slice(&2u16.to_le_bytes());
+        wav_bytes.extend_from_slice(&16u16.to_le_bytes());
+        wav_bytes.extend_from_slice(b"data");
+        wav_bytes.extend_from_slice(&data_len.to_le_bytes());
+        for i in 0..rate {
+            let sample: i16 = if (i / 50) % 2 == 0 { 10000 } else { -10000 };
+            wav_bytes.extend_from_slice(&sample.to_le_bytes());
+        }
+        std::fs::write(&wav, wav_bytes).expect("the tone could be written");
+        let input = scratch.join("tone.mp3");
+        let making: Vec<OsString> = [
+            "-hide_banner",
+            "-nostdin",
+            "-y",
+            "-f",
+            "wav",
+            "-i",
+        ]
+        .iter()
+        .map(|word| OsString::from(*word))
+        .chain([
+            wav.into_os_string(),
+            OsString::from("-c:a"),
+            OsString::from("libmp3lame"),
+            OsString::from("-b:a"),
+            OsString::from("128k"),
+            OsString::from("-f"),
+            OsString::from("mp3"),
+            input.as_os_str().to_os_string(),
+        ])
+        .collect();
+        let made = SystemRunner.run(&ffmpeg, &making, None).expect("the tone was made");
+        assert!(made.succeeded(), "the test sound was not made: {}", made.stderr);
+        let weight = std::fs::metadata(&input).expect("the original weighs").len();
+
+        let tools = Tools {
+            ffmpeg_tools: crate::media::locator::Tools {
+                ffmpeg,
+                ffprobe: Path::new("vendor").join("ffmpeg").join("ffprobe.exe"),
+            },
+            publisher: CopyPublisher,
+        };
+        let request = Request {
+            operation: "tools.compress".to_string(),
+            inputs: vec![input.clone()],
+            settings: ToolSettings {
+                compress_strong: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let outcome = tools.run(&request, &Selection::inspect(&[input.clone()]));
+        let outputs = match outcome {
+            Outcome::Succeeded { outputs } => outputs,
+            Outcome::Failed { reason } => panic!("the compress failed: {:?}", reason),
+            Outcome::Cancelled => panic!("the compress was not asked to stop"),
+        };
+        let made = outputs.first().expect("the compress is there").clone();
+        assert!(made.is_file(), "the lighter sound exists");
+        let lighter = std::fs::metadata(&made).expect("the result weighs").len();
+        assert!(
+            lighter < weight,
+            "{lighter} should be under the original's {weight}"
+        );
         let _ = std::fs::remove_dir_all(&scratch);
     }
 }
