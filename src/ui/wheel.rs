@@ -125,6 +125,14 @@ pub fn window_for_next_component() -> Rc<MinimalSoftwareWindow> {
     window
 }
 
+/// Installs the platform the program draws with.
+///
+/// Installing only works once per process; a second call quietly keeps
+/// the first one, which is what every caller wants.
+pub fn install_platform() {
+    let _ = slint::platform::set_platform(Box::new(WheelPlatform));
+}
+
 /// Everything the wheel needs to draw itself.
 #[derive(Clone, Debug)]
 pub struct ViewModel {
@@ -380,9 +388,7 @@ impl WheelUi {
     /// Creates the wheel. `scale` is the device scale factor of the display.
     pub fn new(scale: f32) -> Result<Self, String> {
         let window = window_for_next_component();
-        // Installing the platform only works once per process; a second call
-        // simply keeps the first one, which is what we want.
-        let _ = slint::platform::set_platform(Box::new(WheelPlatform));
+        install_platform();
 
         let wheel = Wheel::new().map_err(|error| error.to_string())?;
 

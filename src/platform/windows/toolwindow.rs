@@ -76,6 +76,17 @@ thread_local! {
     static SHOWN: std::cell::RefCell<Shown> =
         std::cell::RefCell::new(Shown { wants_size: false });
     static HOST: std::cell::RefCell<Option<Host>> = const { std::cell::RefCell::new(None) };
+    // The handles the card's own callbacks need, kept apart from the host
+    // so a callback fired in the middle of a drawing never has to borrow
+    // what is already borrowed. A handle of zero means "not there".
+    static WINDOW: std::cell::Cell<isize> = const { std::cell::Cell::new(0) };
+    static WIDTH_FIELD: std::cell::Cell<isize> = const { std::cell::Cell::new(0) };
+    static HEIGHT_FIELD: std::cell::Cell<isize> = const { std::cell::Cell::new(0) };
+}
+
+/// The window handle, if there is one.
+fn window_handle() -> HWND {
+    HWND(WINDOW.get() as *mut _)
 }
 
 /// The window, its card, and the buffer the card is drawn into.
@@ -198,27 +209,24 @@ impl ToolWindow {
         let height_field = make_field("Height", 60);
 
         // The buttons of the card say what they were pressed for, the way
-        // the wheel's choices do.
+        // the wheel's choices do. They read the handle on its own, not the
+        // host they are drawn by, because a button can be pressed while a
+        // drawing is still holding the host.
         {
             card.on_run_chosen(move || {
-                HOST.with(|host| {
-                    if let Some(host) = host.borrow().as_ref() {
-                        unsafe { run(host.window) };
-                    }
-                });
+                let window = window_handle();
+                if !window.0.is_null() {
+                    unsafe { run(window) };
+                }
             });
             card.on_cancel_chosen(move || {
-                HOST.with(|host| {
-                    if let Some(host) = host.borrow().as_ref() {
-                        send(ToolEvent::Cancelled);
-                        unsafe {
-                            ShowWindow(
-                                host.window,
-                                windows::Win32::UI::WindowsAndMessaging::SW_HIDE,
-                            )
-                        };
-                    }
-                });
+                let window = window_handle();
+                if !window.0.is_null() {
+                    send(ToolEvent::Cancelled);
+                    unsafe {
+                        ShowWindow(window, windows::Win32::UI::WindowsAndMessaging::SW_HIDE)
+                    };
+                }
             });
         }
 
@@ -234,6 +242,9 @@ impl ToolWindow {
         };
         host.resize();
         HOST.with(|slot| *slot.borrow_mut() = Some(host));
+        WINDOW.with(|slot| slot.set(window.0 as isize));
+        WIDTH_FIELD.with(|slot| slot.set(width_field.0 as isize));
+        HEIGHT_FIELD.with(|slot| slot.set(height_field.0 as isize));
 
         Ok(ToolWindow { window })
     }
@@ -264,14 +275,12 @@ impl ToolWindow {
         let wants_size = operation == "tools.resize";
         SHOWN.with(|shown| shown.borrow_mut().wants_size = wants_size);
 
-        unsafe {
-            SetWindowTextW(self.window, PCWSTR::from_raw(to_wide(label).as_ptr()));
-        }
-
-        HOST.with(|slot| {
+        // Everything the card needs is set first, while the host is held
+        // only for that and nothing is shown yet.
+        let (width_field, height_field, card_window) = HOST.with(|slot| {
             let mut borrowed = slot.borrow_mut();
             let Some(host) = borrowed.as_mut() else {
-                return;
+                return (HWND::default(), HWND::default(), HWND::default());
             };
             host.card.set_title_text(detail.into());
             host.card.set_file_text(said.into());
@@ -290,8 +299,24 @@ impl ToolWindow {
             if let Some(picture) = picture {
                 host.card.set_preview(picture);
             }
-            for field in [host.width_field, host.height_field] {
-                unsafe {
+            host.lay_out();
+            host.software.request_redraw();
+            (host.width_field, host.height_field, host.window)
+        });
+
+        // And only then is anything shown: the messages that come of
+        // showing a window can arrive at once, and the one that draws the
+        // card must not find the card still held.
+        if card_window.0.is_null() {
+            return;
+        }
+        unsafe {
+            SetWindowTextW(card_window, PCWSTR::from_raw(to_wide(label).as_ptr()));
+            for (field, slot) in [
+                (width_field, &WIDTH_FIELD),
+                (height_field, &HEIGHT_FIELD),
+            ] {
+                if !field.0.is_null() {
                     SetWindowTextW(field, PCWSTR::from_raw(to_wide("").as_ptr()));
                     ShowWindow(
                         field,
@@ -302,19 +327,16 @@ impl ToolWindow {
                         },
                     );
                 }
+                let _ = slot;
             }
-            host.lay_out();
-            host.software.request_redraw();
-            unsafe {
-                InvalidateRect(Some(host.window), None, true);
-                ShowWindow(host.window, windows::Win32::UI::WindowsAndMessaging::SW_SHOW);
-                SetFocus(Some(if wants_size {
-                    host.width_field
-                } else {
-                    host.window
-                }));
-            }
-        });
+            InvalidateRect(Some(card_window), None, true);
+            ShowWindow(card_window, windows::Win32::UI::WindowsAndMessaging::SW_SHOW);
+            SetFocus(Some(if wants_size {
+                width_field
+            } else {
+                card_window
+            }));
+        }
     }
 
     /// Hides the window.
@@ -739,5 +761,42 @@ mod tests {
         assert!(layout.preview.bottom <= layout.width_box.top);
         assert!(layout.width_box.bottom <= layout.cancel.top);
         assert_eq!(layout.width_box.top, layout.height_box.top);
+    }
+}
+
+#[cfg(test)]
+mod show_tests {
+    use super::*;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        DispatchMessageW, GetMessageW, MSG, PM_REMOVE, PeekMessageW, TranslateMessage,
+    };
+
+    /// Showing the card and pumping the messages that come of it must not
+    /// panic: the program's own loop does exactly this when a tool is
+    /// picked from the wheel.
+    #[test]
+    fn showing_and_pumping_the_card_does_not_panic() {
+        crate::ui::wheel::install_platform();
+        let (sender, _receiver) = std::sync::mpsc::channel();
+        let mut window = ToolWindow::new(sender).expect("the window was made");
+        let picture = image::DynamicImage::new_rgb8(8, 6);
+        window.show_for(
+            "tools.crop",
+            "Crop",
+            "Crop the picture",
+            &[PathBuf::from("one.png")],
+            Some(&picture),
+        );
+        for _ in 0..40 {
+            unsafe {
+                let mut message = MSG::default();
+                while PeekMessageW(&mut message, None, 0, 0, PM_REMOVE).as_bool() {
+                    let _ = TranslateMessage(&message);
+                    DispatchMessageW(&message);
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        window.hide();
     }
 }
