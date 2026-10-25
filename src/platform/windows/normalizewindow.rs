@@ -11,17 +11,19 @@ use std::sync::mpsc::{Receiver, Sender};
 
 use slint::platform::software_renderer::MinimalSoftwareWindow;
 use slint::{PhysicalSize, SharedPixelBuffer};
-use windows::core::PCWSTR;
-use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
+use windows::core::{w, PCWSTR};
+use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
-    BeginPaint, EndPaint, InvalidateRect, PAINTSTRUCT,
+    BeginPaint, CreateSolidBrush, EndPaint, InvalidateRect, PAINTSTRUCT,
 };
+use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DispatchMessageW, GetClientRect, PeekMessageW,
-    PostQuitMessage, RegisterClassW, SetTimer, SetWindowPos, ShowWindow, TranslateMessage,
-    CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, MSG, PM_REMOVE, SWP_NOACTIVATE, SWP_NOMOVE,
-    SWP_NOZORDER, SW_HIDE, SW_SHOW, WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN,
-    WM_LBUTTONUP, WM_MOUSEMOVE, WM_PAINT, WM_TIMER, WNDCLASSW, WS_EX_LAYERED,
+    CreateWindowExW, DefWindowProcW, DispatchMessageW, GetClientRect, LoadCursorW, PeekMessageW,
+    PostQuitMessage, RegisterClassW, SetForegroundWindow, SetLayeredWindowAttributes, SetTimer,
+    SetWindowPos, SetWindowTextW, ShowWindow, TranslateMessage, CW_USEDEFAULT, IDC_ARROW,
+    LWA_ALPHA, MSG, PM_REMOVE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER, SW_HIDE, SW_SHOW,
+    WM_CLOSE, WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
+    WM_PAINT, WM_TIMER, WNDCLASSW, WS_EX_LAYERED,
 };
 
 use crate::media::locator;
@@ -362,17 +364,14 @@ fn outer_size(window: HWND, client_w: i32, client_h: i32) -> (i32, i32) {
 
 impl NormalizeWindow {
     pub fn new(sender: Sender<ToolEvent>) -> Result<Self, String> {
-        let class_name = to_wide("OpenTangerineNormalizeCard");
-        let hinstance = unsafe {
-            windows::Win32::System::LibraryLoader::GetModuleHandleW(PCWSTR::null())
-                .unwrap_or_default()
-                .into()
-        };
+        let class_name = w!("OpenTangerineNormalizeCard");
+        let instance = unsafe { GetModuleHandleW(None).map_err(|e| e.to_string())? };
         let wc = WNDCLASSW {
-            style: CS_HREDRAW | CS_VREDRAW,
             lpfnWndProc: Some(normalize_card_proc),
-            hInstance: hinstance,
-            lpszClassName: PCWSTR(class_name.as_ptr()),
+            hInstance: instance.into(),
+            lpszClassName: class_name,
+            hCursor: unsafe { LoadCursorW(None, IDC_ARROW) }.unwrap_or_default(),
+            hbrBackground: unsafe { CreateSolidBrush(COLORREF(0x00FF_FFFF)) },
             ..Default::default()
         };
         unsafe {
@@ -385,8 +384,8 @@ impl NormalizeWindow {
         let hwnd = unsafe {
             CreateWindowExW(
                 WS_EX_LAYERED,
-                PCWSTR(class_name.as_ptr()),
-                PCWSTR(to_wide("Normalize Volume").as_ptr()),
+                class_name,
+                w!("Normalize"),
                 fixed_style(),
                 CW_USEDEFAULT,
                 CW_USEDEFAULT,
@@ -394,7 +393,7 @@ impl NormalizeWindow {
                 CARD_H,
                 None,
                 None,
-                Some(wc.hInstance),
+                Some(instance.into()),
                 None,
             )
             .map_err(|e| e.to_string())?
@@ -409,8 +408,9 @@ impl NormalizeWindow {
                 hwnd,
                 DWMWA_WINDOW_CORNER_PREFERENCE,
                 &preference as *const _ as *const core::ffi::c_void,
-                std::mem::size_of_val(&preference) as u32,
+                std::mem::size_of::<i32>() as u32,
             );
+            let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 0, LWA_ALPHA);
         }
 
         WINDOW.with(|slot| slot.set(hwnd.0 as usize));
@@ -495,7 +495,7 @@ impl NormalizeWindow {
         Ok(Self { window: hwnd, sender })
     }
 
-    pub fn show_for(&self, _operation: &str, _label: &str, _detail: &str, files: &[PathBuf]) {
+    pub fn show_for(&self, _operation: &str, label: &str, _detail: &str, files: &[PathBuf]) {
         let Some(first) = files.first() else { return };
         let file_path = first.clone();
         let file_name = file_path
@@ -561,7 +561,12 @@ impl NormalizeWindow {
             );
         }
 
+        let label_text = if !label.is_empty() { label } else { "Normalize" };
+        let label_wide = to_wide(label_text);
         unsafe {
+            let _ = SetWindowTextW(self.window, PCWSTR(label_wide.as_ptr()));
+            let _ = SetLayeredWindowAttributes(self.window, COLORREF(0), 255, LWA_ALPHA);
+            let _ = SetForegroundWindow(self.window);
             SetTimer(Some(self.window), FADE_TIMER_ID, 16, None);
             ShowWindow(self.window, SW_SHOW);
         }
