@@ -657,24 +657,27 @@ the handoff said):
   P3-13 starts from the truth.
 
 Decisions asked and answered (2026-10-25, with the question tool):
-- Shared controls for this batch: **Slider + Checkbox**, the
-  handoff's original plan — the Slider is built for the library and
-  is not used by these two windows (a later batch, the Edit Photo
-  family, takes it first); no Segmented control is built.
+- Shared controls for this batch: **Round Checkbox**, matching
+  compress.webp (round circle with checkmark, filled with accent when
+  checked). Slider is deferred until a window that needs it (P3-10
+  Normalize Audio / P3-15 Edit Photos).
 - The toggle draws as a **round checkbox** (the mockup), not the
   Swift switch; the Swift keeps the behavior.
+- Compress window follows Swift: Segmented chips [Balanced | Strong],
+  video rows (codec, resolution, fps) when video present, target size
+  number + KB/MB chips revealed by round checkbox.
 
 - [x] Plan (this section) and evidence read in order: MAPPING-ROADMAP
       re-read, both mockups, CompressToolView.swift, Compressor.swift,
       VideoOps.compress, MetadataToolView.swift, MetadataOps.swift;
       backends audited (findings above).
-- [ ] Backend compress (one `feat:`): ToolSettings grows what the
-      window needs (preset, target bytes); a real compress path per
-      kind — picture by our own hands (the image crate: quality or the
-      target search), video/audio/pdf through the program with the
-      Swift numbers — gated early in `Handler::run` like split, named
-      "{base} compressed.{ext}" beside the original; real-FFmpeg
-      ignored tests for at least one picture and one video.
+- [x] Backend compress (committed `f2b5024` + `fe97de0`): ToolSettings grows
+      what the window needs (preset, target bytes, max_long_edge, max_fps);
+      a real compress path per kind — picture by our own hands (the image
+      crate: quality or the target search), video/audio through the program
+      with the Swift numbers — gated early in `Handler::run` like split,
+      named "{base} compressed.{ext}" beside the original; 9 unit tests +
+      5 real-FFmpeg ignored tests all pass.
 - [ ] Registry/eligibility: the two ops must be offered again — decide
       in Phase B between synthetic processors in the environment and
       an honest Requirement, whichever reads truest; the metadata
