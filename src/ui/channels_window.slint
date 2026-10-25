@@ -1,5 +1,5 @@
 import { Tokens, Panel } from "tokens.slint";
-import { Hairline, LabeledSlider, CardFooter } from "shell.slint";
+import { CardHeader, Hairline, LabeledSlider, CardFooter } from "shell.slint";
 
 export component ChannelsCard inherits Window {
     in property <float> ui-scale: 1.0;
@@ -7,10 +7,10 @@ export component ChannelsCard inherits Window {
     in property <length> card-height: 560px;
 
     in property <Panel> header-box;
+    in property <Panel> detail-box;
     in property <Panel> hairline-top;
-    in property <Panel> file-info-box;
     in property <string> file-name: "Audio track.wav";
-    in property <string> file-detail: "2 channels · 44100 Hz";
+    in property <string> detail: "Convert audio channels";
 
     in property <Panel> waveform-box;
     in property <image> waveform-strip;
@@ -54,42 +54,18 @@ export component ChannelsCard inherits Window {
 
     width: root.card-width;
     height: root.card-height;
-    background: Tokens.content;
+    background: Tokens.window-bg;
 
-    // 1. Header (dismiss circle on left, title centered)
-    Rectangle {
-        x: 16px * root.ui-scale;
-        y: (root.header-box.height - self.height) / 2;
-        width: 24px * root.ui-scale;
-        height: 24px * root.ui-scale;
-        border-radius: self.height / 2;
-        background: dismiss-touch.pressed ? Tokens.quiet-pressed
-                  : (dismiss-touch.has-hover ? Tokens.quiet-hover : Tokens.quiet);
-
-        dismiss-touch := TouchArea {
-            clicked => { root.dismiss-chosen(); }
-        }
-
-        Path {
-            commands: "M 7 7 L 17 17 M 17 7 L 7 17";
-            stroke: Tokens.text;
-            stroke-width: 1.5px;
-            stroke-line-cap: round;
-            width: parent.width;
-            height: parent.height;
-        }
-    }
-
-    Text {
-        x: root.header-box.x; y: root.header-box.y;
-        width: root.header-box.width; height: root.header-box.height;
-        text: "Audio Channels";
-        color: Tokens.text;
-        font-size: root.ui-scale * 15px;
-        font-weight: 600;
-        font-family: "Segoe UI";
-        vertical-alignment: center;
-        horizontal-alignment: center;
+    // 1. Standard CardHeader
+    CardHeader {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        file-name: root.file-name;
+        detail: root.detail;
+        ui-scale: root.ui-scale;
+        header-box: root.header-box;
+        detail-box: root.detail-box;
     }
 
     Hairline {
@@ -99,35 +75,7 @@ export component ChannelsCard inherits Window {
         box: root.hairline-top;
     }
 
-    // 2. File info row (name on left, format & rate on right)
-    Text {
-        x: root.file-info-box.x;
-        y: root.file-info-box.y;
-        width: root.file-info-box.width * 0.55;
-        height: root.file-info-box.height;
-        text: root.file-name;
-        color: Tokens.text;
-        font-size: root.ui-scale * 13px;
-        font-weight: 600;
-        font-family: "Segoe UI";
-        overflow: elide;
-        vertical-alignment: center;
-    }
-
-    Text {
-        x: root.file-info-box.x + root.file-info-box.width * 0.45;
-        y: root.file-info-box.y;
-        width: root.file-info-box.width * 0.55;
-        height: root.file-info-box.height;
-        text: root.file-detail;
-        color: Tokens.text-muted;
-        font-size: root.ui-scale * 11px;
-        font-family: "Segoe UI";
-        horizontal-alignment: right;
-        vertical-alignment: center;
-    }
-
-    // 3. Waveform preview track
+    // 2. Waveform preview track
     Rectangle {
         x: root.waveform-box.x;
         y: root.waveform-box.y;
@@ -145,7 +93,7 @@ export component ChannelsCard inherits Window {
             image-fit: fill;
         }
 
-        // Dotted centerline
+        // Centerline
         Rectangle {
             x: 0;
             y: (parent.height - 1px) / 2;
@@ -174,7 +122,7 @@ export component ChannelsCard inherits Window {
         }
     }
 
-    // 4. Transport Bar (Play/pause button left, timecode right)
+    // 3. Transport Bar (Play/pause button left, timecode right)
     Rectangle {
         x: root.transport-box.x;
         y: root.transport-box.y + (root.transport-box.height - self.height) / 2;
@@ -213,7 +161,7 @@ export component ChannelsCard inherits Window {
         vertical-alignment: center;
     }
 
-    // 5. Channel Modes (Label + 5 segmented pill buttons)
+    // 4. Channel Modes (Label + 5 segmented pill buttons)
     Text {
         x: root.modes-box.x;
         y: root.modes-box.y;
@@ -359,7 +307,7 @@ export component ChannelsCard inherits Window {
         }
     }
 
-    // 6. Left Volume Slider
+    // 5. Left Volume Slider
     LabeledSlider {
         x: 0; y: 0;
         width: root.card-width;
@@ -376,7 +324,7 @@ export component ChannelsCard inherits Window {
         value-changed(val) => { root.left-changed(val); }
     }
 
-    // 7. Right Volume Slider
+    // 6. Right Volume Slider
     LabeledSlider {
         x: 0; y: 0;
         width: root.card-width;
@@ -393,7 +341,7 @@ export component ChannelsCard inherits Window {
         value-changed(val) => { root.right-changed(val); }
     }
 
-    // 8. Footnote
+    // 7. Footnote
     Text {
         x: root.footnote-box.x;
         y: root.footnote-box.y;
@@ -407,7 +355,7 @@ export component ChannelsCard inherits Window {
         vertical-alignment: center;
     }
 
-    // 9. Bottom Hairline & Footer
+    // 8. Bottom Hairline & Footer
     Hairline {
         x: 0; y: 0;
         width: root.card-width;
@@ -420,8 +368,9 @@ export component ChannelsCard inherits Window {
         width: root.card-width;
         height: root.card-height;
         ui-scale: root.ui-scale;
+        helper: "Enter to run \u{b7} Esc to close";
         run-label: root.run-label;
-        has-cancel: false;
+        has-cancel: true;
         run-enabled: root.run-enabled;
         helper-box: root.helper-box;
         cancel-box: root.cancel-box;

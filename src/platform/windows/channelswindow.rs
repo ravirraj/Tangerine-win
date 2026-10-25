@@ -42,8 +42,8 @@ pub struct Layout {
     pub client_width: i32,
     pub client_height: i32,
     pub header: Panel,
+    pub detail: Panel,
     pub hairline_top: Panel,
-    pub file_info: Panel,
     pub waveform: Panel,
     pub transport: Panel,
     pub modes: Panel,
@@ -64,62 +64,62 @@ impl Layout {
     pub fn of(client_width: i32, client_height: i32) -> Self {
         let scale = (client_width as f32 / Self::WIDTH_UNITS).max(0.5);
         let w = client_width as f32;
-        let pad = 24.0 * scale;
+        let pad = 18.0 * scale;
         let content_w = w - pad * 2.0;
 
         let header = Panel {
-            x: 0.0,
-            y: 0.0,
-            width: w,
-            height: 48.0 * scale,
+            x: pad,
+            y: 14.0 * scale,
+            width: content_w,
+            height: 22.0 * scale,
+        };
+        let detail = Panel {
+            x: pad,
+            y: 38.0 * scale,
+            width: content_w,
+            height: 18.0 * scale,
         };
         let hairline_top = Panel {
             x: 0.0,
-            y: 48.0 * scale,
+            y: 62.0 * scale,
             width: w,
             height: 1.0,
         };
-        let file_info = Panel {
-            x: pad,
-            y: 56.0 * scale,
-            width: content_w,
-            height: 20.0 * scale,
-        };
         let waveform = Panel {
             x: pad,
-            y: 82.0 * scale,
+            y: 74.0 * scale,
             width: content_w,
             height: 100.0 * scale,
         };
         let transport = Panel {
             x: pad,
-            y: 188.0 * scale,
+            y: 180.0 * scale,
             width: content_w,
             height: 28.0 * scale,
         };
         let modes = Panel {
             x: pad,
-            y: 222.0 * scale,
+            y: 216.0 * scale,
             width: content_w,
             height: 48.0 * scale,
         };
         let left_slider = Panel {
             x: pad,
-            y: 276.0 * scale,
+            y: 270.0 * scale,
             width: content_w,
             height: 48.0 * scale,
         };
         let right_slider = Panel {
             x: pad,
-            y: 330.0 * scale,
+            y: 324.0 * scale,
             width: content_w,
             height: 48.0 * scale,
         };
         let footnote = Panel {
             x: pad,
-            y: 386.0 * scale,
+            y: 380.0 * scale,
             width: content_w,
-            height: 40.0 * scale,
+            height: 44.0 * scale,
         };
         let hairline_bottom = Panel {
             x: 0.0,
@@ -130,19 +130,19 @@ impl Layout {
         let helper = Panel {
             x: pad,
             y: 508.0 * scale,
-            width: 160.0 * scale,
+            width: 170.0 * scale,
             height: 36.0 * scale,
         };
         let cancel = Panel {
-            x: w - 210.0 * scale,
+            x: w - 200.0 * scale,
             y: 508.0 * scale,
-            width: 70.0 * scale,
+            width: 76.0 * scale,
             height: 36.0 * scale,
         };
         let run = Panel {
-            x: w - 136.0 * scale,
+            x: w - 116.0 * scale,
             y: 508.0 * scale,
-            width: 112.0 * scale,
+            width: 98.0 * scale,
             height: 36.0 * scale,
         };
 
@@ -150,8 +150,8 @@ impl Layout {
             client_width,
             client_height,
             header,
+            detail,
             hairline_top,
-            file_info,
             waveform,
             transport,
             modes,
@@ -586,8 +586,8 @@ fn apply_layout(width: i32, height: i32) {
             host.card.set_ui_scale(scale);
 
             host.card.set_header_box(layout.header);
+            host.card.set_detail_box(layout.detail);
             host.card.set_hairline_top(layout.hairline_top);
-            host.card.set_file_info_box(layout.file_info);
             host.card.set_waveform_box(layout.waveform);
             host.card.set_transport_box(layout.transport);
             host.card.set_modes_box(layout.modes);
@@ -613,7 +613,7 @@ fn refresh_card() {
         HOST.with(|h_slot| {
             if let Some(host) = h_slot.borrow_mut().as_mut() {
                 host.card.set_file_name(st.file_name.as_str().into());
-                host.card.set_file_detail(st.file_detail.as_str().into());
+                host.card.set_detail(st.file_detail.as_str().into());
                 let frac = if st.duration > 0.0 {
                     (st.playhead / st.duration).clamp(0.0, 1.0) as f32
                 } else {
@@ -923,12 +923,20 @@ mod tests {
         let layout = Layout::of(400, 560);
         assert_eq!(layout.client_width, 400);
         assert_eq!(layout.client_height, 560);
-        assert_eq!(layout.header.height, 48.0);
-        assert_eq!(layout.waveform.width, 352.0);
+        assert_eq!(layout.header.x, 18.0);
+        assert_eq!(layout.header.y, 14.0);
+        assert_eq!(layout.header.height, 22.0);
+        assert_eq!(layout.detail.x, 18.0);
+        assert_eq!(layout.detail.y, 38.0);
+        assert_eq!(layout.detail.height, 18.0);
+        assert_eq!(layout.hairline_top.y, 62.0);
+        assert_eq!(layout.waveform.width, 364.0);
         assert_eq!(layout.waveform.height, 100.0);
         assert_eq!(layout.modes.height, 48.0);
         assert_eq!(layout.left_slider.height, 48.0);
         assert_eq!(layout.right_slider.height, 48.0);
+        assert_eq!(layout.run.width, 98.0);
+        assert_eq!(layout.cancel.width, 76.0);
         assert!(layout.run.y > layout.footnote.y);
     }
 

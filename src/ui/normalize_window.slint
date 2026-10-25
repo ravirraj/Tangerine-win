@@ -1,16 +1,16 @@
 import { Tokens, Panel } from "tokens.slint";
-import { Hairline, LabeledSlider, CardFooter } from "shell.slint";
+import { CardHeader, Hairline, LabeledSlider, CardFooter } from "shell.slint";
 
 export component NormalizeCard inherits Window {
     in property <float> ui-scale: 1.0;
     in property <length> card-width: 400px;
-    in property <length> card-height: 611px;
+    in property <length> card-height: 560px;
 
     in property <Panel> header-box;
+    in property <Panel> detail-box;
     in property <Panel> hairline-top;
-    in property <Panel> file-info-box;
     in property <string> file-name: "Voice with pauses.wav";
-    in property <string> duration-text: "0:02.00";
+    in property <string> detail: "Normalize audio volume";
 
     in property <Panel> waveform-box;
     in property <image> waveform-strip;
@@ -54,42 +54,18 @@ export component NormalizeCard inherits Window {
 
     width: root.card-width;
     height: root.card-height;
-    background: Tokens.content;
+    background: Tokens.window-bg;
 
-    // 1. Header (dismiss circle on left, title centered)
-    Rectangle {
-        x: 16px * root.ui-scale;
-        y: (root.header-box.height - self.height) / 2;
-        width: 24px * root.ui-scale;
-        height: 24px * root.ui-scale;
-        border-radius: self.height / 2;
-        background: dismiss-touch.pressed ? Tokens.quiet-pressed
-                  : (dismiss-touch.has-hover ? Tokens.quiet-hover : Tokens.quiet);
-
-        dismiss-touch := TouchArea {
-            clicked => { root.dismiss-chosen(); }
-        }
-
-        Path {
-            commands: "M 7 7 L 17 17 M 17 7 L 7 17";
-            stroke: Tokens.text;
-            stroke-width: 1.5px;
-            stroke-line-cap: round;
-            width: parent.width;
-            height: parent.height;
-        }
-    }
-
-    Text {
-        x: root.header-box.x; y: root.header-box.y;
-        width: root.header-box.width; height: root.header-box.height;
-        text: "Normalize Volume";
-        color: Tokens.text;
-        font-size: root.ui-scale * 15px;
-        font-weight: 600;
-        font-family: "Segoe UI";
-        vertical-alignment: center;
-        horizontal-alignment: center;
+    // 1. Standard CardHeader
+    CardHeader {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        file-name: root.file-name;
+        detail: root.detail;
+        ui-scale: root.ui-scale;
+        header-box: root.header-box;
+        detail-box: root.detail-box;
     }
 
     Hairline {
@@ -99,122 +75,93 @@ export component NormalizeCard inherits Window {
         box: root.hairline-top;
     }
 
-    // 2. File Info Row (file name left, duration right)
-    Rectangle {
-        x: root.file-info-box.x;
-        y: root.file-info-box.y;
-        width: root.file-info-box.width;
-        height: root.file-info-box.height;
-        background: transparent;
-
-        Text {
-            x: 0;
-            y: 0;
-            width: parent.width - 80px * root.ui-scale;
-            height: parent.height;
-            text: root.file-name;
-            font-size: 13px * root.ui-scale;
-            font-weight: 500;
-            font-family: "Segoe UI";
-            color: Tokens.text;
-            vertical-alignment: center;
-            overflow: elide;
-        }
-
-        Text {
-            x: parent.width - self.width;
-            y: 0;
-            height: parent.height;
-            text: root.duration-text;
-            font-size: 13px * root.ui-scale;
-            font-weight: 400;
-            font-family: "Segoe UI";
-            color: Tokens.text;
-            vertical-alignment: center;
-            horizontal-alignment: right;
-        }
-    }
-
-    // 3. Waveform preview track
+    // 2. Waveform Preview Track
     Rectangle {
         x: root.waveform-box.x;
         y: root.waveform-box.y;
         width: root.waveform-box.width;
         height: root.waveform-box.height;
-        border-radius: 8px * root.ui-scale;
-        background: Tokens.elevated;
+        background: Tokens.elevated; // #ECECEA
+        border-radius: 8px;
         clip: true;
 
-        // Waveform strip image
         Image {
-            x: 0;
-            y: 0;
+            x: 0; y: 0;
             width: parent.width;
             height: parent.height;
             source: root.waveform-strip;
             image-fit: fill;
         }
 
-        // Scrub playhead line
-        Rectangle {
-            x: root.playhead-fraction * (parent.width - 2px * root.ui-scale);
-            y: 0;
-            width: 2px * root.ui-scale;
-            height: parent.height;
-            background: #FFFFFF;
-            drop-shadow-color: #00000030;
-            drop-shadow-offset-x: 1px;
-            drop-shadow-blur: 2px;
-        }
-    }
-
-    // 4. Transport Row (play button left, timecode right)
-    Rectangle {
-        x: root.transport-box.x;
-        y: root.transport-box.y;
-        width: root.transport-box.width;
-        height: root.transport-box.height;
-        background: transparent;
-
-        // Play / Pause button
+        // Centerline
         Rectangle {
             x: 0;
-            y: (parent.height - self.height) / 2;
-            width: 24px * root.ui-scale;
-            height: 24px * root.ui-scale;
-            border-radius: 4px * root.ui-scale;
-            background: play-touch.pressed ? Tokens.quiet-pressed
-                      : (play-touch.has-hover ? Tokens.quiet-hover : transparent);
-
-            play-touch := TouchArea {
-                clicked => { root.play-chosen(); }
-            }
-
-            Text {
-                text: root.is-playing ? "⏸" : "▶";
-                font-size: 12px * root.ui-scale;
-                font-family: "Segoe UI";
-                color: Tokens.text;
-                vertical-alignment: center;
-                horizontal-alignment: center;
-            }
+            y: (parent.height - 1px) / 2;
+            width: parent.width;
+            height: 1px;
+            background: #FF5A1F;
+            opacity: 0.35;
         }
 
-        // Timecode readout on right
-        Text {
-            x: parent.width - self.width;
+        // Playhead scrub vertical line
+        Rectangle {
+            x: (parent.width - 2px) * root.playhead-fraction;
             y: 0;
+            width: 2px;
             height: parent.height;
-            text: root.timecode-text;
-            font-size: 13px * root.ui-scale;
-            font-family: "Segoe UI";
-            color: Tokens.text;
-            vertical-alignment: center;
-            horizontal-alignment: right;
+            background: #FFFFFF;
+
+            Rectangle {
+                x: -3px;
+                y: 0;
+                width: 8px;
+                height: 8px;
+                border-radius: 4px;
+                background: #FFFFFF;
+            }
         }
     }
 
-    // 5. Target Loudness Slider (-30..-8 LUFS)
+    // 3. Transport Bar
+    Rectangle {
+        x: root.transport-box.x;
+        y: root.transport-box.y + (root.transport-box.height - self.height) / 2;
+        width: 28px * root.ui-scale;
+        height: 28px * root.ui-scale;
+        border-radius: self.height / 2;
+        background: play-touch.pressed ? Tokens.quiet-pressed
+                  : (play-touch.has-hover ? Tokens.quiet-hover : Tokens.quiet);
+
+        play-touch := TouchArea {
+            clicked => { root.play-chosen(); }
+        }
+
+        Text {
+            width: parent.width;
+            height: parent.height;
+            text: root.is-playing ? "⏸" : "▶";
+            color: Tokens.text;
+            font-size: root.ui-scale * 12px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    Text {
+        x: root.transport-box.x + root.transport-box.width - self.width;
+        y: root.transport-box.y;
+        width: 140px * root.ui-scale;
+        height: root.transport-box.height;
+        text: root.timecode-text;
+        color: Tokens.text-muted;
+        font-size: root.ui-scale * 12px;
+        font-family: "Cascadia Mono, Consolas, Courier New";
+        font-weight: 500;
+        horizontal-alignment: right;
+        vertical-alignment: center;
+    }
+
+    // 4. Target Loudness Slider (-30..-8 LUFS)
     LabeledSlider {
         x: 0; y: 0;
         width: root.card-width;
@@ -226,12 +173,12 @@ export component NormalizeCard inherits Window {
         min: -30.0;
         max: -8.0;
         value: root.target-lufs;
-        ticks: [0.0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90, 0.95, 1.0];
+        ticks: [0.0, 0.0476, 0.0952, 0.1429, 0.1905, 0.2381, 0.2857, 0.3333, 0.3810, 0.4286, 0.4762, 0.5238, 0.5714, 0.6190, 0.6667, 0.7143, 0.7619, 0.8095, 0.8571, 0.9048, 0.9524, 1.0];
         focused: root.slider-focus == 1;
         value-changed(val) => { root.target-changed(val); }
     }
 
-    // 6. Loudness Range Slider (1..20 LU)
+    // 5. Loudness Range Slider (1..20 LU)
     LabeledSlider {
         x: 0; y: 0;
         width: root.card-width;
@@ -248,7 +195,7 @@ export component NormalizeCard inherits Window {
         value-changed(val) => { root.range-changed(val); }
     }
 
-    // 7. True Peak Limit Slider (-9..0 dBTP)
+    // 6. True Peak Limit Slider (-9..0 dBTP)
     LabeledSlider {
         x: 0; y: 0;
         width: root.card-width;
@@ -265,20 +212,21 @@ export component NormalizeCard inherits Window {
         value-changed(val) => { root.peak-changed(val); }
     }
 
-    // 8. Footnote description
+    // 7. Footnote description
     Text {
         x: root.footnote-box.x;
         y: root.footnote-box.y;
         width: root.footnote-box.width;
         height: root.footnote-box.height;
         text: root.footnote-text;
-        font-size: 12px * root.ui-scale;
+        font-size: 11px * root.ui-scale;
         font-family: "Segoe UI";
         color: Tokens.text-muted;
         wrap: word-wrap;
+        vertical-alignment: center;
     }
 
-    // 9. Hairline Bottom & Footer
+    // 8. Bottom Hairline & Footer
     Hairline {
         x: 0; y: 0;
         width: root.card-width;
@@ -291,8 +239,9 @@ export component NormalizeCard inherits Window {
         width: root.card-width;
         height: root.card-height;
         ui-scale: root.ui-scale;
+        helper: "Enter to run \u{b7} Esc to close";
         run-label: root.run-label;
-        has-cancel: false;
+        has-cancel: true;
         run-enabled: root.run-enabled;
         helper-box: root.helper-box;
         cancel-box: root.cancel-box;

@@ -33,15 +33,15 @@ use crate::ui::wheel::{window_for_next_component, Bgra8, NormalizeCard, Panel};
 const FADE_TIMER_ID: usize = 55;
 
 pub const CARD_W: i32 = 400;
-pub const CARD_H: i32 = 611;
+pub const CARD_H: i32 = 560;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Layout {
     pub client_width: i32,
     pub client_height: i32,
     pub header: Panel,
+    pub detail: Panel,
     pub hairline_top: Panel,
-    pub file_info: Panel,
     pub waveform: Panel,
     pub transport: Panel,
     pub target_slider: Panel,
@@ -57,90 +57,90 @@ pub struct Layout {
 impl Layout {
     pub const WIDTH_UNITS: f32 = 400.0;
     #[allow(dead_code)]
-    pub const HEIGHT_UNITS: f32 = 611.0;
+    pub const HEIGHT_UNITS: f32 = 560.0;
 
     pub fn of(client_width: i32, client_height: i32) -> Self {
         let scale = (client_width as f32 / Self::WIDTH_UNITS).max(0.5);
         let w = client_width as f32;
-        let pad = 24.0 * scale;
+        let pad = 18.0 * scale;
         let content_w = w - pad * 2.0;
 
         let header = Panel {
-            x: 0.0,
-            y: 0.0,
-            width: w,
-            height: 48.0 * scale,
+            x: pad,
+            y: 14.0 * scale,
+            width: content_w,
+            height: 22.0 * scale,
+        };
+        let detail = Panel {
+            x: pad,
+            y: 38.0 * scale,
+            width: content_w,
+            height: 18.0 * scale,
         };
         let hairline_top = Panel {
             x: 0.0,
-            y: 48.0 * scale,
+            y: 62.0 * scale,
             width: w,
             height: 1.0,
         };
-        let file_info = Panel {
-            x: pad,
-            y: 60.0 * scale,
-            width: content_w,
-            height: 20.0 * scale,
-        };
         let waveform = Panel {
             x: pad,
-            y: 86.0 * scale,
+            y: 74.0 * scale,
             width: content_w,
-            height: 160.0 * scale,
+            height: 100.0 * scale,
         };
         let transport = Panel {
             x: pad,
-            y: 254.0 * scale,
+            y: 180.0 * scale,
             width: content_w,
-            height: 24.0 * scale,
+            height: 28.0 * scale,
         };
         let target_slider = Panel {
             x: pad,
-            y: 288.0 * scale,
+            y: 216.0 * scale,
             width: content_w,
             height: 48.0 * scale,
         };
         let range_slider = Panel {
             x: pad,
-            y: 344.0 * scale,
+            y: 270.0 * scale,
             width: content_w,
             height: 48.0 * scale,
         };
         let peak_slider = Panel {
             x: pad,
-            y: 400.0 * scale,
+            y: 324.0 * scale,
             width: content_w,
             height: 48.0 * scale,
         };
         let footnote = Panel {
             x: pad,
-            y: 456.0 * scale,
+            y: 380.0 * scale,
             width: content_w,
             height: 44.0 * scale,
         };
         let hairline_bottom = Panel {
             x: 0.0,
-            y: 545.0 * scale,
+            y: 495.0 * scale,
             width: w,
             height: 1.0,
         };
         let helper = Panel {
             x: pad,
-            y: 558.0 * scale,
-            width: 200.0 * scale,
+            y: 508.0 * scale,
+            width: 170.0 * scale,
             height: 36.0 * scale,
         };
         let cancel = Panel {
-            x: w - 210.0 * scale,
-            y: 558.0 * scale,
-            width: 70.0 * scale,
+            x: w - 200.0 * scale,
+            y: 508.0 * scale,
+            width: 76.0 * scale,
             height: 36.0 * scale,
         };
         let run = Panel {
-            x: w - 136.0 * scale,
-            y: 558.0 * scale,
-            width: 112.0 * scale,
+            x: w - 116.0 * scale,
+            y: 508.0 * scale,
+            width: 98.0 * scale,
             height: 36.0 * scale,
         };
 
@@ -148,8 +148,8 @@ impl Layout {
             client_width,
             client_height,
             header,
+            detail,
             hairline_top,
-            file_info,
             waveform,
             transport,
             target_slider,
@@ -183,6 +183,7 @@ enum DragTarget {
 struct NormalizeState {
     file_path: PathBuf,
     file_name: String,
+    detail: String,
     duration: f64,
     playhead: f64,
     is_playing: bool,
@@ -200,6 +201,7 @@ impl Default for NormalizeState {
         Self {
             file_path: PathBuf::new(),
             file_name: String::new(),
+            detail: String::new(),
             duration: 0.0,
             playhead: 0.0,
             is_playing: false,
@@ -481,6 +483,11 @@ impl NormalizeWindow {
             .file_name()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| "audio.wav".to_string());
+        let detail = if !_detail.is_empty() {
+            _detail.to_string()
+        } else {
+            "Normalize audio volume".to_string()
+        };
 
         let tools = locator::find();
         let duration = tools
@@ -492,6 +499,7 @@ impl NormalizeWindow {
             let mut st = slot.borrow_mut();
             st.file_path = file_path.clone();
             st.file_name = file_name;
+            st.detail = detail;
             st.duration = duration;
             st.playhead = 0.0;
             st.is_playing = false;
@@ -554,8 +562,8 @@ fn apply_layout(width: i32, height: i32) {
             host.card.set_ui_scale(scale);
 
             host.card.set_header_box(layout.header);
+            host.card.set_detail_box(layout.detail);
             host.card.set_hairline_top(layout.hairline_top);
-            host.card.set_file_info_box(layout.file_info);
             host.card.set_waveform_box(layout.waveform);
             host.card.set_transport_box(layout.transport);
             host.card.set_target_box(layout.target_slider);
@@ -581,7 +589,7 @@ fn refresh_card() {
         HOST.with(|h_slot| {
             if let Some(host) = h_slot.borrow_mut().as_mut() {
                 host.card.set_file_name(st.file_name.as_str().into());
-                host.card.set_duration_text(format_clock(st.duration).as_str().into());
+                host.card.set_detail(st.detail.as_str().into());
                 let frac = if st.duration > 0.0 {
                     (st.playhead / st.duration).clamp(0.0, 1.0) as f32
                 } else {
@@ -729,11 +737,15 @@ unsafe extern "system" fn normalize_card_proc(
                 return LRESULT(0);
             }
 
-            // Check dismiss circle button (16..40, 12..36)
-            if x >= 12.0 && x <= 44.0 && y >= 10.0 && y <= 38.0 {
+            // Check cancel button
+            if x >= layout.cancel.x
+                && x <= layout.cancel.x + layout.cancel.width
+                && y >= layout.cancel.y
+                && y <= layout.cancel.y + layout.cancel.height
+            {
                 HOST.with(|slot| {
                     if let Some(host) = slot.borrow().as_ref() {
-                        host.card.invoke_dismiss_chosen();
+                        host.card.invoke_cancel_chosen();
                     }
                 });
                 return LRESULT(0);
@@ -878,31 +890,35 @@ mod tests {
 
     #[test]
     fn a_normalize_layout_measures_all_boxes_proportionally() {
-        let layout = Layout::of(400, 611);
+        let layout = Layout::of(400, 560);
         assert_eq!(layout.client_width, 400);
-        assert_eq!(layout.client_height, 611);
+        assert_eq!(layout.client_height, 560);
 
-        assert_eq!(layout.header.x, 0.0);
-        assert_eq!(layout.header.y, 0.0);
-        assert_eq!(layout.header.width, 400.0);
-        assert_eq!(layout.header.height, 48.0);
+        assert_eq!(layout.header.x, 18.0);
+        assert_eq!(layout.header.y, 14.0);
+        assert_eq!(layout.header.width, 364.0);
+        assert_eq!(layout.header.height, 22.0);
 
-        assert_eq!(layout.hairline_top.y, 48.0);
+        assert_eq!(layout.detail.x, 18.0);
+        assert_eq!(layout.detail.y, 38.0);
+        assert_eq!(layout.detail.width, 364.0);
+        assert_eq!(layout.detail.height, 18.0);
+
+        assert_eq!(layout.hairline_top.y, 62.0);
         assert_eq!(layout.hairline_top.height, 1.0);
 
-        assert_eq!(layout.file_info.x, 24.0);
-        assert_eq!(layout.file_info.width, 352.0);
+        assert_eq!(layout.waveform.x, 18.0);
+        assert_eq!(layout.waveform.width, 364.0);
+        assert_eq!(layout.waveform.height, 100.0);
 
-        assert_eq!(layout.waveform.x, 24.0);
-        assert_eq!(layout.waveform.width, 352.0);
-        assert_eq!(layout.waveform.height, 160.0);
+        assert_eq!(layout.target_slider.width, 364.0);
+        assert_eq!(layout.range_slider.width, 364.0);
+        assert_eq!(layout.peak_slider.width, 364.0);
 
-        assert_eq!(layout.target_slider.width, 352.0);
-        assert_eq!(layout.range_slider.width, 352.0);
-        assert_eq!(layout.peak_slider.width, 352.0);
-
-        assert_eq!(layout.hairline_bottom.y, 545.0);
-        assert_eq!(layout.run.width, 112.0);
+        assert_eq!(layout.hairline_bottom.y, 495.0);
+        assert_eq!(layout.run.width, 98.0);
+        assert_eq!(layout.cancel.width, 76.0);
+        assert!(layout.run.y > layout.footnote.y);
     }
 
     #[test]
