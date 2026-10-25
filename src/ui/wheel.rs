@@ -58,7 +58,7 @@ fn centre_label_size() -> f32 {
 pub struct Bgra8(u32);
 
 impl Bgra8 {
-    fn parts(self) -> (u8, u8, u8, u8) {
+    pub(crate) fn parts(self) -> (u8, u8, u8, u8) {
         (
             (self.0 >> 24) as u8,
             (self.0 >> 16) as u8,
@@ -119,8 +119,12 @@ thread_local! {
 /// Puts a window aside for the component that is made next.
 ///
 /// The window and the component belong together; this is the introduction.
+/// Every redraw draws the whole card again: these windows are resized to
+/// the media they hold, and a renderer that only redraws the lines it
+/// remembers changing would leave whatever fell below the window's first
+/// size forever undrawn.
 pub fn window_for_next_component() -> Rc<MinimalSoftwareWindow> {
-    let window = MinimalSoftwareWindow::new(RepaintBufferType::ReusedBuffer);
+    let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
     WINDOWS.with(|queue| queue.borrow_mut().push_back(window.clone()));
     window
 }

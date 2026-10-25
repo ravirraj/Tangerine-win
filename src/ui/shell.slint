@@ -1,16 +1,22 @@
-// The skeleton every tool window wears.
+// The skeleton every tool window wears, and the first of the shared
+// controls.
 //
 // A tool window is the same card every time — a header of the file's name
 // and the tool's words, a hairline, whatever the tool asks of the body,
 // another hairline, and a footer whose left says the shortcuts and whose
-// right says no and go. The parts of that skeleton live here, once, so
-// the twenty-one windows the reference product shows feel like one
-// product wearing our skin: each window's file says only its body.
+// right says go. The parts of that skeleton live here, once, so the
+// twenty-one windows the reference product shows feel like one product
+// wearing our skin: each window's file says only its body.
+//
+// The buttons are quiet pills, the way the reference draws them; the
+// orange is the colour of what is chosen, not of what is pressed.
 
 import { Tokens } from "tokens.slint";
 import { Panel } from "tokens.slint";
 
-// The header: the file this is about, and what the tool does.
+// The header: the file this is about, and what the tool does. (The
+// tool's own name stands in the window's title bar, which on Windows is
+// the system's; the original's centred title lives there.)
 export component CardHeader {
     in property <string> file-name;
     in property <string> detail;
@@ -33,8 +39,8 @@ export component CardHeader {
         x: root.detail-box.x; y: root.detail-box.y;
         width: root.detail-box.width; height: root.detail-box.height;
         text: root.detail;
-        color: Tokens.text-dim;
-        font-size: root.ui-scale * 12px;
+        color: Tokens.text-muted;
+        font-size: root.ui-scale * 13px;
         font-family: "Segoe UI";
         vertical-alignment: center;
         overflow: elide;
@@ -52,9 +58,8 @@ export component Hairline {
     }
 }
 
-// A tile a typing field sits in. The word on the left and the unit on
-// the right are the card's, always there; the typing itself is a real
-// system field laid between them.
+// A field a size is typed into. The field itself is white with a thin
+// border, and the keyboard's arrival turns its border the orange.
 export component FieldTile {
     in property <string> label: "Width";
     in property <bool> focused: false;
@@ -64,36 +69,169 @@ export component FieldTile {
     Rectangle {
         x: root.box.x; y: root.box.y;
         width: root.box.width; height: root.box.height;
-        border-radius: 6px;
-        background: Tokens.surface;
+        border-radius: Tokens.radius-control;
+        background: Tokens.content;
         border-width: 1px;
         border-color: root.focused ? Tokens.accent : Tokens.field-border;
 
         Text {
             x: 10px; width: 44px; height: parent.height;
             text: root.label;
-            color: Tokens.text-dim;
-            font-size: root.ui-scale * 12px;
+            color: Tokens.text-muted;
+            font-size: root.ui-scale * 13px;
             font-family: "Segoe UI";
             vertical-alignment: center;
         }
         Text {
-            x: parent.width - 26px; width: 18px; height: parent.height;
+            x: parent.width - 28px; width: 20px; height: parent.height;
             text: "px";
-            color: Tokens.text-dim;
-            font-size: root.ui-scale * 12px;
+            color: Tokens.text-muted;
+            font-size: root.ui-scale * 13px;
             font-family: "Segoe UI";
             vertical-alignment: center;
         }
     }
 }
 
-// The footer: the shortcuts on the left, no and go on the right.
+// A bare transport glyph with a generous hit area: the skip and step
+// icons under a timeline are line drawings, not buttons.
+export component IconButton {
+    in property <string> glyph;
+    in property <bool> focused: false;
+    in property <float> ui-scale: 1.0;
+    in property <Panel> box;
+
+    callback clicked();
+
+    // The ring the keyboard puts around the glyph.
+    Rectangle {
+        x: root.box.x - 3px; y: root.box.y - 3px;
+        width: root.box.width + 6px; height: root.box.height + 6px;
+        border-radius: root.box.height / 2 + 3px;
+        border-width: 2px;
+        border-color: Tokens.accent;
+        visible: root.focused;
+    }
+    Rectangle {
+        x: root.box.x; y: root.box.y;
+        width: root.box.width; height: root.box.height;
+        border-radius: root.box.height / 2;
+        background: icon-touch.pressed ? Tokens.quiet-pressed
+                   : (icon-touch.has-hover ? Tokens.quiet-hover : transparent);
+
+        icon-touch := TouchArea {
+            clicked => { root.clicked(); }
+        }
+
+        Path {
+            commands: root.glyph;
+            viewbox-width: 24;
+            viewbox-height: 24;
+            fill: transparent;
+            stroke: Tokens.transport;
+            stroke-width: 1.8px;
+            stroke-line-cap: round;
+            stroke-line-join: round;
+            width: root.ui-scale * 18px;
+            height: root.ui-scale * 18px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+        }
+    }
+}
+
+// The range a timeline holds: the strip, the chosen stretch framed by
+// two solid orange caps — each with a white grip to take hold of — and
+// the thin white playhead standing on the moment. The trim window wears
+// it now; split and trim-audio wear it after.
+//
+// 0 no handle is under the keyboard, 1 the start cap, 2 the end cap.
+export component TimelineRange {
+    in property <Panel> box;
+    in property <float> start-fraction: 0;
+    in property <float> end-fraction: 1;
+    in property <float> playhead-fraction: 0;
+    in property <int> handle-focus: 0;
+
+    Rectangle {
+        x: root.box.x; y: root.box.y;
+        width: root.box.width; height: root.box.height;
+        border-radius: Tokens.radius-control;
+        background: Tokens.elevated;
+        clip: true;
+
+        // Outside the chosen stretch the strip sits back; inside it the
+        // strip is clear, the way the reference dims what is cut away.
+        Rectangle {
+            x: 0; y: 0;
+            width: root.start-fraction * parent.width;
+            height: parent.height;
+            background: #F7F6F48C;
+        }
+        Rectangle {
+            x: root.end-fraction * parent.width; y: 0;
+            width: (1 - root.end-fraction) * parent.width;
+            height: parent.height;
+            background: #F7F6F48C;
+        }
+
+        // The end caps: solid orange, each carrying a white grip.
+        Rectangle {
+            x: root.start-fraction * parent.width - 14px;
+            y: (parent.height - 28px) / 2;
+            width: 28px;
+            height: 28px;
+            border-radius: 7px;
+            background: root.handle-focus == 1 ? Tokens.accent-pressed : Tokens.accent;
+
+            Rectangle {
+                width: 4px;
+                height: 14px;
+                border-radius: 2px;
+                background: Tokens.content;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+            }
+        }
+        Rectangle {
+            x: root.end-fraction * parent.width - 14px;
+            y: (parent.height - 28px) / 2;
+            width: 28px;
+            height: 28px;
+            border-radius: 7px;
+            background: root.handle-focus == 2 ? Tokens.accent-pressed : Tokens.accent;
+
+            Rectangle {
+                width: 4px;
+                height: 14px;
+                border-radius: 2px;
+                background: Tokens.content;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+            }
+        }
+
+        // The playhead: a thin white line standing on the moment.
+        Rectangle {
+            x: root.playhead-fraction * parent.width - 1px;
+            y: 0;
+            width: 2px;
+            height: parent.height;
+            background: Tokens.content;
+        }
+    }
+}
+
+// The footer: the shortcuts on the left, go on the right. A no button
+// stands beside the go only where the tool wants one — the reference
+// keeps a single action, and Escape says no on every card either way.
 //
 // 0 nothing is under the keyboard, 1 cancel, 2 run.
 export component CardFooter {
     in property <float> ui-scale: 1.0;
     in property <string> helper: "Enter to run \u{b7} Esc to close";
+    in property <string> run-label: "Run";
+    in property <bool> has-cancel: true;
     in property <Panel> helper-box;
     in property <Panel> cancel-box;
     in property <Panel> run-box;
@@ -106,21 +244,36 @@ export component CardFooter {
         x: root.helper-box.x; y: root.helper-box.y;
         width: root.helper-box.width; height: root.helper-box.height;
         text: root.helper;
-        color: Tokens.text-dim;
-        font-size: root.ui-scale * 11px;
+        color: Tokens.text-muted;
+        font-size: root.ui-scale * 13px;
         font-family: "Segoe UI";
         vertical-alignment: center;
         overflow: elide;
     }
 
+    // The ring the keyboard puts around whichever button it is on.
     Rectangle {
+        x: root.cancel-box.x - 3px; y: root.cancel-box.y - 3px;
+        width: root.cancel-box.width + 6px; height: root.cancel-box.height + 6px;
+        border-radius: Tokens.radius-control + 3px;
+        border-width: 2px;
+        border-color: Tokens.accent;
+        visible: root.has-cancel && root.button-focus == 1;
+    }
+    Rectangle {
+        x: root.run-box.x - 3px; y: root.run-box.y - 3px;
+        width: root.run-box.width + 6px; height: root.run-box.height + 6px;
+        border-radius: Tokens.radius-control + 3px;
+        border-width: 2px;
+        border-color: Tokens.accent;
+        visible: root.button-focus == 2;
+    }
+    if root.has-cancel: Rectangle {
         x: root.cancel-box.x; y: root.cancel-box.y;
         width: root.cancel-box.width; height: root.cancel-box.height;
-        border-radius: 6px;
-        background: cancel-touch.pressed ? #ececea
-                   : (cancel-touch.has-hover ? #f3f3f1 : Tokens.surface);
-        border-width: 1px;
-        border-color: root.button-focus == 1 ? Tokens.accent : Tokens.outline;
+        border-radius: Tokens.radius-control;
+        background: cancel-touch.pressed ? Tokens.quiet-pressed
+                   : (cancel-touch.has-hover ? Tokens.quiet-hover : Tokens.quiet);
 
         cancel-touch := TouchArea {
             clicked => { root.cancel-chosen(); }
@@ -135,31 +288,22 @@ export component CardFooter {
             horizontal-alignment: center;
         }
     }
-    // A ring the keyboard puts around the go button when that is what
-    // the keyboard is on.
-    Rectangle {
-        x: root.run-box.x - 3px; y: root.run-box.y - 3px;
-        width: root.run-box.width + 6px; height: root.run-box.height + 6px;
-        border-radius: 9px;
-        border-width: 2px;
-        border-color: Tokens.accent;
-        visible: root.button-focus == 2;
-    }
     Rectangle {
         x: root.run-box.x; y: root.run-box.y;
         width: root.run-box.width; height: root.run-box.height;
-        border-radius: 6px;
-        background: run-touch.pressed ? Tokens.accent-pressed : Tokens.accent;
+        border-radius: Tokens.radius-control;
+        background: run-touch.pressed ? Tokens.quiet-pressed
+                   : (run-touch.has-hover ? Tokens.quiet-hover : Tokens.quiet);
 
         run-touch := TouchArea {
             clicked => { root.run-chosen(); }
         }
 
         Text {
-            text: "Run";
-            color: #1a1a1a;
+            text: root.run-label;
+            color: Tokens.text;
             font-size: root.ui-scale * 13px;
-            font-weight: 600;
+            font-weight: 500;
             font-family: "Segoe UI";
             vertical-alignment: center;
             horizontal-alignment: center;

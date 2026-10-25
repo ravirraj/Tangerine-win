@@ -1,18 +1,25 @@
 // The card a video is trimmed in.
 //
-// The skeleton is the shell's (shell.slint); the body is the timeline's:
-// the frame at the moment the playhead stands on, the bar with the two
-// handles that hold where the video begins and ends, the three time
-// codes, and the step buttons that nudge the handle the keyboard is on.
-// The card only draws the timeline: the pressing, dragging and stepping
-// are read by the window itself, which holds the same geometry the card
-// was given — the way the wheel works.
+// The skeleton is the shell's (shell.slint); the body is the video
+// pattern the reference lays out: the frame at the playhead on the
+// picture's own dark, a line of small words saying what to do and what
+// is held, the range strip with its two orange caps, the moments said in
+// the face where every digit takes the same room, and the bare transport
+// glyphs. The card only draws: the pressing, dragging and stepping are
+// read by the window itself, which holds the same geometry the card was
+// given — the way the wheel works.
 
 import { Tokens } from "tokens.slint";
 import { Panel } from "tokens.slint";
-import { CardHeader, Hairline, CardFooter } from "shell.slint";
+import { CardHeader, Hairline, IconButton, TimelineRange, CardFooter } from "shell.slint";
 
 export component TrimCard inherits Window {
+    // The size of the card, held here so the renderer reads what the
+    // window really is: the system tells us the client size, and the
+    // renderer draws exactly what these two say.
+    in property <length> card-width: 420px;
+    in property <length> card-height: 544px;
+
     // What the card says.
     in property <string> file-name;
     in property <string> detail;
@@ -27,12 +34,13 @@ export component TrimCard inherits Window {
     in property <Panel> detail-box;
     in property <Panel> hairline-top;
     in property <Panel> hairline-bottom;
-    in property <Panel> frame-box;
+    in property <Panel> preview-box;
+    in property <Panel> caption-box;
     in property <Panel> timeline-box;
-    in property <Panel> codes-box;
+    in property <Panel> times-box;
     in property <Panel> step-back-box;
     in property <Panel> step-forward-box;
-    in property <Panel> hint-box;
+    in property <Panel> transport-box;
     in property <Panel> helper-box;
     in property <Panel> cancel-box;
     in property <Panel> run-box;
@@ -43,12 +51,13 @@ export component TrimCard inherits Window {
     in property <float> end-fraction: 1;
     in property <float> playhead-fraction: 0;
 
-    // What the time codes say.
+    // What the words say.
+    in property <string> selected-text;
     in property <string> start-text;
-    in property <string> playhead-text;
     in property <string> end-text;
+    in property <string> playhead-text;
 
-    // 0 no handle, 1 the start handle, 2 the end handle.
+    // 0 no cap, 1 the start cap, 2 the end cap.
     in property <int> handle-focus;
     // 0 nothing, 1 cancel, 2 run.
     in property <int> button-focus;
@@ -59,8 +68,11 @@ export component TrimCard inherits Window {
     callback step-backward();
     callback step-forward();
 
+    width: root.card-width;
+    height: root.card-height;
+
     Rectangle {
-        background: Tokens.surface;
+        background: Tokens.window-bg;
     }
 
     CardHeader {
@@ -72,13 +84,15 @@ export component TrimCard inherits Window {
     }
     Hairline { box: root.hairline-top; }
 
-    // The frame at the playhead.
+    // The frame at the playhead, on the picture's own dark, with the
+    // margins the reference gives its stages. (The picture is fitted
+    // inside, so the stage needs no clipping — and the software renderer
+    // has been known to drop what follows a clipped subtree.)
     Rectangle {
-        x: root.frame-box.x; y: root.frame-box.y;
-        width: root.frame-box.width; height: root.frame-box.height;
-        border-radius: 8px;
-        background: Tokens.canvas;
-        clip: true;
+        x: root.preview-box.x; y: root.preview-box.y;
+        width: root.preview-box.width; height: root.preview-box.height;
+        border-radius: Tokens.radius-preview;
+        background: Tokens.preview-black;
 
         if root.has-frame: Image {
             x: 0; y: 0;
@@ -89,149 +103,95 @@ export component TrimCard inherits Window {
         }
     }
 
-    // The timeline: the whole bar, the kept stretch, the playhead, the
-    // two handles, and the touch that takes them all.
-    Rectangle {
-        x: root.timeline-box.x; y: root.timeline-box.y;
-        width: root.timeline-box.width; height: root.timeline-box.height;
-
-        Rectangle {
-            y: (parent.height - 12px) / 2;
-            height: 12px;
-            width: parent.width;
-            border-radius: 6px;
-            background: Tokens.hairline;
-        }
-        Rectangle {
-            y: (parent.height - 12px) / 2;
-            height: 12px;
-            x: root.start-fraction * parent.width;
-            width: (root.end-fraction - root.start-fraction) * parent.width;
-            border-radius: 6px;
-            background: #ff8a3d4d;
-        }
-        // The playhead: a thin dark line standing on the moment.
-        Rectangle {
-            x: root.playhead-fraction * parent.width - 1px;
-            y: 0;
-            width: 2px;
-            height: parent.height;
-            background: Tokens.text;
-        }
-        Rectangle {
-            x: root.start-fraction * parent.width - 7px;
-            y: (parent.height - 28px) / 2;
-            width: 14px;
-            height: 28px;
-            border-radius: 4px;
-            background: root.handle-focus == 1 ? Tokens.accent : Tokens.text;
-        }
-        Rectangle {
-            x: root.end-fraction * parent.width - 7px;
-            y: (parent.height - 28px) / 2;
-            width: 14px;
-            height: 28px;
-            border-radius: 4px;
-            background: root.handle-focus == 2 ? Tokens.accent : Tokens.text;
-        }
-    }
-
-    // The time codes: where the video begins, where the playhead stands,
-    // where it ends.
+    // The line of small words above the strip: what to do, and what is
+    // held.
     Text {
-        x: root.codes-box.x; y: root.codes-box.y;
-        width: 90px; height: root.codes-box.height;
-        text: root.start-text;
-        color: root.handle-focus == 1 ? Tokens.accent : Tokens.text-dim;
-        font-size: root.ui-scale * 12px;
-        font-weight: root.handle-focus == 1 ? 700 : 400;
+        x: root.caption-box.x; y: root.caption-box.y;
+        width: root.caption-box.width / 2; height: root.caption-box.height;
+        text: "Drag the ends to trim";
+        color: Tokens.text-muted;
+        font-size: root.ui-scale * 13px;
         font-family: "Segoe UI";
         vertical-alignment: center;
     }
     Text {
-        x: root.codes-box.x + root.playhead-fraction * root.codes-box.width - 45px;
-        y: root.codes-box.y;
-        width: 90px; height: root.codes-box.height;
-        text: root.playhead-text;
-        color: Tokens.text;
-        font-size: root.ui-scale * 12px;
-        font-family: "Segoe UI";
-        vertical-alignment: center;
-        horizontal-alignment: center;
-    }
-    Text {
-        x: root.codes-box.x + root.codes-box.width - 90px;
-        y: root.codes-box.y;
-        width: 90px; height: root.codes-box.height;
-        text: root.end-text;
-        color: root.handle-focus == 2 ? Tokens.accent : Tokens.text-dim;
-        font-weight: root.handle-focus == 2 ? 700 : 400;
-        font-size: root.ui-scale * 12px;
-        font-family: "Segoe UI";
+        x: root.caption-box.x + root.caption-box.width / 2;
+        y: root.caption-box.y;
+        width: root.caption-box.width / 2; height: root.caption-box.height;
+        text: root.selected-text;
+        color: Tokens.text-muted;
+        font-size: root.ui-scale * 13px;
+        font-family: Tokens.font-mono;
         vertical-alignment: center;
         horizontal-alignment: right;
     }
 
-    // The step buttons: they nudge the handle the keyboard is on.
+    // The range: the strip with the two orange caps and the playhead.
     Rectangle {
-        x: root.step-back-box.x; y: root.step-back-box.y;
-        width: root.step-back-box.width; height: root.step-back-box.height;
-        border-radius: 6px;
-        background: back-touch.pressed ? #ececea
-                   : (back-touch.has-hover ? #f3f3f1 : Tokens.surface);
-        border-width: 1px;
-        border-color: Tokens.outline;
-
-        back-touch := TouchArea {
-            clicked => { root.step-backward(); }
-        }
-
-        Text {
-            text: "- 1s";
-            color: Tokens.text;
-            font-size: root.ui-scale * 12px;
-            font-family: "Segoe UI";
-            vertical-alignment: center;
-            horizontal-alignment: center;
-        }
+        x: root.timeline-box.x; y: root.timeline-box.y;
+        width: root.timeline-box.width; height: root.timeline-box.height;
+        background: #00ff00;
     }
-    Rectangle {
-        x: root.step-forward-box.x; y: root.step-forward-box.y;
-        width: root.step-forward-box.width; height: root.step-forward-box.height;
-        border-radius: 6px;
-        background: forward-touch.pressed ? #ececea
-                   : (forward-touch.has-hover ? #f3f3f1 : Tokens.surface);
-        border-width: 1px;
-        border-color: Tokens.outline;
-
-        forward-touch := TouchArea {
-            clicked => { root.step-forward(); }
-        }
-
-        Text {
-            text: "+ 1s";
-            color: Tokens.text;
-            font-size: root.ui-scale * 12px;
-            font-family: "Segoe UI";
-            vertical-alignment: center;
-            horizontal-alignment: center;
-        }
+    Hairline {
+        box: root.hairline-bottom;
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+    }
+    // Where the video begins and ends, said in the face where every
+    // digit takes the same room.
+    Text {
+        x: root.times-box.x; y: root.times-box.y;
+        width: root.times-box.width / 2; height: root.times-box.height;
+        text: "Start " + root.start-text;
+        color: Tokens.text;
+        font-size: root.ui-scale * 13px;
+        font-family: Tokens.font-mono;
+        vertical-alignment: center;
     }
     Text {
-        x: root.hint-box.x; y: root.hint-box.y;
-        width: root.hint-box.width; height: root.hint-box.height;
-        text: "Tab picks a handle \u{b7} \u{2190}\u{2192} move it";
-        color: Tokens.text-dim;
-        font-size: root.ui-scale * 11px;
-        font-family: "Segoe UI";
+        x: root.times-box.x + root.times-box.width / 2;
+        y: root.times-box.y;
+        width: root.times-box.width / 2; height: root.times-box.height;
+        text: "End " + root.end-text;
+        color: Tokens.text;
+        font-size: root.ui-scale * 13px;
+        font-family: Tokens.font-mono;
         vertical-alignment: center;
-        overflow: elide;
+        horizontal-alignment: right;
+    }
+
+    // The transport: bare glyphs to step the handle, and where the
+    // playhead stands against the whole.
+    IconButton {
+        box: root.step-back-box;
+        glyph: "M 8 5 L 8 19 M 18 6 L 10 12 L 18 18";
+        ui-scale: root.ui-scale;
+        clicked => { root.step-backward(); }
+    }
+    IconButton {
+        box: root.step-forward-box;
+        glyph: "M 16 5 L 16 19 M 6 6 L 14 12 L 6 18";
+        ui-scale: root.ui-scale;
+        clicked => { root.step-forward(); }
+    }
+    Text {
+        x: root.transport-box.x; y: root.transport-box.y;
+        width: root.transport-box.width; height: root.transport-box.height;
+        text: root.playhead-text;
+        color: Tokens.text;
+        font-size: root.ui-scale * 13px;
+        font-family: Tokens.font-mono;
+        vertical-alignment: center;
+        horizontal-alignment: right;
     }
 
     Hairline { box: root.hairline-bottom; }
 
     CardFooter {
         ui-scale: root.ui-scale;
+        run-label: "Trim";
+        has-cancel: false;
         helper-box: root.helper-box;
         cancel-box: root.cancel-box;
         run-box: root.run-box;

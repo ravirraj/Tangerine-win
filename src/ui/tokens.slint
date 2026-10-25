@@ -1,8 +1,13 @@
-// The one set of colours every surface of the product is drawn with.
+// The one set of colours, type faces and radii every surface of the
+// product is drawn with.
 //
-// The wheel is dark glass and the cards are daylight; the orange is the
-// same orange on both, because it is the product's own colour. One place
-// holds the values, so the surfaces cannot drift apart.
+// The values are the measured ones: the accent is the original
+// application's own (theme.rs holds the same numbers), the daylight
+// surfaces are the warm greys the reference windows wear, and the words
+// and the muted ones are picked once so no window invents its own. The
+// orange is a colour of choosing, not of acting: it lights what is
+// selected, what the handles hold and what the wheel lifts. The buttons
+// of a card are quiet pills.
 
 // Where a part of a card is, in pixels of the window. The Rust side works
 // the numbers out and hands them over, so what is drawn and where the
@@ -15,23 +20,50 @@ export struct Panel {
 }
 
 export global Tokens {
-    // The one orange: what the wheel lights a choice with, and what a
-    // card says "go" with.
-    out property <color> accent: #ff8a3d;
-    // The orange a little deeper, for pressing.
-    out property <color> accent-pressed: #f0792a;
+    // The one orange, with the two states a press travels through and
+    // the thin wash a chosen stretch sits in.
+    out property <color> accent: #ff5a1f;
+    out property <color> accent-hover: #ff7138;
+    out property <color> accent-pressed: #e94a12;
+    out property <color> accent-tint: #ff5a1f4D;
 
-    // The daylight card.
-    out property <color> surface: #ffffff;
-    // The neutral a picture sits on.
-    out property <color> canvas: #f5f5f5;
-    // A field that is not being written in.
-    out property <color> field-border: #d0d0d0;
-    // The words.
-    out property <color> text: #1a1a1a;
-    out property <color> text-dim: #8a8a8e;
-    // The hairlines that hold the card together.
-    out property <color> hairline: #e3e3e1;
-    // A quiet button's outline.
-    out property <color> outline: #d6d6d4;
+    // The daylight card: the body, the panels on it, the recessed wells,
+    // and the white of fields and pages.
+    out property <color> window-bg: #F7F6F4;
+    out property <color> surface: #F1F0EE;
+    out property <color> elevated: #ECECEA;
+    out property <color> content: #FFFFFF;
+    // The face of a quiet button, and its two states.
+    out property <color> quiet: #EFEFED;
+    out property <color> quiet-hover: #ECECEA;
+    out property <color> quiet-pressed: #E4E4E2;
+
+    // The dark a moving picture sits on: the letterboxing is the
+    // picture's own, as the reference draws it.
+    out property <color> preview-black: #1A1A1A;
+
+    // The words, the muted ones beside them, and the ink of the bare
+    // transport glyphs.
+    out property <color> text: #1D1D1F;
+    out property <color> text-muted: #828782;
+    out property <color> transport: #3A3A3A;
+
+    // The hairlines that hold the card together, and the border of a
+    // field that is not being written in.
+    out property <color> hairline: #E3E3E1;
+    out property <color> field-border: #D0D0D0;
+
+    // The colour of a thing gone wrong, for the states that say so.
+    out property <color> danger: #E0483E;
+
+    // The face the numbers are set in, so a timecode holds its width
+    // while it counts.
+    out property <string> font-mono: "Consolas";
+
+    // The radii, from the window's own corner down to a small handle.
+    out property <length> radius-window: 24px;
+    out property <length> radius-preview: 12px;
+    out property <length> radius-card: 14px;
+    out property <length> radius-control: 10px;
+    out property <length> radius-small: 6px;
 }

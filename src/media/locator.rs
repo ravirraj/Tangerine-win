@@ -70,12 +70,14 @@ pub fn find() -> Option<Tools> {
         if let Some(tools) = in_folder(&folder.join("vendor").join("ffmpeg")) {
             return Some(tools);
         }
-        // A program built by cargo sits in target/debug or target/release, so
-        // the repository is two folders above it.
-        if folder
-            .file_name()
-            .is_some_and(|name| name == "debug" || name == "release")
-            && let Some(root) = folder.parent().and_then(Path::parent)
+        // A program built by cargo sits in target/debug or target/release,
+        // so the repository is two folders above it. A test binary sits one
+        // deeper still, in target/debug/deps.
+        let mut ancestor = folder.parent();
+        if folder.file_name().is_some_and(|name| name.to_string_lossy() == "deps") {
+            ancestor = ancestor.and_then(Path::parent);
+        }
+        if let Some(root) = ancestor.and_then(Path::parent)
             && let Some(tools) = in_folder(&root.join("vendor").join("ffmpeg"))
         {
             return Some(tools);

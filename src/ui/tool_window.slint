@@ -19,6 +19,12 @@ export { Panel } from "tokens.slint";
 export * from "trim_window.slint";
 
 export component ToolCard inherits Window {
+    // The size of the card, held here so the renderer reads what the
+    // window really is: the system tells us the client size, and the
+    // renderer draws exactly what these two say.
+    in property <length> card-width: 460px;
+    in property <length> card-height: 560px;
+
     // What the card says.
     in property <string> file-name;
     in property <string> detail;
@@ -49,8 +55,11 @@ export component ToolCard inherits Window {
     callback run-chosen();
     callback cancel-chosen();
 
+    width: root.card-width;
+    height: root.card-height;
+
     Rectangle {
-        background: Tokens.surface;
+        background: Tokens.window-bg;
     }
 
     CardHeader {
@@ -66,8 +75,8 @@ export component ToolCard inherits Window {
     Rectangle {
         x: root.preview-box.x; y: root.preview-box.y;
         width: root.preview-box.width; height: root.preview-box.height;
-        border-radius: 8px;
-        background: Tokens.canvas;
+        border-radius: Tokens.radius-preview;
+        background: Tokens.elevated;
         clip: true;
 
         if root.has-preview: Image {

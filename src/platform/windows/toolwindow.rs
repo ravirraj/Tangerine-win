@@ -372,6 +372,13 @@ impl Host {
             self.width = width;
             self.height = height;
             self.buffer = vec![Bgra8::default(); (width as usize) * (height as usize)];
+            // The card's own size is said here, directly: the renderer
+            // draws exactly what these two properties say, and a size
+            // that only travelled through the window's events has been
+            // lost between the first frame and the next.
+            let scale = scale_factor(self.window);
+            self.card.set_card_width(width as f32 / scale);
+            self.card.set_card_height(height as f32 / scale);
             self.software.set_size(PhysicalSize::new(width, height));
             self.lay_out();
         }
