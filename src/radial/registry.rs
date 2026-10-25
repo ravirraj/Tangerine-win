@@ -634,13 +634,13 @@ pub const OPERATIONS: &[Operation] = &[
         detail: "Cut the beginning or the end",
         icon: IconKind::Scissors,
         mode: RadialMode::Tools,
-        categories: &[FileKind::Video],
+        categories: &[FileKind::Video, FileKind::Audio],
         batch: Batch::Several,
         folders: false,
         output: Output::BesideAsInput,
         collision: Collision::Rename,
         implemented: true,
-        requires: Requirement::Processor("video"),
+        requires: Requirement::AnyProcessor(&["video", "audio"]),
     },
     // A split takes exactly one video: its clips are numbered from where the
     // video stands, and several files split at once reads as two words said
@@ -1883,6 +1883,30 @@ mod tests {
             .map(|entry| entry.id)
             .collect();
         assert_eq!(menu, registry);
+    }
+
+    #[test]
+    fn trim_is_eligible_for_audio_and_video() {
+        let folder = TempFolder::new("trim-kinds");
+        let trim_op = operation_by_id("tools.trim").expect("tools.trim exists");
+        let video_sel = Selection::inspect(&[folder.file("clip.mp4")]);
+        let audio_sel = Selection::inspect(&[folder.file("track.mp3")]);
+        let env = Environment {
+            processors: vec![
+                Processor {
+                    name: "video".to_string(),
+                    reads: vec!["mp4".to_string()],
+                    writes: vec!["mp4".to_string()],
+                },
+                Processor {
+                    name: "audio".to_string(),
+                    reads: vec!["mp3".to_string()],
+                    writes: vec!["mp3".to_string()],
+                },
+            ],
+        };
+        assert_eq!(eligibility(trim_op, &video_sel, &env), Ok(()));
+        assert_eq!(eligibility(trim_op, &audio_sel, &env), Ok(()));
     }
 
     #[test]

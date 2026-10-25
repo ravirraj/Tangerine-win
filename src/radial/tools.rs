@@ -1705,6 +1705,31 @@ mod tests {
     }
 
     #[test]
+    fn trim_args_for_audio_stream_copies_the_range() {
+        let mp3 = crate::media::manifest::Manifest::get()
+            .format("mp3")
+            .expect("mp3 is in manifest");
+        let asked = ToolSettings {
+            start_ms: Some(2_000),
+            end_ms: Some(5_500),
+            ..Default::default()
+        };
+        let args = trim_args(
+            Path::new("track.mp3"),
+            mp3,
+            mp3,
+            Some(Path::new("track.mp3.part")),
+            &asked,
+        );
+        assert!(at(&args, "-ss") < at(&args, "-i"));
+        assert!(at(&args, "-i") < at(&args, "-t"));
+        assert_eq!(args[at(&args, "-ss") + 1].to_string_lossy(), "2.000");
+        assert_eq!(args[at(&args, "-t") + 1].to_string_lossy(), "3.500");
+        assert_eq!(args[at(&args, "-c") + 1].to_string_lossy(), "copy");
+        assert_eq!(args[at(&args, "-map") + 1].to_string_lossy(), "0");
+    }
+
+    #[test]
     fn a_split_cuts_the_video_into_the_stretches_its_points_make() {
         // Three seconds, one point at one: two clips, 0–1 and 1–3.
         assert_eq!(
@@ -1946,6 +1971,44 @@ mod tests {
         let frame = crate::media::frames::frame_at(&tools, &input, 1.5)
             .expect("a frame was taken from the middle of the video");
         assert!(frame.width() > 0, "the frame holds a picture");
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    #[ignore = "needs the conversion program to run a real audio trim"]
+    fn real_audio_trim_with_the_program() {
+        let Some(tools) = crate::media::locator::find() else {
+            return;
+        };
+        let ffmpeg = &tools.ffmpeg;
+        let scratch = std::env::temp_dir().join(format!("ot-audio-trim-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&scratch);
+
+        // Generate a 3-second test WAV file
+        let input = scratch.join("three.wav");
+        let pcm = make_wav_bytes(3.0, 44100);
+        std::fs::write(&input, pcm).expect("three.wav written");
+
+        let wav = crate::media::manifest::Manifest::get()
+            .format("wav")
+            .expect("wav is in the manifest");
+        let trimmed = scratch.join("one.wav");
+        let asked = ToolSettings {
+            start_ms: Some(1_000),
+            end_ms: Some(2_500),
+            ..Default::default()
+        };
+        let arguments = trim_args(&input, wav, wav, Some(&trimmed), &asked);
+        let run = SystemRunner
+            .run(ffmpeg, &arguments, None)
+            .expect("the audio trim ran");
+        assert!(run.succeeded(), "the audio trim did not finish: {}", run.stderr);
+        let kept = crate::media::frames::duration_of(&tools, &trimmed)
+            .expect("the trimmed audio has a length");
+        assert!(
+            (kept - 1.5).abs() < 0.25,
+            "the audio trim kept {kept}s of audio, wanted about 1.5s"
+        );
         let _ = std::fs::remove_dir_all(&scratch);
     }
 
