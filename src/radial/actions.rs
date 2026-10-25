@@ -59,10 +59,13 @@ pub enum Modifier {
 
 /// Which modifier opens which wheel.
 ///
-/// The mapping is configuration rather than a rule baked into the code. On
-/// Windows `Ctrl` and `Alt` already mean "copy" and "link" inside Explorer's
-/// own drag, so Milestone 1 leaves those two wheels to the scroll wheel and
-/// only claims `Shift`.
+/// The mapping is configuration rather than a rule baked into the code.
+/// `Ctrl` and `Alt` also mean "copy" and "link" inside Explorer's own
+/// drag, but the wheel takes the drag before Explorer can act on that:
+/// the cursors they show while the drag goes on are the only effect, and
+/// a wheel under every modifier is worth a cursor that lies. The arrow
+/// keys also move between the wheels, for a keyboard with no wheel of
+/// its own.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ModifierMap {
     /// The modifier that opens the convert wheel.
@@ -80,11 +83,12 @@ impl Default for ModifierMap {
 }
 
 impl ModifierMap {
-    /// The mapping Milestone 1 runs with.
+    /// The mapping the program runs with: every wheel has a modifier of
+    /// its own, the way the reference product gives every wheel one.
     pub const DEFAULT: ModifierMap = ModifierMap {
         convert: Some(Modifier::Shift),
-        tools: None,
-        actions: None,
+        tools: Some(Modifier::Ctrl),
+        actions: Some(Modifier::Alt),
     };
 
     /// The mapping the macOS product uses, kept for reference.
@@ -377,26 +381,31 @@ mod tests {
     }
 
     #[test]
-    fn the_default_mapping_only_claims_shift() {
+    fn the_default_mapping_gives_every_wheel_a_modifier() {
         let map = ModifierMap::DEFAULT;
-        let shift = Modifiers {
-            shift: true,
-            ..Modifiers::NONE
-        };
-        assert_eq!(map.mode_for(shift), Some(RadialMode::Convert));
+        assert_eq!(
+            map.mode_for(Modifiers {
+                shift: true,
+                ..Modifiers::NONE
+            }),
+            Some(RadialMode::Convert)
+        );
         assert_eq!(
             map.mode_for(Modifiers {
                 ctrl: true,
                 ..Modifiers::NONE
             }),
-            None
+            Some(RadialMode::Tools)
         );
         assert_eq!(
             map.mode_for(Modifiers {
                 alt: true,
                 ..Modifiers::NONE
             }),
-            None
+            Some(RadialMode::Actions)
         );
+        // A keyboard with no wheel of its own is still given every wheel:
+        // the arrow keys step between them.
+        assert_eq!(map.mode_for(Modifiers::NONE), None);
     }
 }

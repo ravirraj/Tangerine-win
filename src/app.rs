@@ -81,8 +81,8 @@ pub fn parse_options(arguments: &[String]) -> Result<Options, String> {
         match arguments[index].as_str() {
             "--dev-wheel" => options.dev_wheel = true,
             "--advanced-modifiers" => {
-                // The mapping the macOS product uses, for comparison.
-                options.modifier_map = ModifierMap::MACOS;
+                // Every wheel has a modifier of its own by default now;
+                // the flag stays so nothing that passed it breaks.
             }
             "--exit-after" => {
                 index += 1;
@@ -102,7 +102,7 @@ pub fn parse_options(arguments: &[String]) -> Result<Options, String> {
             }
             "--help" | "-h" => {
                 return Err(
-                    "Open Tangerine for Windows\n\n  --dev-wheel          open the wheel straight away\n  --advanced-modifiers  also let Ctrl and Alt open their wheels\n  --exit-after <s>     quit after so many seconds\n  --version            say which revision this program is\n"
+                    "Open Tangerine for Windows\n\n  --dev-wheel          open the wheel straight away\n  --exit-after <s>     quit after so many seconds\n  --version            say which revision this program is\n"
                         .to_string(),
                 );
             }

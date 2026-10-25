@@ -528,17 +528,20 @@ mod tests {
     }
 
     #[test]
-    fn the_default_mapping_ignores_the_modifiers_explorer_uses() {
+    fn the_modifiers_explorer_uses_switch_wheels_without_closing_them() {
         let mut c = controller();
         open_wheel(&mut c);
-        // Control is "copy" inside Explorer, so it must not open the tools
-        // wheel and it must not close the convert wheel either.
+        // Control also means "copy" inside Explorer's drag, but the wheel
+        // takes the drag before Explorer can act on that: the cursor
+        // Explorer shows is the only effect. The wheel stays open, and the
+        // modifier picks its wheel.
         let effects = c.handle(InteractionEvent::ModifiersChanged(Modifiers {
             ctrl: true,
             ..Modifiers::NONE
         }));
-        assert_eq!(c.mode(), RadialMode::Convert);
-        assert_eq!(effects, vec![Effect::None]);
+        assert_eq!(c.state(), InteractionState::WheelVisible);
+        assert_eq!(c.mode(), RadialMode::Tools);
+        assert_eq!(effects, vec![Effect::UpdateWheel]);
     }
 
     #[test]

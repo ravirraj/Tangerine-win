@@ -26,7 +26,6 @@ libraries. It is a single executable of about 7 MB.
 | Option | What it does |
 | --- | --- |
 | `--dev-wheel` | Opens the wheel straight away, for a look at the design. |
-| `--advanced-modifiers` | Also lets `Ctrl` and `Alt` open their own wheels. |
 | `--exit-after <seconds>` | Quits after so many seconds. Used by the checks. |
 | `--help` | Prints the same list. |
 
@@ -44,6 +43,8 @@ is quiet enough to leave running in the background.
 1. Select one or more files in Explorer and start dragging them. A file on
    the desktop can be dragged too.
 2. Hold **Shift** while you drag. The wheel opens around the pointer.
+   **Ctrl** opens the Tools wheel and **Alt** the File actions wheel, or
+   press **Up** and **Down** to move between the wheels while one is open.
 3. Move onto a choice. The segment under the pointer lifts and lights up.
 4. Let go of the mouse over the choice. The action is chosen.
 5. **Escape** cancels. **Scroll** moves between the Convert, Tools and File
