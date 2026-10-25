@@ -296,6 +296,7 @@ mod tests {
                     "tools.compress | Compress | Make the file smaller | Compress",
                     "tools.crop | Crop | Trim the edges away | Crop",
                     "tools.trim | Trim | Cut the beginning or the end | Scissors",
+                    "tools.split | Split | Cut the video into clips | Scissors",
                     "tools.rotate | Rotate | Turn the image 90 degrees | Rotate",
                     "tools.resize | Resize | Change the image size | Resize",
                     "tools.merge | Merge | Join several files together | Merge",

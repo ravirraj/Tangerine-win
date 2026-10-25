@@ -637,6 +637,24 @@ pub const OPERATIONS: &[Operation] = &[
         implemented: true,
         requires: Requirement::Processor("video"),
     },
+    // A split takes exactly one video: its clips are numbered from where the
+    // video stands, and several files split at once reads as two words said
+    // over each other. The output has the input's own format and stands
+    // beside it, in a folder of its own the handler makes.
+    Operation {
+        id: "tools.split",
+        label: "Split",
+        detail: "Cut the video into clips",
+        icon: IconKind::Scissors,
+        mode: RadialMode::Tools,
+        categories: &[FileKind::Video],
+        batch: Batch::One,
+        folders: false,
+        output: Output::BesideAsInput,
+        collision: Collision::Rename,
+        implemented: true,
+        requires: Requirement::Processor("video"),
+    },
     Operation {
         id: "tools.rotate",
         label: "Rotate",
@@ -1474,6 +1492,7 @@ mod tests {
             "tools.compress",
             "tools.crop",
             "tools.trim",
+            "tools.split",
             "tools.rotate",
             "tools.resize",
             "tools.merge",

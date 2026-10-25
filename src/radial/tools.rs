@@ -34,6 +34,11 @@ pub enum ToolError {
     ReadError,
     /// The result could not be written.
     WriteError,
+    /// There was nothing the tool could be asked to do.
+    ///
+    /// The settings named no work: a split with no points inside the
+    /// video, or no points at all.
+    NothingToDo,
 }
 
 impl ToolError {
@@ -44,6 +49,7 @@ impl ToolError {
             ToolError::ToolFailed => "the tool did not finish",
             ToolError::ReadError => "the source file could not be read",
             ToolError::WriteError => "the result could not be written",
+            ToolError::NothingToDo => "there is nothing to do",
         }
     }
 }
@@ -91,15 +97,38 @@ impl<P: Publisher> Tools<P> {
             )
         };
 
+        self.finish(
+            &arguments,
+            source,
+            temporary,
+            &input.with_extension(target.format.as_str()),
+            runner,
+        )
+    }
+
+    /// Puts what a command wrote where it belongs.
+    ///
+    /// A muxer that wants a file writes the temporary itself; one that
+    /// pours its result over the pipe is given the temporary as its
+    /// bucket. What was written is moved to the final name, which never
+    /// takes a file that is already there.
+    fn finish(
+        &self,
+        arguments: &[OsString],
+        target: &crate::media::manifest::FormatSupport,
+        temporary: &Path,
+        final_name: &Path,
+        runner: &dyn ProcessRunner,
+    ) -> Result<PathBuf, ToolError> {
         let needs_file = muxer_needs_file(&target.write.muxer);
         let run_result = if needs_file {
             runner
-                .run(&self.ffmpeg_tools.ffmpeg, &arguments, None)
+                .run(&self.ffmpeg_tools.ffmpeg, arguments, None)
                 .map_err(|_| ToolError::ToolFailed)?
         } else {
-            let mut file = fs::File::create(&temporary).map_err(|_| ToolError::WriteError)?;
+            let mut file = fs::File::create(temporary).map_err(|_| ToolError::WriteError)?;
             runner
-                .run(&self.ffmpeg_tools.ffmpeg, &arguments, Some(&mut file))
+                .run(&self.ffmpeg_tools.ffmpeg, arguments, Some(&mut file))
                 .map_err(|_| ToolError::ToolFailed)?
         };
 
@@ -107,13 +136,118 @@ impl<P: Publisher> Tools<P> {
             return Err(ToolError::ToolFailed);
         }
 
-        // Publish to final name (beside original, same extension)
-        let final_name = input.with_extension(target.format.as_str());
         self.publisher
-            .publish(&temporary, &final_name)
+            .publish(temporary, final_name)
             .map_err(|_| ToolError::WriteError)?;
 
-        Ok(final_name)
+        Ok(final_name.to_path_buf())
+    }
+
+    /// Splits, at the points the window carried, into a folder of
+    /// numbered clips.
+    ///
+    /// The video's own length is asked of it: the points stand inside that
+    /// length, and the last part runs to wherever the video ends. The
+    /// folder is made beside the original and named for it — "claw clips"
+    /// for claw.mp4 — and gets its number when that name is taken, the way
+    /// a folder is renamed when its twin is already there. Each clip is a
+    /// stretch of the original, lifted out without decoding: the same
+    /// copying a trim does.
+    fn run_split(&self, request: &Request, runner: &dyn ProcessRunner) -> Outcome {
+        if request.settings.points_ms.is_empty() {
+            return Outcome::Failed {
+                reason: Failure::InvalidInput("there are no split points".to_string()),
+            };
+        }
+
+        let manifest = Manifest::get();
+        let mut outputs = Vec::new();
+        let mut failed = 0usize;
+        let mut first_reason: Option<String> = None;
+        for input in &request.inputs {
+            let result = self.split_one(input, &manifest, runner, &request.settings);
+            match result {
+                Ok(paths) => outputs.extend(paths),
+                Err(reason) => {
+                    failed += 1;
+                    let name = reason.name();
+                    diagnostics::log(Level::Warn, "action", &format!("a file was not processed: {name}"));
+                    if first_reason.is_none() {
+                        first_reason = Some(name.to_string());
+                    }
+                }
+            }
+        }
+
+        if failed == 0 {
+            Outcome::Succeeded { outputs }
+        } else {
+            let because = match first_reason {
+                Some(reason) => format!(": {reason}"),
+                None => String::new(),
+            };
+            Outcome::Failed {
+                reason: Failure::Error(format!(
+                    "{failed} of the files could not be processed{because}"
+                )),
+            }
+        }
+    }
+
+    /// Splits one video into its folder of numbered clips.
+    fn split_one(
+        &self,
+        input: &Path,
+        manifest: &Manifest,
+        runner: &dyn ProcessRunner,
+        settings: &crate::radial::execution::ToolSettings,
+    ) -> Result<Vec<PathBuf>, ToolError> {
+        let source_ext = input
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        let source = manifest
+            .format(&source_ext)
+            .ok_or(ToolError::UnsupportedKind)?;
+
+        // The video says how long it stands: the points stand inside it,
+        // and the last clip runs to its end.
+        let duration = crate::media::frames::duration_of(&self.ffmpeg_tools, input)
+            .ok_or(ToolError::ReadError)?;
+        let segments = split_segments(&settings.points_ms, duration);
+        if segments.is_empty() {
+            return Err(ToolError::NothingToDo);
+        }
+
+        let stem = input
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "clip".to_string());
+        let under = input
+            .parent()
+            .map(|parent| parent.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("."));
+        let folder = unique_folder(&under, &format!("{stem} clips"))?;
+
+        let mut outputs = Vec::new();
+        for (index, (start, end)) in segments.iter().enumerate() {
+            let asked = crate::radial::execution::ToolSettings {
+                start_ms: Some(*start),
+                end_ms: Some(*end),
+                ..Default::default()
+            };
+            let leaf = format!("{} part {}.{source_ext}", stem, index + 1);
+            let final_name = folder.join(&leaf);
+            let work_path = folder.join(format!("{leaf}.part"));
+            let arguments = trim_args(input, source, source, Some(&work_path), &asked);
+            let made = self.finish(&arguments, source, &work_path, &final_name, runner);
+            match made {
+                Ok(path) => outputs.push(path),
+                Err(reason) => return Err(reason),
+            }
+        }
+        Ok(outputs)
     }
 }
 
@@ -170,6 +304,54 @@ fn trim_args(
     args
 }
 
+/// The folder a split's clips stand in, not the name that is taken.
+///
+/// The name asked for first, then the name with a number after it — the way
+/// a file manager renames folders, and the way the original's
+/// uniqueDirectory does. The folder is made as soon as a name is free.
+fn unique_folder(under: &Path, name: &str) -> Result<PathBuf, ToolError> {
+    let mut candidate = under.join(name);
+    if !candidate.exists() {
+        std::fs::create_dir_all(&candidate).map_err(|_| ToolError::WriteError)?;
+        return Ok(candidate);
+    }
+    for number in 2..1000u32 {
+        candidate = under.join(format!("{name} {number}"));
+        if !candidate.exists() {
+            std::fs::create_dir_all(&candidate).map_err(|_| ToolError::WriteError)?;
+            return Ok(candidate);
+        }
+    }
+    Err(ToolError::WriteError)
+}
+
+/// The stretches the video is cut into, from the points asked for.
+///
+/// The bounds are the beginning, the points that stand between, and the
+/// end; a stretch shorter than 0.05 of a second is not a clip, it is a
+/// blade still pressed against the one beside it — the original skips
+/// those. Points at or beyond the video's ends are not points at all.
+fn split_segments(points_ms: &[u64], duration: f64) -> Vec<(u64, u64)> {
+    let end_ms = (duration * 1000.0).round() as u64;
+    let mut bounded: Vec<u64> = points_ms
+        .iter()
+        .copied()
+        .filter(|ms| *ms > 0 && *ms < end_ms)
+        .collect();
+    bounded.sort_unstable();
+    let mut bounds: Vec<u64> = vec![0];
+    bounds.extend(bounded);
+    bounds.push(end_ms);
+    let mut segments = Vec::new();
+    for pair in bounds.windows(2) {
+        let (start, end) = (pair[0], pair[1]);
+        if end - start > 50 {
+            segments.push((start, end));
+        }
+    }
+    segments
+}
+
 /// The filter that resizes a picture, from what was asked.
 ///
 /// A side that was not said keeps its share: `-1` is the conversion
@@ -192,6 +374,13 @@ impl<P: Publisher> Handler for Tools<P> {
                 reason: Failure::UnknownOperation,
             };
         };
+
+        // A split is run apart from the rest: it takes the input's own
+        // format, and what it writes is a folder of numbered clips beside
+        // the original, not one file under the Beside policy.
+        if request.operation == "tools.split" {
+            return self.run_split(request, &SystemRunner);
+        }
 
         let Output::Beside(extension) = operation.output else {
             return Outcome::Failed {
@@ -367,6 +556,168 @@ mod tests {
         assert_eq!(at(&args, "-ss"), usize::MAX, "no seek is said");
         assert_eq!(at(&args, "-t"), usize::MAX, "no length is said");
         assert_eq!(args[at(&args, "-c") + 1].to_string_lossy(), "copy");
+    }
+
+    #[test]
+    fn a_split_cuts_the_video_into_the_stretches_its_points_make() {
+        // Three seconds, one point at one: two clips, 0–1 and 1–3.
+        assert_eq!(
+            split_segments(&[1_000], 3.0),
+            vec![(0, 1_000), (1_000, 3_000)]
+        );
+        // Equal parts is what the window says: three points at 1 s apart
+        // cut four clips of the same length.
+        assert_eq!(
+            split_segments(&[1_000, 2_000], 3.0),
+            vec![(0, 1_000), (1_000, 2_000), (2_000, 3_000)]
+        );
+        // The points stand on their own: an empty set asks for nothing.
+        assert_eq!(split_segments(&[], 3.0), vec![(0, 3_000)]);
+    }
+
+    #[test]
+    fn a_split_ignores_blades_and_points_beyond_the_video() {
+        // A point at a boundary is not a clip; two at the same moment are
+        // one; a stretch of 0.05 s or less is not a clip either.
+        assert_eq!(split_segments(&[0, 3_000], 3.0), vec![(0, 3_000)]);
+        assert_eq!(split_segments(&[1_000, 1_000], 3.0), vec![(0, 1_000), (1_000, 3_000)]);
+        // 500–550 is 0.05 s exactly: the original skips it, so 550 keeps.
+        assert_eq!(
+            split_segments(&[500, 550, 2_000], 3.0),
+            vec![(0, 500), (550, 2_000), (2_000, 3_000)]
+        );
+        // Points outside the length are not points: a shorter video cut at
+        // the marks of a longer one still cuts what it has.
+        assert_eq!(split_segments(&[1_000, 5_000], 3.0), vec![(0, 1_000), (1_000, 3_000)]);
+        // and a video whose length nobody knows is not cut at all.
+        assert_eq!(split_segments(&[1_000], 0.0), vec![]);
+    }
+
+    #[test]
+    fn a_clips_folder_that_is_taken_gets_a_number() {
+        let under = std::env::temp_dir().join("open-tangerine-unique-folder");
+        let _ = std::fs::remove_dir_all(&under);
+        std::fs::create_dir_all(&under).expect("the scratch folder was made");
+        let first = unique_folder(&under, "claw clips").expect("the folder was made");
+        assert_eq!(first.file_name().unwrap().to_string_lossy(), "claw clips");
+        assert!(first.is_dir(), "the folder is there as soon as it is named");
+        let second = unique_folder(&under, "claw clips").expect("the second folder was made");
+        assert_eq!(
+            second.file_name().unwrap().to_string_lossy(),
+            "claw clips 2",
+            "a taken name is numbered"
+        );
+        assert!(second.is_dir(), "the second folder is made when it is named");
+        let _ = std::fs::remove_dir_all(&under);
+    }
+
+    #[test]
+    #[ignore = "needs the conversion program"]
+    fn a_video_is_split_into_a_folder_of_numbered_clips() {
+        struct Renamer;
+        impl crate::media::publish::Publisher for Renamer {
+            fn publish(&self, temporary: &Path, destination: &Path) -> Result<(), crate::media::publish::PublishError> {
+                if destination.is_file() {
+                    return Err(crate::media::publish::PublishError::DestinationExists);
+                }
+                std::fs::rename(temporary, destination)
+                    .map_err(|_| crate::media::publish::PublishError::CouldNotMove)
+            }
+        }
+        let folder = Path::new("vendor").join("ffmpeg");
+        let ffmpeg = folder.join("ffmpeg.exe");
+        let ffprobe = folder.join("ffprobe.exe");
+        if !ffmpeg.is_file() || !ffprobe.is_file() {
+            eprintln!("the program is not there; this test needs it");
+            return;
+        }
+        let tools = crate::media::locator::Tools {
+            ffmpeg: ffmpeg.clone(),
+            ffprobe: ffprobe.clone(),
+        };
+
+        let scratch = std::env::temp_dir().join("open-tangerine-split-test");
+        let _ = std::fs::remove_dir_all(&scratch);
+        std::fs::create_dir_all(&scratch).expect("the scratch folder was made");
+
+        // The same three-second video the trim test makes.
+        let raw = scratch.join("three.raw");
+        let pixels = vec![255u8, 0, 0, 255].repeat(160 * 120 * 30);
+        std::fs::write(&raw, pixels).expect("the pixels could be written");
+        let input = scratch.join("three.mp4");
+        let making: Vec<OsString> = [
+            "-hide_banner",
+            "-nostdin",
+            "-y",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgba",
+            "-s",
+            "160x120",
+            "-r",
+            "10",
+            "-i",
+        ]
+        .iter()
+        .map(|word| OsString::from(*word))
+        .chain([
+            raw.as_os_str().to_os_string(),
+            OsString::from("-c:v"),
+            OsString::from("mpeg4"),
+            OsString::from("-pix_fmt"),
+            OsString::from("yuv420p"),
+            OsString::from("-f"),
+            OsString::from("mov"),
+            input.as_os_str().to_os_string(),
+        ])
+        .collect();
+        let made = SystemRunner.run(&ffmpeg, &making, None).expect("the video was made");
+        assert!(made.succeeded(), "the test video was not made: {}", made.stderr);
+
+        // The split is run the way the wheel runs it: at the one-second
+        // mark, which is what the equal-parts slider says for 2 parts.
+        let probe = tools.clone();
+        let splitter = Tools {
+            ffmpeg_tools: tools,
+            publisher: Renamer,
+        };
+        let asked = crate::radial::execution::Request {
+            operation: "tools.split".to_string(),
+            inputs: vec![input.clone()],
+            settings: crate::radial::execution::ToolSettings {
+                points_ms: vec![1_000],
+                ..Default::default()
+            },
+        };
+        let outcome = splitter.run(&asked, &Selection::inspect(&[]));
+        let Outcome::Succeeded { outputs } = outcome else {
+            panic!("the split did not succeed");
+        };
+        // Two clips in the folder beside the original, counted in order,
+        // each whole and the length its stretch says.
+        assert_eq!(outputs.len(), 2, "one point makes two clips");
+        let clips = outputs[0].parent().expect("the clips have a folder");
+        assert_eq!(
+            clips.file_name().unwrap().to_string_lossy(),
+            "three clips",
+            "the folder is named for the original"
+        );
+        assert_eq!(outputs[0].file_name().unwrap().to_string_lossy(), "three part 1.mp4");
+        assert_eq!(outputs[1].file_name().unwrap().to_string_lossy(), "three part 2.mp4");
+        let first =
+            crate::media::frames::duration_of(&probe, &outputs[0]).expect("the first clip has a length");
+        assert!(
+            (first - 1.0).abs() < 0.35,
+            "the first clip is close to a second: {first}"
+        );
+        let second =
+            crate::media::frames::duration_of(&probe, &outputs[1]).expect("the second clip has a length");
+        assert!(
+            (second - 2.0).abs() < 0.35,
+            "the second clip carries the rest: {second}"
+        );
+        let _ = std::fs::remove_dir_all(&scratch);
     }
 
     #[test]

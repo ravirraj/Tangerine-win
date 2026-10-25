@@ -37,6 +37,13 @@ pub struct ToolSettings {
     pub start_ms: Option<u64>,
     /// Where a stretch of time ends, in milliseconds from the start.
     pub end_ms: Option<u64>,
+    /// Where a split stands, in milliseconds from the start, in order.
+    ///
+    /// Empty, the tool runs without split points — the way a tool that was
+    /// run straight from the wheel, with no window, does. Only `tools.split`
+    /// reads these; the tools that keep one stretch of time carry
+    /// `start_ms`/`end_ms` instead.
+    pub points_ms: Vec<u64>,
 }
 
 /// A request to run an operation.
