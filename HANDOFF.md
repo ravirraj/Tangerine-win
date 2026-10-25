@@ -1,5 +1,9 @@
 # Handoff — Open Tangerine for Windows (B-10 tool windows)
 
+> Picking up a tool batch? Read **`PLAYBOOK.md`** first — it is the full
+> method the finished batches (trim, split, crop) followed, in order.
+> This file is the state map; the playbook is the procedure.
+
 Written 2026-10-25 after the B-10.5/B-10.6 batch (roadmap reconciliation + Split Video).
 Read `todo.md` (the running work log, phases B-0…B-10.6) and `PLAN.md` first; this file
 only says what a fresh agent needs to continue without the prior session's memory.
