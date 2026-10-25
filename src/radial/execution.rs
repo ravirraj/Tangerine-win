@@ -86,6 +86,35 @@ pub struct ToolSettings {
     ///
     /// Only `tools.metadata` reads this.
     pub metadata_remove_sensitive: bool,
+    /// Loudness normalization target in LUFS, multiplied by 10 (e.g. -160 for -16.0 LUFS).
+    ///
+    /// Only `tools.normalize` reads this.
+    pub normalize_lufs_x10: Option<i32>,
+    /// Loudness normalization range in LU, multiplied by 10 (e.g. 110 for 11.0 LU).
+    ///
+    /// Only `tools.normalize` reads this.
+    pub normalize_range_x10: Option<i32>,
+    /// True peak limit in dBTP, multiplied by 10 (e.g. -15 for -1.5 dBTP).
+    ///
+    /// Only `tools.normalize` reads this.
+    pub normalize_true_peak_x10: Option<i32>,
+}
+
+impl ToolSettings {
+    /// The target integrated loudness in LUFS (defaults to -16.0 LUFS).
+    pub fn target_lufs(&self) -> f64 {
+        self.normalize_lufs_x10.map(|v| v as f64 / 10.0).unwrap_or(-16.0)
+    }
+
+    /// The loudness range in LU (defaults to 11.0 LU).
+    pub fn loudness_range(&self) -> f64 {
+        self.normalize_range_x10.map(|v| v as f64 / 10.0).unwrap_or(11.0)
+    }
+
+    /// The true peak limit in dBTP (defaults to -1.5 dBTP).
+    pub fn true_peak(&self) -> f64 {
+        self.normalize_true_peak_x10.map(|v| v as f64 / 10.0).unwrap_or(-1.5)
+    }
 }
 
 /// A request to run an operation.

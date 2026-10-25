@@ -566,6 +566,123 @@ impl<P: Publisher> Tools<P> {
             _ => Err(ToolError::UnsupportedKind),
         }
     }
+
+    /// Normalizes loudness/volume on the files in the request.
+    ///
+    /// Reads PCM audio samples, computes peak amplitude and applies linear gain
+    /// to meet the target true peak limit, writing a normalized file beside the original.
+    fn run_normalize(&self, request: &Request, runner: &dyn ProcessRunner) -> Outcome {
+        let manifest = Manifest::get();
+        let mut outputs = Vec::new();
+        let mut failed = 0usize;
+        let mut first_reason: Option<String> = None;
+        for input in &request.inputs {
+            let result = self.normalize_one(input, &manifest, runner, &request.settings);
+            match result {
+                Ok(path) => outputs.push(path),
+                Err(reason) => {
+                    failed += 1;
+                    let name = reason.name();
+                    diagnostics::log(Level::Warn, "action", &format!("a file was not processed: {name}"));
+                    if first_reason.is_none() {
+                        first_reason = Some(name.to_string());
+                    }
+                }
+            }
+        }
+
+        if failed == 0 {
+            Outcome::Succeeded { outputs }
+        } else {
+            let because = match first_reason {
+                Some(reason) => format!(": {reason}"),
+                None => String::new(),
+            };
+            Outcome::Failed {
+                reason: Failure::Error(format!(
+                    "{failed} of the files could not be processed{because}"
+                )),
+            }
+        }
+    }
+
+    /// Normalizes loudness on one audio file.
+    fn normalize_one(
+        &self,
+        input: &Path,
+        manifest: &Manifest,
+        runner: &dyn ProcessRunner,
+        settings: &crate::radial::execution::ToolSettings,
+    ) -> Result<PathBuf, ToolError> {
+        let source_ext = input
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        let source = manifest
+            .format_of_extension(&source_ext)
+            .or_else(|| manifest.format(&source_ext))
+            .ok_or(ToolError::UnsupportedKind)?;
+
+        if crate::media::probe::kind_of(&source.format) != Some(crate::media::probe::Kind::Audio) {
+            return Err(ToolError::UnsupportedKind);
+        }
+
+        let pcm = crate::media::audio::decode_full_pcm(&self.ffmpeg_tools, input)
+            .ok_or(ToolError::ReadError)?;
+
+        let (normalized_samples, _gain) =
+            crate::media::audio::normalize_samples(&pcm.samples, settings.true_peak());
+
+        let temporary = input.with_extension(format!("{source_ext}.part"));
+
+        if source_ext == "wav" {
+            let wav_bytes = crate::media::audio::encode_wav_bytes(
+                &normalized_samples,
+                pcm.sample_rate,
+                pcm.channels,
+            );
+            fs::write(&temporary, wav_bytes).map_err(|_| ToolError::WriteError)?;
+        } else {
+            let staging_wav = input.with_extension("staging_norm.wav");
+            let wav_bytes = crate::media::audio::encode_wav_bytes(
+                &normalized_samples,
+                pcm.sample_rate,
+                pcm.channels,
+            );
+            fs::write(&staging_wav, wav_bytes).map_err(|_| ToolError::WriteError)?;
+
+            let mut args = vec![
+                OsString::from("-hide_banner"),
+                OsString::from("-nostdin"),
+                OsString::from("-y"),
+                OsString::from("-i"),
+                staging_wav.as_os_str().to_os_string(),
+                OsString::from("-vn"),
+                OsString::from("-c:a"),
+                OsString::from(&source.write.encoder),
+            ];
+            if !source.write.muxer.is_empty() {
+                args.push(OsString::from("-f"));
+                args.push(OsString::from(&source.write.muxer));
+            }
+            args.push(temporary.as_os_str().to_os_string());
+
+            let run_res = runner.run(&self.ffmpeg_tools.ffmpeg, &args, None);
+            let _ = fs::remove_file(&staging_wav);
+
+            match run_res {
+                Ok(status) if status.succeeded() => {}
+                _ => {
+                    let _ = fs::remove_file(&temporary);
+                    return Err(ToolError::ToolFailed);
+                }
+            }
+        }
+
+        let finals = metadata_final_names(input, "normalized", &source_ext);
+        self.publish(&finals, &temporary)
+    }
 }
 
 /// The arguments built for FFmpeg to edit or strip metadata.
@@ -1369,6 +1486,11 @@ impl<P: Publisher> Handler for Tools<P> {
         // A metadata edit copies streams or re-encodes clean, saving copies beside.
         if request.operation == "tools.metadata" {
             return self.run_metadata(request, &SystemRunner);
+        }
+
+        // A normalize decodes audio to PCM, scales samples to meet true peak, and publishes beside.
+        if request.operation == "tools.normalize" {
+            return self.run_normalize(request, &SystemRunner);
         }
 
         let manifest = Manifest::get();
@@ -2821,6 +2943,77 @@ mod tests {
         let made = outputs.first().expect("output exists");
         assert!(made.is_file(), "edited file exists: {:?}", made);
         assert!(made.to_string_lossy().contains("tone edited.wav"));
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn normalize_settings_defaults() {
+        let settings = ToolSettings::default();
+        assert_eq!(settings.target_lufs(), -16.0);
+        assert_eq!(settings.loudness_range(), 11.0);
+        assert_eq!(settings.true_peak(), -1.5);
+
+        let custom = ToolSettings {
+            normalize_lufs_x10: Some(-140),
+            normalize_range_x10: Some(90),
+            normalize_true_peak_x10: Some(-10),
+            ..Default::default()
+        };
+        assert_eq!(custom.target_lufs(), -14.0);
+        assert_eq!(custom.loudness_range(), 9.0);
+        assert_eq!(custom.true_peak(), -1.0);
+    }
+
+    #[test]
+    #[ignore = "runs the real program to normalize audio volume"]
+    fn real_audio_normalize_with_the_program() {
+        let ffmpeg = Path::new("vendor").join("ffmpeg").join("ffmpeg.exe");
+        if !ffmpeg.is_file() {
+            return;
+        }
+        let scratch = std::env::temp_dir().join(format!("ot-norm-test-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&scratch);
+        let input = scratch.join("quiet.wav");
+
+        // Make 1-second WAV with amplitude 10000 (~0.305 peak)
+        let pcm = make_wav_bytes(1.0, 44100);
+        std::fs::write(&input, pcm).expect("quiet.wav written");
+
+        let tools = Tools {
+            ffmpeg_tools: crate::media::locator::Tools {
+                ffmpeg,
+                ffprobe: Path::new("vendor").join("ffmpeg").join("ffprobe.exe"),
+            },
+            publisher: CopyPublisher,
+        };
+        let request = Request {
+            operation: "tools.normalize".to_string(),
+            inputs: vec![input.clone()],
+            settings: ToolSettings {
+                normalize_true_peak_x10: Some(-15),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let outcome = tools.run(&request, &Selection::inspect(&[input.clone()]));
+        let outputs = match outcome {
+            Outcome::Succeeded { outputs } => outputs,
+            Outcome::Failed { reason } => panic!("normalize failed: {:?}", reason),
+            Outcome::Cancelled => panic!("cancelled"),
+        };
+        let made = outputs.first().expect("output exists");
+        assert!(made.is_file(), "normalized file exists: {:?}", made);
+        assert!(made.to_string_lossy().contains("quiet normalized.wav"));
+
+        // Check that the output amplitude was increased towards target peak ~0.841 (-1.5 dBTP)
+        let bytes = std::fs::read(made).expect("read normalized wav");
+        let (samples, _) = crate::media::audio::parse_wav_samples(&bytes).expect("parse wav");
+        let peak = samples.iter().map(|&s| (s as i32).abs()).max().unwrap_or(0) as f64 / 32767.0;
+        assert!(
+            (peak - 0.8414).abs() < 0.05,
+            "peak amplitude after normalization was {peak}, expected ~0.8414"
+        );
+
         let _ = std::fs::remove_dir_all(&scratch);
     }
 }

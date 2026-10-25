@@ -523,7 +523,7 @@ mod tests {
         }));
         assert_eq!(c.state(), InteractionState::WheelVisible);
         assert_eq!(c.mode(), RadialMode::Tools);
-        assert_eq!(c.segments().len(), 8);
+        assert_eq!(c.segments().len(), 9);
         assert_eq!(effects, vec![Effect::UpdateWheel]);
     }
 

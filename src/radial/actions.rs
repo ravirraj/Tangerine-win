@@ -301,6 +301,7 @@ mod tests {
                     "tools.resize | Resize | Change the image size | Resize",
                     "tools.merge | Merge | Join several files together | Merge",
                     "tools.metadata | Metadata | Edit the file metadata | Pencil",
+                    "tools.normalize | Normalize | Normalize audio volume | Music",
                 ],
             ),
             (
