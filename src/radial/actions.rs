@@ -302,6 +302,7 @@ mod tests {
                     "tools.merge | Merge | Join several files together | Merge",
                     "tools.metadata | Metadata | Edit the file metadata | Pencil",
                     "tools.normalize | Normalize | Normalize audio volume | Music",
+                    "tools.channels | Channels | Convert audio channels | Music",
                 ],
             ),
             (

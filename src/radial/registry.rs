@@ -732,6 +732,20 @@ pub const OPERATIONS: &[Operation] = &[
         implemented: true,
         requires: Requirement::Processor("audio"),
     },
+    Operation {
+        id: "tools.channels",
+        label: "Channels",
+        detail: "Convert audio channels",
+        icon: IconKind::Music,
+        mode: RadialMode::Tools,
+        categories: &[FileKind::Audio],
+        batch: Batch::Several,
+        folders: false,
+        output: Output::BesideAsInput,
+        collision: Collision::Rename,
+        implemented: true,
+        requires: Requirement::Processor("audio"),
+    },
     // ------------------------------------------------------ file actions
     Operation {
         id: "actions.copy-path",
@@ -1532,6 +1546,7 @@ mod tests {
             "tools.merge",
             "tools.metadata",
             "tools.normalize",
+            "tools.channels",
             "actions.copy-path",
             "actions.duplicate",
             "actions.rename",
@@ -1946,6 +1961,30 @@ mod tests {
         };
         assert_eq!(eligibility(normalize_op, &audio_sel, &env), Ok(()));
         assert!(eligibility(normalize_op, &video_sel, &env).is_err());
+    }
+
+    #[test]
+    fn channels_is_eligible_for_audio_only() {
+        let folder = TempFolder::new("channels-kinds");
+        let channels_op = operation_by_id("tools.channels").expect("tools.channels exists");
+        let audio_sel = Selection::inspect(&[folder.file("track.mp3")]);
+        let video_sel = Selection::inspect(&[folder.file("clip.mp4")]);
+        let env = Environment {
+            processors: vec![
+                Processor {
+                    name: "audio".to_string(),
+                    reads: vec!["mp3".to_string()],
+                    writes: vec!["mp3".to_string()],
+                },
+                Processor {
+                    name: "video".to_string(),
+                    reads: vec!["mp4".to_string()],
+                    writes: vec!["mp4".to_string()],
+                },
+            ],
+        };
+        assert_eq!(eligibility(channels_op, &audio_sel, &env), Ok(()));
+        assert!(eligibility(channels_op, &video_sel, &env).is_err());
     }
 
     #[test]

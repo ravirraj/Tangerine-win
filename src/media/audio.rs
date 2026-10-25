@@ -202,6 +202,118 @@ pub fn normalize_samples(samples: &[i16], true_peak_dbtp: f64) -> (Vec<i16>, f64
     (normalized, gain)
 }
 
+/// Converts audio channels according to the chosen mode and channel gains.
+///
+/// Supported modes:
+/// - `"stereo"`: Keeps stereo (or duplicates mono to stereo), applying `left_gain` to L and `right_gain` to R.
+/// - `"mono"`: Downmixes to single mono channel: `0.5 * left_gain * L + 0.5 * right_gain * R`.
+/// - `"left_only"` / `"left_to_both"`: Takes left channel, applies `left_gain`, outputs to both L and R.
+/// - `"right_only"` / `"right_to_both"`: Takes right channel, applies `right_gain`, outputs to both L and R.
+/// - `"swap"`: Swaps L and R channels: L receives `right_gain * R`, R receives `left_gain * L`.
+pub fn convert_audio_channels(
+    pcm: &PcmAudio,
+    mode: &str,
+    left_gain: f64,
+    right_gain: f64,
+) -> PcmAudio {
+    if pcm.samples.is_empty() {
+        let out_channels = if mode == "mono" { 1 } else { 2 };
+        return PcmAudio {
+            samples: Vec::new(),
+            sample_rate: pcm.sample_rate,
+            channels: out_channels,
+        };
+    }
+
+    let clamp_sample = |val: f64| -> i16 {
+        val.round().clamp(i16::MIN as f64, i16::MAX as f64) as i16
+    };
+
+    let is_mono_input = pcm.channels == 1;
+    let mut out_samples = Vec::new();
+    let out_channels: u16;
+
+    if mode == "mono" {
+        out_channels = 1;
+        if is_mono_input {
+            out_samples.reserve(pcm.samples.len());
+            let gain = left_gain * 0.5 + right_gain * 0.5;
+            for &s in &pcm.samples {
+                out_samples.push(clamp_sample(s as f64 * gain));
+            }
+        } else {
+            let ch = (pcm.channels as usize).max(2);
+            out_samples.reserve(pcm.samples.len() / ch);
+            for chunk in pcm.samples.chunks_exact(ch) {
+                let l = chunk[0] as f64 * left_gain;
+                let r = chunk[1] as f64 * right_gain;
+                out_samples.push(clamp_sample((l + r) * 0.5));
+            }
+        }
+    } else {
+        out_channels = 2;
+        if is_mono_input {
+            out_samples.reserve(pcm.samples.len() * 2);
+            for &s in &pcm.samples {
+                let mono_f = s as f64;
+                let (l, r) = match mode {
+                    "left_only" | "left_to_both" => {
+                        let v = clamp_sample(mono_f * left_gain);
+                        (v, v)
+                    }
+                    "right_only" | "right_to_both" => {
+                        let v = clamp_sample(mono_f * right_gain);
+                        (v, v)
+                    }
+                    "swap" => (
+                        clamp_sample(mono_f * right_gain),
+                        clamp_sample(mono_f * left_gain),
+                    ),
+                    _ /* "stereo" */ => (
+                        clamp_sample(mono_f * left_gain),
+                        clamp_sample(mono_f * right_gain),
+                    ),
+                };
+                out_samples.push(l);
+                out_samples.push(r);
+            }
+        } else {
+            let ch = (pcm.channels as usize).max(2);
+            out_samples.reserve((pcm.samples.len() / ch) * 2);
+            for chunk in pcm.samples.chunks_exact(ch) {
+                let l_in = chunk[0] as f64;
+                let r_in = chunk[1] as f64;
+                let (l_out, r_out) = match mode {
+                    "left_only" | "left_to_both" => {
+                        let v = clamp_sample(l_in * left_gain);
+                        (v, v)
+                    }
+                    "right_only" | "right_to_both" => {
+                        let v = clamp_sample(r_in * right_gain);
+                        (v, v)
+                    }
+                    "swap" => (
+                        clamp_sample(r_in * right_gain),
+                        clamp_sample(l_in * left_gain),
+                    ),
+                    _ /* "stereo" */ => (
+                        clamp_sample(l_in * left_gain),
+                        clamp_sample(r_in * right_gain),
+                    ),
+                };
+                out_samples.push(l_out);
+                out_samples.push(r_out);
+            }
+        }
+    }
+
+    PcmAudio {
+        samples: out_samples,
+        sample_rate: pcm.sample_rate,
+        channels: out_channels,
+    }
+}
+
 /// Groups audio samples into `buckets` and returns the normalized peak amplitude (0.0..=1.0) of each bucket.
 pub fn waveform_peaks(samples: &[i16], buckets: usize) -> Vec<f32> {
     if buckets == 0 {
@@ -416,5 +528,77 @@ mod tests {
         assert_eq!(norm.len(), 100);
         assert!(norm.iter().all(|&s| s == 0));
         assert_eq!(gain, 4.0); // clamped to max gain
+    }
+
+    #[test]
+    fn convert_audio_channels_stereo_scales_both_channels() {
+        let pcm = PcmAudio {
+            samples: vec![1000, 2000, -1000, -2000],
+            sample_rate: 44100,
+            channels: 2,
+        };
+        let out = convert_audio_channels(&pcm, "stereo", 1.5, 0.5);
+        assert_eq!(out.channels, 2);
+        assert_eq!(out.samples, vec![1500, 1000, -1500, -1000]);
+    }
+
+    #[test]
+    fn convert_audio_channels_mono_mixes_down_halved() {
+        let pcm = PcmAudio {
+            samples: vec![1000, 2000, -1000, -2000],
+            sample_rate: 44100,
+            channels: 2,
+        };
+        let out = convert_audio_channels(&pcm, "mono", 1.0, 1.0);
+        assert_eq!(out.channels, 1);
+        assert_eq!(out.samples, vec![1500, -1500]);
+    }
+
+    #[test]
+    fn convert_audio_channels_left_only_duplicates_left() {
+        let pcm = PcmAudio {
+            samples: vec![1000, 2000, -1000, -2000],
+            sample_rate: 44100,
+            channels: 2,
+        };
+        let out = convert_audio_channels(&pcm, "left_only", 1.0, 1.0);
+        assert_eq!(out.channels, 2);
+        assert_eq!(out.samples, vec![1000, 1000, -1000, -1000]);
+    }
+
+    #[test]
+    fn convert_audio_channels_right_only_duplicates_right() {
+        let pcm = PcmAudio {
+            samples: vec![1000, 2000, -1000, -2000],
+            sample_rate: 44100,
+            channels: 2,
+        };
+        let out = convert_audio_channels(&pcm, "right_only", 1.0, 1.0);
+        assert_eq!(out.channels, 2);
+        assert_eq!(out.samples, vec![2000, 2000, -2000, -2000]);
+    }
+
+    #[test]
+    fn convert_audio_channels_swap_inverts_channels() {
+        let pcm = PcmAudio {
+            samples: vec![1000, 2000, -1000, -2000],
+            sample_rate: 44100,
+            channels: 2,
+        };
+        let out = convert_audio_channels(&pcm, "swap", 1.0, 1.0);
+        assert_eq!(out.channels, 2);
+        assert_eq!(out.samples, vec![2000, 1000, -2000, -1000]);
+    }
+
+    #[test]
+    fn convert_audio_channels_mono_input_converts_to_stereo() {
+        let pcm = PcmAudio {
+            samples: vec![1000, -1000],
+            sample_rate: 44100,
+            channels: 1,
+        };
+        let out = convert_audio_channels(&pcm, "stereo", 1.0, 2.0);
+        assert_eq!(out.channels, 2);
+        assert_eq!(out.samples, vec![1000, 2000, -1000, -2000]);
     }
 }

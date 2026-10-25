@@ -98,6 +98,18 @@ pub struct ToolSettings {
     ///
     /// Only `tools.normalize` reads this.
     pub normalize_true_peak_x10: Option<i32>,
+    /// Channel conversion mode: "stereo", "mono", "left_only", "right_only", "swap".
+    ///
+    /// Only `tools.channels` reads this.
+    pub channel_mode: Option<String>,
+    /// Left channel volume / gain percent (0..200, defaults to 100).
+    ///
+    /// Only `tools.channels` reads this.
+    pub channel_left_gain: Option<u32>,
+    /// Right channel volume / gain percent (0..200, defaults to 100).
+    ///
+    /// Only `tools.channels` reads this.
+    pub channel_right_gain: Option<u32>,
 }
 
 impl ToolSettings {
@@ -114,6 +126,21 @@ impl ToolSettings {
     /// The true peak limit in dBTP (defaults to -1.5 dBTP).
     pub fn true_peak(&self) -> f64 {
         self.normalize_true_peak_x10.map(|v| v as f64 / 10.0).unwrap_or(-1.5)
+    }
+
+    /// The channel conversion mode (defaults to "stereo").
+    pub fn channel_mode(&self) -> &str {
+        self.channel_mode.as_deref().unwrap_or("stereo")
+    }
+
+    /// Left channel gain multiplier (defaults to 1.0).
+    pub fn left_gain_factor(&self) -> f64 {
+        self.channel_left_gain.unwrap_or(100) as f64 / 100.0
+    }
+
+    /// Right channel gain multiplier (defaults to 1.0).
+    pub fn right_gain_factor(&self) -> f64 {
+        self.channel_right_gain.unwrap_or(100) as f64 / 100.0
     }
 }
 
