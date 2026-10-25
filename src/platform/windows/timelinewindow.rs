@@ -135,6 +135,13 @@ struct TrimState {
     /// worn with markers instead of a dragged range, and the words of the
     /// rows say cuts, not ends.
     split: bool,
+    /// Whether this is an audio trim: waveform strip without preview frame,
+    /// silence toggle, and play selection button.
+    audio: bool,
+    /// Whether the automatic silence trimming checkbox is checked.
+    trim_silence: bool,
+    /// The leading and trailing silence detected by analysis, if any.
+    silence: Option<(f64, f64)>,
     /// The points a cut stands at, in seconds, in order. A trim carries
     /// none of these.
     points: Vec<f64>,
@@ -159,6 +166,9 @@ impl Default for TrimState {
             ffmpeg: None,
             input: PathBuf::new(),
             split: false,
+            audio: false,
+            trim_silence: false,
+            silence: None,
             points: Vec::new(),
             parts: 2,
             equal_saying: None,
@@ -200,34 +210,50 @@ fn get_strip_worn() -> bool {
 }
 
 /// One finished strip, as plain bytes: pixels, then how wide and how
-/// tall. Slint's pictures do not travel between threads, so the thread
-/// sends what a picture is made of and the window makes it here.
-type StripPiece = (Vec<u8>, u32, u32);
+/// tall, plus optional silence range for audio. Slint's pictures do not
+/// travel between threads, so the thread sends what a picture is made
+/// of and the window makes it here.
+type StripPiece = (Vec<u8>, u32, u32, Option<(f64, f64)>);
 
-/// Asks the strip for the video in the background: its moments evenly
-/// spread over its length, each the middle pillar of its frame, standing
-/// side by side. The conversion program is gone to once per pillar, the
-/// way the frame at the playhead is gone to — seek first, so nothing has
-/// to be decoded through.
-fn ask_for_strip(tools: locator::Tools, input: PathBuf, duration: f64, width: u32, height: u32) {
-
-    let tiles = ((width as f32 / PILLAR_UNITS).round() as u32).clamp(6, 30);
-    let tile_w = (width / tiles).max(1);
-    let tile_h = height.max(1);
+/// Asks the strip for the media in the background: its moments evenly
+/// spread over its length. For audio, extracts PCM and renders a waveform
+/// strip; for video, middle pillars of frames standing side by side.
+fn ask_for_strip(
+    tools: locator::Tools,
+    input: PathBuf,
+    duration: f64,
+    width: u32,
+    height: u32,
+    is_audio: bool,
+) {
     let (sender, receiver) = std::sync::mpsc::channel::<StripPiece>();
     std::thread::spawn(move || {
-        let step = (duration / tiles as f64).max(0.05);
-        let mut strip = image::RgbaImage::new(tile_w * tiles, tile_h);
-        for index in 0..tiles {
-            let moment = ((index as f64 + 0.5) * step).min(duration);
-            let Some(frame) = frame_at(&tools, &input, moment) else {
-                continue;
-            };
-            let pillar = pillar_of(&frame, tile_w, tile_h);
-            image::imageops::overlay(&mut strip, &pillar, (index * tile_w) as i64, 0);
+        if is_audio {
+            let (samples, rate) =
+                crate::media::audio::pcm_samples(&tools, &input).unwrap_or_default();
+            let buckets = ((width as f32 / 4.0).round() as usize).clamp(50, 200);
+            let peaks = crate::media::audio::waveform_peaks(&samples, buckets);
+            let strip = crate::media::audio::render_waveform_strip(&peaks, width, height);
+            let (wide, tall) = (strip.width(), strip.height());
+            let silence = crate::media::audio::detect_silence(&samples, rate, 0.01);
+            let _ = sender.send((strip.into_raw(), wide, tall, silence));
+        } else {
+            let tiles = ((width as f32 / PILLAR_UNITS).round() as u32).clamp(6, 30);
+            let tile_w = (width / tiles).max(1);
+            let tile_h = height.max(1);
+            let step = (duration / tiles as f64).max(0.05);
+            let mut strip = image::RgbaImage::new(tile_w * tiles, tile_h);
+            for index in 0..tiles {
+                let moment = ((index as f64 + 0.5) * step).min(duration);
+                let Some(frame) = frame_at(&tools, &input, moment) else {
+                    continue;
+                };
+                let pillar = pillar_of(&frame, tile_w, tile_h);
+                image::imageops::overlay(&mut strip, &pillar, (index * tile_w) as i64, 0);
+            }
+            let (wide, tall) = (strip.width(), strip.height());
+            let _ = sender.send((strip.into_raw(), wide, tall, None));
         }
-        let (wide, tall) = (strip.width(), strip.height());
-        let _ = sender.send((strip.into_raw(), wide, tall));
     });
     STRIP_INBOX.with(|slot| {
         *slot.borrow_mut() = Some(receiver);
@@ -265,15 +291,35 @@ fn strip_tick() -> StripTick {
 
 /// Puts a finished strip on the card.
 unsafe fn wear_strip(piece: StripPiece) {
-    let (pixels, width, height) = piece;
+    let (pixels, width, height, silence) = piece;
     if width == 0 || height == 0 {
         return;
     }
     let buffer = SharedPixelBuffer::clone_from_slice(&pixels, width, height);
     let image = slint::Image::from_rgba8(buffer);
+    let mut updated_range = false;
+    let mut start_frac = 0.0;
+    let mut end_frac = 1.0;
+    STATE.with(|slot| {
+        let mut state = slot.borrow_mut();
+        state.silence = silence;
+        if state.audio && state.trim_silence {
+            if let Some((lead, trail)) = silence {
+                state.start = lead.clamp(0.0, state.duration);
+                state.end = trail.clamp(state.start + MIN_SPAN, state.duration);
+                start_frac = fraction(state.start, state.duration);
+                end_frac = fraction(state.end, state.duration);
+                updated_range = true;
+            }
+        }
+    });
     HOST.with(|slot| {
         if let Some(host) = slot.borrow_mut().as_mut() {
             host.card.set_filmstrip(image);
+            if updated_range {
+                host.card.set_start_fraction(start_frac);
+                host.card.set_end_fraction(end_frac);
+            }
             host.software.request_redraw();
         }
     });
@@ -281,7 +327,10 @@ unsafe fn wear_strip(piece: StripPiece) {
     // only when the window is told the card has changed under it.
     let window = window_handle();
     if !window.0.is_null() {
-        let _ = InvalidateRect(Some(window), None, true);
+        if updated_range {
+            refresh_times();
+        }
+        let _ = unsafe { InvalidateRect(Some(window), None, true) };
     }
     STRIP_WORN.with(|slot| slot.set(true));
 }
@@ -313,7 +362,9 @@ unsafe impl Send for TimelineWindow {}
 /// uses of it is the size the drawing asked for, at this stretch.
 fn outer_size(scale: f32) -> (i32, i32) {
     let client_w = (CARD_W as f32 * scale) as i32;
-    let content = if is_split() {
+    let content = if is_audio() {
+        Layout::AUDIO_CONTENT_UNITS
+    } else if is_split() {
         Layout::SPLIT_CONTENT_UNITS
     } else {
         Layout::CONTENT_UNITS
@@ -341,6 +392,12 @@ fn outer_size(scale: f32) -> (i32, i32) {
 /// The preview height the card is drawn with, in the drawing's own units.
 fn client_preview_units() -> f32 {
     STATE.with(|slot| slot.borrow().preview_units)
+}
+
+/// Whether the window is open for an audio trim: no video preview frame,
+/// waveform strip, and silence / play options.
+fn is_audio() -> bool {
+    STATE.with(|slot| slot.borrow().audio)
 }
 
 /// Whether the window is asked for a split and not a trim: the layout,
@@ -463,6 +520,18 @@ impl TimelineWindow {
                     unsafe { turn_parts(window, -1) };
                 }
             });
+            card.on_silence_toggled(move || {
+                let window = window_handle();
+                if !window.0.is_null() {
+                    unsafe { toggle_silence(window) };
+                }
+            });
+            card.on_play_selection_chosen(move || {
+                let window = window_handle();
+                if !window.0.is_null() {
+                    unsafe { play_selection(window) };
+                }
+            });
         }
 
         let mut host = Host {
@@ -491,6 +560,12 @@ impl TimelineWindow {
             *slot.borrow_mut() = Some((operation.to_string(), inputs.to_vec()));
         });
         let split = operation == "tools.split";
+        let is_audio = inputs
+            .first()
+            .and_then(|p| p.extension())
+            .and_then(|e| e.to_str())
+            .map(crate::radial::selection::FileKind::from_extension)
+            == Some(crate::radial::selection::FileKind::Audio);
 
         let said = if inputs.len() == 1 {
             inputs[0]
@@ -512,15 +587,24 @@ impl TimelineWindow {
             .unwrap_or(0.0);
         // The frame at the very beginning answers two questions at once:
         // what the card shows first, and how tall the preview wants to
-        // be. A video whose shape cannot be read is shown as a wide one.
-        let beginning = ffmpeg
-            .as_ref()
-            .and_then(|tools| frame_at(tools, &input, 0.0));
-        let aspect = beginning
-            .as_ref()
-            .map(|frame| frame.width() as f32 / frame.height().max(1) as f32)
-            .unwrap_or(16.0 / 9.0);
-        let preview_units = (CARD_W as f32 / aspect).clamp(PREVIEW_MIN, PREVIEW_MAX);
+        // be. An audio file has no frames (preview_units = 0). A video
+        // whose shape cannot be read is shown as a wide one.
+        let beginning = if is_audio {
+            None
+        } else {
+            ffmpeg
+                .as_ref()
+                .and_then(|tools| frame_at(tools, &input, 0.0))
+        };
+        let preview_units = if is_audio {
+            0.0
+        } else {
+            let aspect = beginning
+                .as_ref()
+                .map(|frame| frame.width() as f32 / frame.height().max(1) as f32)
+                .unwrap_or(16.0 / 9.0);
+            (CARD_W as f32 / aspect).clamp(PREVIEW_MIN, PREVIEW_MAX)
+        };
         STATE.with(|slot| {
             *slot.borrow_mut() = TrimState {
                 duration,
@@ -533,6 +617,9 @@ impl TimelineWindow {
                 ffmpeg: ffmpeg.clone(),
                 input: input.clone(),
                 split,
+                audio: is_audio,
+                trim_silence: false,
+                silence: None,
                 points: Vec::new(),
                 parts: PARTS_MIN,
                 equal_saying: None,
@@ -549,6 +636,7 @@ impl TimelineWindow {
                 duration,
                 (CARD_W - 48).max(1) as u32,
                 STRIP_UNITS as u32,
+                is_audio,
             );
         }
 
@@ -564,8 +652,10 @@ impl TimelineWindow {
             host.card.set_file_name(said.into());
             host.card.set_detail(detail.into());
             host.card.set_split_mode(split);
+            host.card.set_audio_mode(is_audio);
             host.card
-                .set_run_label(if split { "Split Video" } else { "Trim" }.into());
+                .set_run_label(if split { "Split Video" } else if is_audio { "Apply" } else { "Trim" }.into());
+            host.card.set_trim_silence(false);
             host.lay_out();
             // The frame that was asked for before sizing is put on now,
             // at the size of its own box.
@@ -710,6 +800,10 @@ impl Host {
         self.card.set_step_up_box(panel(layout.step_up));
         self.card.set_step_down_box(panel(layout.step_down));
         self.card.set_set_box(panel(layout.set));
+        self.card.set_silence_box(panel(layout.silence));
+        self.card.set_play_selection_box(panel(layout.play_selection));
+        self.card.set_audio_mode(is_audio());
+        self.card.set_trim_silence(STATE.with(|s| s.borrow().trim_silence));
         layout
     }
 
@@ -800,6 +894,9 @@ struct Layout {
     step_up: RECT,
     step_down: RECT,
     set: RECT,
+    // Audio trim options: silence checkbox and play selection button.
+    silence: RECT,
+    play_selection: RECT,
 }
 
 impl Layout {
@@ -812,6 +909,9 @@ impl Layout {
     /// trim caption, it has no moments row, and after its transport the
     /// equal row takes the room.
     const SPLIT_CONTENT_UNITS: f32 = 308.0;
+    /// The same for an audio trim card: no video preview frame, waveform
+    /// strip, moments row, and silence / play options row.
+    const AUDIO_CONTENT_UNITS: f32 = 272.0;
     /// The footer: the hairline's gap to the buttons, the buttons, and
     /// the air under them.
     const FOOTER_UNITS: f32 = 64.0;
@@ -833,11 +933,12 @@ impl Layout {
         let margin = at(24.0);
         let preview_units = client_preview_units();
         let split = is_split();
+        let audio = is_audio();
 
         // The stack, top to bottom, all worked out from the one number.
         let header_top = at(16.0);
         let hairline_top = at(62.0);
-        let preview_top = hairline_top + at(20.0);
+        let preview_top = hairline_top + if audio { 0 } else { at(20.0) };
         let preview_bottom = preview_top + at(preview_units);
 
         // A trim: the caption, then the moments row, and the closing
@@ -845,13 +946,17 @@ impl Layout {
         // would put it — the way the trim card was measured in. A split:
         // a taller points row with its pill, no moments row, and after
         // the transport the equal row, and the hairline under it.
-        let caption_top = preview_bottom + at(16.0);
+        let caption_top = if audio {
+            hairline_top + at(16.0)
+        } else {
+            preview_bottom + at(16.0)
+        };
         let timeline_top = if split {
             caption_top + at(30.0) + at(12.0)
         } else {
             caption_top + at(16.0) + at(12.0)
         };
-        let (times_top, transport_top) = if split {
+        let (times_top, transport_top) = if split || audio {
             let after_strip = timeline_top + at(STRIP_UNITS) + at(10.0);
             (after_strip, after_strip)
         } else {
@@ -860,7 +965,10 @@ impl Layout {
         };
         let transport_row = at(28.0);
         let equal_top = transport_top + transport_row + at(10.0);
-        let hairline_bottom = if split {
+        let options_top = times_top + at(18.0) + at(14.0);
+        let hairline_bottom = if audio {
+            options_top + at(32.0) + at(18.0)
+        } else if split {
             equal_top + at(30.0) + at(18.0)
         } else {
             transport_top + at(30.0) + at(18.0)
@@ -968,6 +1076,8 @@ impl Layout {
             step_up: RECT::default(),
             step_down: RECT::default(),
             set: RECT::default(),
+            silence: RECT::default(),
+            play_selection: RECT::default(),
         };
 
         if split {
@@ -1021,6 +1131,24 @@ impl Layout {
             };
         }
 
+        if audio {
+            let options_bottom = options_top + at(32.0);
+            let play_right = whole - margin;
+            let play_left = play_right - at(170.0);
+            layout.silence = RECT {
+                left: margin,
+                top: options_top,
+                right: margin + at(220.0),
+                bottom: options_bottom,
+            };
+            layout.play_selection = RECT {
+                left: play_left,
+                top: options_top,
+                right: play_right,
+                bottom: options_bottom,
+            };
+        }
+
         layout
     }
 }
@@ -1042,10 +1170,19 @@ unsafe fn apply_focus(window: HWND, index: i32) {
     // made of the system's stuff, and the keyboard is read here.
     unsafe { let _ = SetFocus(Some(window)); }
     let split = is_split();
+    let audio = is_audio();
     HOST.with(|slot| {
         let mut borrowed = slot.borrow_mut();
         if let Some(host) = borrowed.as_mut() {
-            if split {
+            if audio {
+                // 0 start cap, 1 end cap, 2 silence checkbox, 3 play selection, 4 run ("Apply")
+                host.card
+                    .set_handle_focus(if index == 0 || index == 1 { index + 1 } else { 0 });
+                host.card
+                    .set_audio_focus(if index == 2 { 1 } else if index == 3 { 2 } else { 0 });
+                host.card
+                    .set_button_focus(if index == 4 { 2 } else { 0 });
+            } else if split {
                 // 0 the playhead (no ring), 1 add-split, 2 set, 3 run.
                 host.card.set_handle_focus(0);
                 host.card
@@ -1067,7 +1204,13 @@ unsafe fn apply_focus(window: HWND, index: i32) {
 /// a trim walks the start cap, the end cap, and go; a split walks the
 /// playhead, the two pills, and go.
 unsafe fn cycle_focus(window: HWND, forward: bool) {
-    let stops: &[i32] = if is_split() { &[0, 1, 2, 3] } else { &[0, 1, 2] };
+    let stops: &[i32] = if is_audio() {
+        &[0, 1, 2, 3, 4]
+    } else if is_split() {
+        &[0, 1, 2, 3]
+    } else {
+        &[0, 1, 2]
+    };
     let current = FOCUS_INDEX.with(|slot| slot.get());
     let at = stops
         .iter()
@@ -1134,6 +1277,9 @@ fn refresh_times() {
 /// Draws the frame the playhead stands on, if it has moved far enough
 /// for a new one to be worth a seek.
 fn refresh_frame(force: bool) {
+    if is_audio() {
+        return;
+    }
     let wanted = STATE.with(|slot| slot.borrow().playhead);
     let ready = force
         || STATE.with(|slot| (wanted - slot.borrow().frame_at).abs() >= FRAME_STEP);
@@ -1311,13 +1457,14 @@ fn released(window: HWND) {
 /// moves.
 unsafe fn step(window: HWND, direction: f64) {
     let shift = unsafe { GetKeyState(VK_SHIFT.0 as i32) < 0 };
-    let by = direction * if shift { 5.0 } else { 1.0 };
     let focused = FOCUS_INDEX.with(|slot| slot.get());
     STATE.with(|slot| {
         let mut state = slot.borrow_mut();
         if state.duration <= 0.0 {
             return;
         }
+        let step_unit = if state.audio { 0.1 } else { 1.0 };
+        let by = direction * if shift { step_unit * 5.0 } else { step_unit };
         if state.split {
             state.playhead = (state.playhead + by).clamp(0.0, state.duration);
         } else {
@@ -1392,6 +1539,42 @@ unsafe fn turn_parts(window: HWND, direction: i32) {
         refresh_times();
         let _ = unsafe { InvalidateRect(Some(window), None, true) };
     }
+}
+
+/// Toggles the automatic silence trimming and snaps the range.
+unsafe fn toggle_silence(window: HWND) {
+    let (new_state, duration) = STATE.with(|slot| {
+        let mut state = slot.borrow_mut();
+        state.trim_silence = !state.trim_silence;
+        if state.trim_silence {
+            if let Some((lead, trail)) = state.silence {
+                state.start = lead.clamp(0.0, state.duration);
+                state.end = trail.clamp(state.start + MIN_SPAN, state.duration);
+            }
+        } else {
+            state.start = 0.0;
+            state.end = state.duration;
+        }
+        (state.trim_silence, state.duration)
+    });
+    HOST.with(|slot| {
+        if let Some(host) = slot.borrow_mut().as_mut() {
+            host.card.set_trim_silence(new_state);
+            STATE.with(|slot| {
+                let state = slot.borrow();
+                host.card.set_start_fraction(fraction(state.start, duration));
+                host.card.set_end_fraction(fraction(state.end, duration));
+            });
+            host.software.request_redraw();
+        }
+    });
+    refresh_times();
+    let _ = unsafe { InvalidateRect(Some(window), None, true) };
+}
+
+/// Preview playback affordance for the selected range.
+unsafe fn play_selection(_window: HWND) {
+    // Affordance for media playback
 }
 
 /// Takes away the cut nearest the playhead, when one stands near enough.
@@ -1536,10 +1719,17 @@ unsafe extern "system" fn window_procedure(
                 unsafe { step(window, 1.0) };
                 LRESULT(0)
             } else if key == VK_RETURN.0 || key == VK_SPACE.0 {
-                // A split card's keyboard says its rows too: Space takes
-                // what the keyboard stands on — a cut at the playhead, or
-                // the equal row's own doing. Enter always says go.
-                if is_split() && key == VK_SPACE.0 {
+                // An audio or split card's keyboard: Space triggers the focused control.
+                // Enter always says go.
+                if is_audio() && key == VK_SPACE.0 {
+                    let stop = FOCUS_INDEX.with(|slot| slot.get());
+                    match stop {
+                        2 => unsafe { toggle_silence(window) },
+                        3 => unsafe { play_selection(window) },
+                        4 => unsafe { run(window) },
+                        _ => {}
+                    }
+                } else if is_split() && key == VK_SPACE.0 {
                     let stop = FOCUS_INDEX.with(|slot| slot.get());
                     match stop {
                         0 | 1 => unsafe { add_split(window) },
@@ -1577,7 +1767,7 @@ unsafe extern "system" fn window_procedure(
                 // left to come and the timer is let go of.
                 let tick = strip_tick();
                 if let StripTick::Arrived(piece) = &tick {
-                    wear_strip(piece.clone());
+                    unsafe { wear_strip(piece.clone()) };
                 }
                 if matches!(tick, StripTick::Gone) {
                     let _ = unsafe { KillTimer(Some(window), STRIP_TIMER_ID) };
@@ -1767,6 +1957,42 @@ mod tests {
         assert!(layout.run.right <= whole && layout.run.bottom <= side);
         STATE.with(|slot| slot.borrow_mut().split = false);
     }
+
+    #[test]
+    fn an_audio_trim_layout_collapses_preview_and_positions_options() {
+        STATE.with(|slot| {
+            let mut s = slot.borrow_mut();
+            s.preview_units = 0.0;
+            s.split = false;
+            s.audio = true;
+        });
+        assert_eq!(Layout::AUDIO_CONTENT_UNITS + Layout::FOOTER_UNITS, 336.0);
+        let whole = 420;
+        let side = 336;
+        let layout = Layout::of(whole, side, 1.0);
+        // Preview height is zero
+        assert_eq!(layout.preview.bottom - layout.preview.top, 0);
+        // Caption stands directly below hairline
+        assert_eq!(layout.caption.top, layout.hairline_top.top + 16);
+        // Timeline stands under caption
+        assert_eq!(layout.timeline.top, layout.caption.bottom + 12);
+        assert_eq!(
+            layout.timeline.bottom - layout.timeline.top,
+            STRIP_UNITS as i32
+        );
+        // Times row under timeline
+        assert_eq!(layout.times.top, layout.timeline.bottom + 10);
+        // Silence checkbox on the left
+        assert_eq!(layout.silence.left, 24);
+        assert_eq!(layout.silence.top, layout.times.bottom + 14);
+        // Play selection on the right
+        assert_eq!(layout.play_selection.right, whole - 24);
+        assert_eq!(layout.play_selection.top, layout.times.bottom + 14);
+        // Hairline bottom and footer
+        assert!(layout.silence.bottom <= layout.hairline_bottom.top);
+        assert!(layout.run.right <= whole && layout.run.bottom <= side);
+        STATE.with(|slot| slot.borrow_mut().audio = false);
+    }
 }
 
 #[cfg(test)]
@@ -1954,6 +2180,121 @@ mod show_tests {
             }
         });
         capture(window.window, &shots.join("split-window.png"));
+        window.hide();
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    /// Makes a 2-second WAV file with two bursts of sound matching trimAudio.webp.
+    fn make_test_audio(folder: &std::path::Path) -> PathBuf {
+        let rate = 8000u32;
+        let duration = 2.0f32;
+        let sample_count = (duration * rate as f32) as u32;
+        let data_len = sample_count * 2;
+        let mut wav = Vec::with_capacity(44 + data_len as usize);
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&(36 + data_len).to_le_bytes());
+        wav.extend_from_slice(b"WAVEfmt ");
+        wav.extend_from_slice(&16u32.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes()); // PCM
+        wav.extend_from_slice(&1u16.to_le_bytes()); // Mono
+        wav.extend_from_slice(&rate.to_le_bytes());
+        wav.extend_from_slice(&(rate * 2).to_le_bytes());
+        wav.extend_from_slice(&2u16.to_le_bytes());
+        wav.extend_from_slice(&16u16.to_le_bytes());
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&data_len.to_le_bytes());
+        for i in 0..sample_count {
+            let t = i as f32 / rate as f32;
+            // Two bursts: 0.35s..0.85s and 1.15s..1.65s (matching trimAudio.webp)
+            let active = (0.35..0.85).contains(&t) || (1.15..1.65).contains(&t);
+            let sample: i16 = if active {
+                if (i / 8) % 2 == 0 { 24000 } else { -24000 }
+            } else {
+                0
+            };
+            wav.extend_from_slice(&sample.to_le_bytes());
+        }
+        let path = folder.join("Voice with pauses.wav");
+        std::fs::write(&path, &wav).expect("test audio written");
+        path
+    }
+
+    /// Showing the audio trim card and pumping its messages must not panic.
+    #[test]
+    fn showing_and_pumping_the_audio_trim_card_does_not_panic() {
+        crate::ui::wheel::install_platform();
+        let (sender, _receiver) = std::sync::mpsc::channel();
+        let mut window = TimelineWindow::new(sender).expect("the window was made");
+        window.show_for(
+            "tools.trim",
+            "Trim",
+            "Keeps the part you choose, trims silences.",
+            &[PathBuf::from("not-there.wav")],
+        );
+        for _ in 0..40 {
+            unsafe {
+                let mut message = MSG::default();
+                while PeekMessageW(&mut message, None, 0, 0, PM_REMOVE).as_bool() {
+                    let _ = TranslateMessage(&message);
+                    DispatchMessageW(&message);
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        window.hide();
+    }
+
+    /// Opens the trim window on a real audio file, lets waveform render,
+    /// and captures target/shots/trim-audio-window.png.
+    #[test]
+    #[ignore = "needs the conversion program; writes a screenshot"]
+    fn capture_the_trim_audio_window() {
+        crate::ui::wheel::install_platform();
+        let folder = std::env::temp_dir().join("open-tangerine-capture-audio");
+        std::fs::create_dir_all(&folder).expect("the capture folder was made");
+        let audio = make_test_audio(&folder);
+        let (sender, _receiver) = std::sync::mpsc::channel();
+        let mut window = TimelineWindow::new(sender).expect("the window was made");
+        window.show_for(
+            "tools.trim",
+            "Trim",
+            "Keeps the part you choose, trims silences.",
+            &[audio],
+        );
+        // Wait for waveform strip to be built in background
+        for round in 0..2400 {
+            unsafe {
+                let mut message = MSG::default();
+                while PeekMessageW(&mut message, None, 0, 0, PM_REMOVE).as_bool() {
+                    let _ = TranslateMessage(&message);
+                    DispatchMessageW(&message);
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            if get_strip_worn() && round > 400 {
+                break;
+            }
+        }
+        let shots = std::path::Path::new("target").join("shots");
+        std::fs::create_dir_all(&shots).expect("the shots folder was made");
+        HOST.with(|slot| {
+            let borrowed = slot.borrow();
+            if let Some(host) = borrowed.as_ref() {
+                let mut rgba = Vec::with_capacity(host.buffer.len() * 4);
+                for pixel in &host.buffer {
+                    let (_, r, g, b) = pixel.parts();
+                    rgba.extend_from_slice(&[r, g, b, 255]);
+                }
+                let _ = image::save_buffer(
+                    shots.join("trim-audio-buffer.png"),
+                    &rgba,
+                    host.width,
+                    host.height,
+                    image::ExtendedColorType::Rgba8,
+                );
+            }
+        });
+        capture(window.window, &shots.join("trim-audio-window.png"));
         window.hide();
         let _ = std::fs::remove_dir_all(&folder);
     }

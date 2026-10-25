@@ -753,8 +753,8 @@ Decisions asked and answered (2026-10-25, via question tool):
 
 Progress & Plan:
 - [x] Phase A — Evidence & Audit: mockups read (`trimAudio.webp`, `normalizeAudio.webp`, `audioChannels.webp`, `press/audio-tools.png`), Swift sources read (`AudioToolViews.swift`, `AudioOps.swift`), design questions answered, todo section initialized.
-- [ ] Phase B.1 — Trim Audio Backend: widen `tools.trim` in `registry.rs` to accept `FileKind::Audio`, verify audio stream-copy args, unit test + real FFmpeg trim audio test.
-- [ ] Phase C.1 — Trim Audio Window: add waveform generator in `src/media/frames.rs` / `src/media/audio.rs`, adapt `timelinewindow.rs` / `trim_window.slint` for audio mode (waveform strip, start/end timecodes, silence checkbox, play selection button), capture `target/shots/trim-audio-window.png` and verify against `trimAudio.webp`.
+- [x] Phase B.1 — Trim Audio Backend: widen `tools.trim` in `registry.rs` to accept `FileKind::Audio`, verify audio stream-copy args, unit test + real FFmpeg trim audio test (committed `453681b`).
+- [x] Phase C.1 — Trim Audio Window: add waveform generator in `src/media/audio.rs` (PCM extraction, peak sampling, silence detection, strip rendering), adapt `timelinewindow.rs` / `trim_window.slint` for audio mode (waveform strip on elevated bg with dotted centerline, start/end timecodes, silence checkbox, play selection button), capture `target/shots/trim-audio-window.png` and verify against `trimAudio.webp`.
 - [ ] Phase B.2 — Normalize Volume Backend: register `tools.normalize` in `registry.rs`, add `normalize_args` with `loudnorm` filter in `tools.rs`, unit tests + real FFmpeg test.
 - [ ] Phase C.2 — Normalize Volume Window & Shared Slider: build `Slider` in `shell.slint`, create `normalizewindow.rs` and `normalize_window.slint`, capture `target/shots/normalize-window.png`.
 - [ ] Phase B.3 — Audio Channels Backend: register `tools.channels` in `registry.rs`, add `channels_args` with `pan` filter in `tools.rs`, unit tests + real FFmpeg test.

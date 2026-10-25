@@ -11,7 +11,7 @@
 
 import { Tokens } from "tokens.slint";
 import { Panel } from "tokens.slint";
-import { CardHeader, Hairline, IconButton, TimelineRange, CardFooter, PillButton } from "shell.slint";
+import { CardHeader, Hairline, IconButton, TimelineRange, CardFooter, PillButton, RoundCheckbox } from "shell.slint";
 
 export component TrimCard inherits Window {
     // The size of the card, held here so the renderer reads what the
@@ -63,6 +63,18 @@ export component TrimCard inherits Window {
     in property <int> handle-focus;
     // 0 nothing, 1 cancel, 2 run.
     in property <int> button-focus;
+
+    // The audio trim card: waveform without video preview, silence removal checkbox
+    // and range preview button.
+    in property <bool> audio-mode: false;
+    in property <bool> trim-silence: false;
+    in property <Panel> silence-box;
+    in property <Panel> play-selection-box;
+    // 0 nothing, 1 silence checkbox, 2 play selection.
+    in property <int> audio-focus: 0;
+
+    callback silence-toggled();
+    callback play-selection-chosen();
 
     // The split card: the cuts the strip stands on, what the rows say,
     // and where every split row is. A trim card leaves these all quiet.
@@ -126,6 +138,7 @@ export component TrimCard inherits Window {
     // inside, so the stage needs no clipping — and the software renderer
     // has been known to drop what follows a clipped subtree.)
     Rectangle {
+        visible: !root.audio-mode;
         x: root.preview-box.x; y: root.preview-box.y;
         width: root.preview-box.width; height: root.preview-box.height;
         border-radius: Tokens.radius-preview;
@@ -234,6 +247,7 @@ export component TrimCard inherits Window {
     // The transport: bare glyphs to step the handle, and where the
     // playhead stands against the whole.
     IconButton {
+        visible: !root.audio-mode;
         x: 0; y: 0;
         width: root.card-width;
         height: root.card-height;
@@ -243,6 +257,7 @@ export component TrimCard inherits Window {
         clicked => { root.step-backward(); }
     }
     IconButton {
+        visible: !root.audio-mode;
         x: 0; y: 0;
         width: root.card-width;
         height: root.card-height;
@@ -252,6 +267,7 @@ export component TrimCard inherits Window {
         clicked => { root.step-forward(); }
     }
     Text {
+        visible: !root.audio-mode;
         x: root.transport-box.x; y: root.transport-box.y;
         width: root.transport-box.width; height: root.transport-box.height;
         text: root.playhead-text;
@@ -260,6 +276,32 @@ export component TrimCard inherits Window {
         font-family: Tokens.font-mono;
         vertical-alignment: center;
         horizontal-alignment: right;
+    }
+
+    // Audio options: silence removal checkbox and play selection button
+    RoundCheckbox {
+        visible: root.audio-mode;
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.silence-box;
+        label: "Trim silent ends automatically";
+        checked: root.trim-silence;
+        focused: root.audio-focus == 1;
+        ui-scale: root.ui-scale;
+        toggled => { root.silence-toggled(); }
+    }
+
+    PillButton {
+        visible: root.audio-mode;
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.play-selection-box;
+        label: "\u{25b6} Play Selected Range";
+        focused: root.audio-focus == 2;
+        ui-scale: root.ui-scale;
+        clicked => { root.play-selection-chosen(); }
     }
 
     // The equal row: what a split card carries — the count of its equal
