@@ -167,6 +167,14 @@ Reference audio set (homepage): MP3 M4A WAV FLAC OGG Opus AIFF WMA.
 
 ## Phase B-10: Tool Windows (the reference product IS its windows)
 
+### User's design notes (notes.md, 2026-10-25) — address in the B-12 UX pass
+- [ ] Wheel transition animation is sloppy — tighten the state-change
+      animation (ui/animation.rs)
+- [ ] The wheel looks too big — try a smaller disc radius (DISC_SIZE /
+      geometry.rs), compare against reference screenshots
+- [ ] Fonts and segment icons look off — audit typeface/size and the icon
+      stroke paths against the reference (radial/icons.rs, wheel.slint)
+
 Verified against tangerineformac.com/tools: every one of the 21 tools opens
 as a DEDICATED CONFIGURATION WINDOW (preview, controls, Cancel/action).
 Our tools currently run immediately with hardcoded defaults — without this
