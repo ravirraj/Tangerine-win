@@ -295,6 +295,87 @@ Save frames, Bleep): the frame seek costs ~50-150ms and runs on the
 thread that draws — fine for one frame, but a waveform or a scrub-happy
 preview should move to a worker + posted message before shipping.
 
+### B-10.4 P0 shared design foundation + P1 trim window to reference parity — DONE 2026-10-25
+Scope per the user's direction: P0 (shared design foundation) and the Trim
+Video window only; the other windows keep their skin until said so. Reference:
+DESIGN-SPEC.md, MAPPING-ROADMAP.md (P0-1/2, P1-4/5/6) and
+tool-windows/trimVideo.webp in reference/tangerine/ (external, read-only).
+
+- [x] P0-1 tokens (src/ui/tokens.slint): the reference palette measured in —
+      window-bg #F7F6F4, surface #F1F0EE, elevated #ECECEA, content #FFFFFF;
+      preview-black #1A1A1A; text #1D1D1F, text-muted #828782, transport
+      #3A3A3A; hairline #E3E3E1, field-border #D0D0D0; danger #E0483E;
+      font-mono "Consolas"; radii 24/12/14/10/6. The accent stays the
+      application's own #ff5a1f (hover #ff7138, pressed #e94a12, tint 30%) —
+      within one step of the original app's #FF5C00, and theme.rs (the wheel)
+      already said the same numbers, so the whole product wears one orange.
+- [x] Window chrome decided (native first, per the roadmap's cheapest-first
+      rule): native frames kept (WS_OVERLAPPEDWINDOW minus thickframe and
+      maximize box); the tool's name stands in the native title bar; the
+      in-card header says the file's name and what the tool does. The
+      reference's frameless look with a circled close top-left is NOT copied
+      (deliberate divergence, recorded here).
+- [x] THE ROOT OF EVERYTHING-MISSING FOUND AND FIXED: a custom component
+      instance placed inside one of these Slint windows without explicit
+      geometry draws at a displaced spot — the CardHeader probe drew at
+      (+272,+319) instead of (0,0). Fix: pin every shell instance with
+      x: 0; y: 0; width: card-width; height: card-height (trim_window.slint
+      and tool_window.slint). Verified by probes landing exactly where asked
+      (magenta at 0,0; cyan at 124,16) before the probes were removed. This
+      had silently broken TW-1/TW-2's committed designs — headers, hairlines,
+      tiles and footers never rendered.
+- [x] TimelineRange (shell.slint): a real filmstrip under the two orange caps
+      — caps 28 wide, full strip height, each carrying a white grip a third
+      of it; a thin white playhead standing on the moment; what is cut away
+      darkened in the picture's own black (#1A1A1A @ ~55%), not a daylight
+      wash. Empty filmstrip, the strip is a plain well.
+- [x] The filmstrip is REAL: the vendored FFmpeg build carries no tile/fps
+      filters (checked -filters), so a one-pass mosaic is impossible.
+      Instead ~23 pillars are asked for one by one with the same fast -ss
+      seek the playhead's frame takes (frames.rs pillar_of crops the frame's
+      middle to the tile's shape and squeezes it), inside a background
+      thread; the finished strip arrives as plain bytes through a channel
+      and is worn by the window's timer (40 ms), which also paints the
+      window. Opening a new trim replaces the inbox, so a strip of an old
+      video can land nowhere.
+- [x] Trim card body to the reference's own pattern (trim_window.slint +
+      timelinewindow.rs): the picture on the picture's own dark, rounded
+      12, no doubled letterbox (the frame keeps its own bars inside);
+      caption row "Drag the ends to trim" left and "N selected" mono right;
+      the strip 72 units tall (the mockup's 73½ at the content width); the
+      moments said once in mono 13px ("Start 0:00.00" / "End 0:04.00");
+      the transport as bare glyphs; one quiet action.
+- [x] Window sized once from the video's shape (preview clamp 190..300),
+      DPI changes followed (WM_DPICHANGED); tests pin the stack numbers
+      (282 content + preview + 64 footer).
+- [x] DELIBERATE DIFFERENCES from trimVideo.webp, and why:
+      - Transport is TWO glyphs, not the mockup's three: ⏮/⏭-style bare
+        glyphs nudge the keyboard's handle ±1 s (±5 with Shift), matching
+        the original app's frame-stepping; there is no media-player
+        backend, and a dead play button was refused.
+      - The closing hairline is 2 units nearer the footer than a rounded
+        count would put it (the transport row adds 2), invisible at rest.
+      - Native title bar (tool name) instead of frameless centered title +
+        circled close; helper "Enter to run · Esc to close" kept, matching
+        the Apple-original keyboard flow rather than the site mockup.
+- [x] Tests green: 324 unit + 29 real-FFmpeg, 0 failures. The capture check
+      (ignored) opens the window on a real 3s video, waits up to 12 s for a
+      strip to be worn, and writes target/shots/trim-buffer.png (the
+      renderer's own buffer) + trim-window.png (the system's composited
+      window) — compared by eye and by pixel sampling against
+      trimVideo.webp: filmstrip, caps, grips, hairlines, footer all in
+      place.
+- [ ] Manual verification by a person: run dist, drag a REAL video (landscape
+      and portrait), check the strip fills in over ~1-2 s, drag the caps,
+      keyboard-walk (Tab/arrows/Enter/Esc), run the trim, confirm the output
+      starts/ends where the caps stood.
+
+Notes for the windows that reuse this template (Trim audio, Split video,
+Save frames, Bleep): the strip's thread is the pattern to copy — many
+seeks behind a channel, worn by the window's timer; never spawn it on the
+draw thread. Also: TimelineRange's caps' hit-test still keys on
+HANDLE_REACH=16, valid for 28-wide caps.
+
 ### B-10.2 FFmpeg-backed windows (1-3 days each once template exists)
 - [ ] Change video speed (setpts/atempo, preserve pitch)
 - [ ] Split video (custom points or equal parts, one output folder)

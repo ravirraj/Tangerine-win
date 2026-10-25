@@ -22,9 +22,12 @@
 | B-6 | ✅ Done | Documents/subtitles/archives (SRT/VTT/TXT/ZIP/TAR/GZ) |
 | B-7 | ✅ Done | Tools wheel (compress, crop, trim, rotate, resize, merge, metadata) |
 | B-8 | ✅ Done | File actions (copy path, duplicate, rename, reveal, terminal, extract) |
+| B-9.3–B-9.6 | ✅ Done | SVG input; PDF via PDFium; Office COM + calamine documents; audio formats |
+| B-10.0–B-10.1 | ✅ Done | Tool window shell + the real Trim Video window |
+| P0/P1 design | ✅ Done | Reference tokens + trim window at parity (B-10.4 in todo.md) |
 
-**Current branch:** `feature/image-conversion` (33 commits ahead of origin, all local, no push)
-**Tests:** 297 unit + 16 real-FFmpeg, 0 failures
+**Current branch:** `feature/image-conversion` → phase branches `phase/b-9-*`, `phase/b-10-*` (all local, no push; merge only when the user says)
+**Tests:** 324 unit + 29 real-FFmpeg, 0 failures
 
 ---
 
