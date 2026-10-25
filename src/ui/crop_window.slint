@@ -1,0 +1,503 @@
+// The card a video or a picture is cropped in.
+//
+// The skeleton is the shell's (shell.slint); the body is the crop the
+// reference lays out: the media fitted on the stage with the crop
+// rectangle standing over it — orange, with a square handle at each
+// corner — the aspect presets as two rows of quiet chips, a line of
+// small words saying just what the rectangle keeps and how big the media
+// is, the video's scrub row (a slider, the two step glyphs, and where
+// the playhead stands said against the whole), the picture's
+// Centre and Whole image buttons, and a footer whose Reset puts the
+// rectangle back where it started.
+//
+// The card only draws. The pressing, dragging and hitting of corners
+// are read by the window itself, which holds the same geometry the card
+// was given — the way the wheel works.
+
+import { Tokens } from "tokens.slint";
+import { Panel } from "tokens.slint";
+import { CardHeader, Hairline, IconButton, PillButton } from "shell.slint";
+
+// One preset chip: the ratio it says, quietly, until it is the one in
+// use — the chosen one wears the orange, the keyboard's arrival the ring.
+component Chip {
+    in property <Panel> box;
+    in property <string> label;
+    in property <bool> focused;
+    in property <bool> selected;
+    in property <float> ui-scale: 1.0;
+
+    callback chosen();
+
+    Rectangle {
+        x: root.box.x; y: root.box.y;
+        width: root.box.width; height: root.box.height;
+        border-radius: Tokens.radius-control;
+        background: root.selected ? Tokens.accent-tint
+                   : (chip-touch.pressed ? Tokens.quiet-pressed
+                   : (chip-touch.has-hover ? Tokens.quiet-hover : Tokens.quiet));
+        border-width: 1px;
+        border-color: root.selected ? Tokens.accent : Tokens.hairline;
+
+        chip-touch := TouchArea {
+            clicked => { root.chosen(); }
+        }
+
+        Text {
+            text: root.label;
+            color: root.selected ? Tokens.accent : Tokens.text;
+            font-size: root.ui-scale * 12px;
+            font-family: "Segoe UI";
+            vertical-alignment: center;
+            horizontal-alignment: center;
+        }
+    }
+    // The ring the keyboard puts around the chip.
+    Rectangle {
+        x: root.box.x - 3px; y: root.box.y - 3px;
+        width: root.box.width + 6px; height: root.box.height + 6px;
+        border-radius: Tokens.radius-control + 3px;
+        border-width: 2px;
+        border-color: Tokens.accent;
+        visible: root.focused;
+    }
+}
+
+export component CropCard inherits Window {
+    // The size of the card, held here so the renderer reads what the
+    // window really is: the system tells us the client size, and the
+    // renderer draws exactly what these two say.
+    in property <length> card-width: 420px;
+    in property <length> card-height: 558px;
+
+    // What the card says.
+    in property <string> file-name;
+    in property <string> detail;
+    in property <float> ui-scale: 1.0;
+
+    // Where everything is.
+    in property <Panel> header-box;
+    in property <Panel> detail-box;
+    in property <Panel> hairline-top;
+    in property <Panel> hairline-bottom;
+    in property <Panel> stage-box;
+    // Where the media sits inside the stage: fitted, so its slack is
+    // plain, and the rectangle keeps to it.
+    in property <Panel> media-box;
+    // The crop rectangle, in the same pixels as the media.
+    in property <Panel> crop-box;
+    in property <Panel> aspect-label-box;
+    // The ten preset chips, in two rows of five, each at its place.
+    in property <Panel> chip-1-box;
+    in property <Panel> chip-2-box;
+    in property <Panel> chip-3-box;
+    in property <Panel> chip-4-box;
+    in property <Panel> chip-5-box;
+    in property <Panel> chip-6-box;
+    in property <Panel> chip-7-box;
+    in property <Panel> chip-8-box;
+    in property <Panel> chip-9-box;
+    in property <Panel> chip-10-box;
+    in property <Panel> crop-area-box;
+    in property <Panel> media-size-box;
+    in property <Panel> slider-box;
+    in property <Panel> step-back-box;
+    in property <Panel> step-forward-box;
+    in property <Panel> transport-box;
+    in property <Panel> centre-box;
+    in property <Panel> whole-box;
+    in property <Panel> helper-box;
+    in property <Panel> run-box;
+
+    // The media and whether there is one, and whether it moves.
+    in property <image> frame;
+    in property <bool> has-frame;
+    in property <bool> video-mode: true;
+
+    // What the words say.
+    in property <string> crop-caption;
+    in property <string> media-caption;
+    in property <string> time-text;
+
+    // Where the playhead stands on the scrub row, a share of the whole.
+    in property <float> scrub-fraction: 0;
+
+    // Which preset is in use: 1 to 10, 1 the first. Zero says none —
+    // but a crop always carries one, so it is only the card's start.
+    in property <int> selected-chip: 1;
+    // The keyboard's stops: 0 nothing, 1 to 10 a chip, 11 go.
+    in property <int> chip-focus: 0;
+    in property <int> button-focus: 0;
+
+    in property <string> run-label: "Crop";
+    in property <bool> run-enabled: true;
+
+    callback run-chosen();
+    callback cancel-chosen();
+    callback reset-chosen();
+    callback aspect-chosen(int);
+    callback centre-chosen();
+    callback whole-chosen();
+    callback step-backward();
+    callback step-forward();
+
+    width: root.card-width;
+    height: root.card-height;
+
+    Rectangle {
+        background: Tokens.window-bg;
+    }
+
+    CardHeader {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        file-name: root.file-name;
+        detail: root.detail;
+        ui-scale: root.ui-scale;
+        header-box: root.header-box;
+        detail-box: root.detail-box;
+    }
+    Hairline {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.hairline-top;
+    }
+
+    // The stage: the media's own dark when it moves, the card's own
+    // daylight when it is a picture. (The picture is fitted inside, so
+    // the stage needs no clipping — and the software renderer has been
+    // known to drop what follows a clipped subtree.)
+    Rectangle {
+        x: root.stage-box.x; y: root.stage-box.y;
+        width: root.stage-box.width; height: root.stage-box.height;
+        border-radius: Tokens.radius-preview;
+        background: root.video-mode ? Tokens.preview-black : Tokens.window-bg;
+
+        if root.has-frame: Rectangle {
+            x: root.media-box.x - root.stage-box.x;
+            y: root.media-box.y - root.stage-box.y;
+            width: root.media-box.width;
+            height: root.media-box.height;
+            clip: true;
+
+            Image {
+                x: 0; y: 0;
+                width: parent.width;
+                height: parent.height;
+                source: root.frame;
+                image-fit: fill;
+            }
+        }
+
+        // The crop rectangle, with a square handle at each corner: the
+        // four hands of the original's canvas. Inside it the media is
+        // what is kept, washed in the orange of choosing like everything
+        // else that is held.
+        Rectangle {
+            x: root.crop-box.x - root.stage-box.x;
+            y: root.crop-box.y - root.stage-box.y;
+            width: root.crop-box.width;
+            height: root.crop-box.height;
+            background: Tokens.accent-tint;
+            border-width: 2px;
+            border-color: Tokens.accent;
+
+            Rectangle {
+                x: -6px; y: -6px;
+                width: 11px; height: 11px;
+                border-width: 2px;
+                border-color: Tokens.accent;
+                background: Tokens.content;
+                border-radius: 3px;
+                visible: root.crop-box.width > 0px && root.crop-box.height > 0px;
+            }
+            Rectangle {
+                x: parent.width - 5px; y: -6px;
+                width: 11px; height: 11px;
+                border-width: 2px;
+                border-color: Tokens.accent;
+                background: Tokens.content;
+                border-radius: 3px;
+                visible: root.crop-box.width > 0px && root.crop-box.height > 0px;
+            }
+            Rectangle {
+                x: -6px; y: parent.height - 5px;
+                width: 11px; height: 11px;
+                border-width: 2px;
+                border-color: Tokens.accent;
+                background: Tokens.content;
+                border-radius: 3px;
+                visible: root.crop-box.width > 0px && root.crop-box.height > 0px;
+            }
+            Rectangle {
+                x: parent.width - 5px; y: parent.height - 5px;
+                width: 11px; height: 11px;
+                border-width: 2px;
+                border-color: Tokens.accent;
+                background: Tokens.content;
+                border-radius: 3px;
+                visible: root.crop-box.width > 0px && root.crop-box.height > 0px;
+            }
+        }
+    }
+
+    // What the presets are called.
+    Text {
+        x: root.aspect-label-box.x; y: root.aspect-label-box.y;
+        width: root.aspect-label-box.width; height: root.aspect-label-box.height;
+        text: "Aspect ratio";
+        color: Tokens.text-muted;
+        font-size: root.ui-scale * 13px;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+    }
+
+    Chip {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.chip-1-box; label: "Free";
+        ui-scale: root.ui-scale;
+        selected: root.selected-chip == 1; focused: root.chip-focus == 1;
+        chosen => { root.aspect-chosen(1); }
+    }
+    Chip {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.chip-2-box; label: "Original";
+        ui-scale: root.ui-scale;
+        selected: root.selected-chip == 2; focused: root.chip-focus == 2;
+        chosen => { root.aspect-chosen(2); }
+    }
+    Chip {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.chip-3-box; label: "Square";
+        ui-scale: root.ui-scale;
+        selected: root.selected-chip == 3; focused: root.chip-focus == 3;
+        chosen => { root.aspect-chosen(3); }
+    }
+    Chip {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.chip-4-box; label: "4:3";
+        ui-scale: root.ui-scale;
+        selected: root.selected-chip == 4; focused: root.chip-focus == 4;
+        chosen => { root.aspect-chosen(4); }
+    }
+    Chip {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.chip-5-box; label: "3:2";
+        ui-scale: root.ui-scale;
+        selected: root.selected-chip == 5; focused: root.chip-focus == 5;
+        chosen => { root.aspect-chosen(5); }
+    }
+    Chip {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.chip-6-box; label: "16:9";
+        ui-scale: root.ui-scale;
+        selected: root.selected-chip == 6; focused: root.chip-focus == 6;
+        chosen => { root.aspect-chosen(6); }
+    }
+    Chip {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.chip-7-box; label: "9:16";
+        ui-scale: root.ui-scale;
+        selected: root.selected-chip == 7; focused: root.chip-focus == 7;
+        chosen => { root.aspect-chosen(7); }
+    }
+    Chip {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.chip-8-box; label: "3:4";
+        ui-scale: root.ui-scale;
+        selected: root.selected-chip == 8; focused: root.chip-focus == 8;
+        chosen => { root.aspect-chosen(8); }
+    }
+    Chip {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.chip-9-box; label: "2:3";
+        ui-scale: root.ui-scale;
+        selected: root.selected-chip == 9; focused: root.chip-focus == 9;
+        chosen => { root.aspect-chosen(9); }
+    }
+    Chip {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.chip-10-box; label: "5:4";
+        ui-scale: root.ui-scale;
+        selected: root.selected-chip == 10; focused: root.chip-focus == 10;
+        chosen => { root.aspect-chosen(10); }
+    }
+
+    // What the rectangle keeps, said in the face where every digit takes
+    // the same room, and how big the media is beside it.
+    Text {
+        x: root.crop-area-box.x; y: root.crop-area-box.y;
+        width: root.crop-area-box.width; height: root.crop-area-box.height;
+        text: root.crop-caption;
+        color: Tokens.text;
+        font-size: root.ui-scale * 13px;
+        font-family: Tokens.font-mono;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    Text {
+        x: root.media-size-box.x; y: root.media-size-box.y;
+        width: root.media-size-box.width; height: root.media-size-box.height;
+        text: root.media-caption;
+        color: Tokens.text-muted;
+        font-size: root.ui-scale * 13px;
+        font-family: Tokens.font-mono;
+        vertical-alignment: center;
+        horizontal-alignment: right;
+        overflow: elide;
+    }
+
+    // The scrub row: the slider the window draws itself (the shared
+    // slider control is not built yet), the two step glyphs, and where
+    // the playhead stands against the whole.
+    if root.video-mode: Rectangle {
+        x: root.slider-box.x; y: root.slider-box.y;
+        width: root.slider-box.width; height: root.slider-box.height;
+        Rectangle {
+            y: (parent.height - 4px) / 2;
+            width: parent.width;
+            height: 4px;
+            border-radius: 2px;
+            background: Tokens.elevated;
+            Rectangle {
+                width: parent.width * root.scrub-fraction;
+                height: 4px;
+                border-radius: 2px;
+                background: Tokens.accent;
+            }
+        }
+        Rectangle {
+            x: max(0px, min(parent.width - 14px, parent.width * root.scrub-fraction - 7px));
+            y: (parent.height - 14px) / 2;
+            width: 14px;
+            height: 14px;
+            border-radius: 7px;
+            background: Tokens.content;
+            border-width: 1px;
+            border-color: Tokens.hairline;
+        }
+    }
+    if root.video-mode: IconButton {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.step-back-box;
+        glyph: "M 8 5 L 8 19 M 18 6 L 10 12 L 18 18";
+        ui-scale: root.ui-scale;
+        clicked => { root.step-backward(); }
+    }
+    if root.video-mode: IconButton {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.step-forward-box;
+        glyph: "M 16 5 L 16 19 M 6 6 L 14 12 L 6 18";
+        ui-scale: root.ui-scale;
+        clicked => { root.step-forward(); }
+    }
+    if root.video-mode: Text {
+        x: root.transport-box.x; y: root.transport-box.y;
+        width: root.transport-box.width; height: root.transport-box.height;
+        text: root.time-text;
+        color: Tokens.text;
+        font-size: root.ui-scale * 13px;
+        font-family: Tokens.font-mono;
+        vertical-alignment: center;
+        horizontal-alignment: right;
+    }
+
+    // The picture's own two hands: the rectangle moved to the middle,
+    // or opened to the whole of it.
+    if !root.video-mode: PillButton {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.centre-box;
+        label: "Center";
+        ui-scale: root.ui-scale;
+        clicked => { root.centre-chosen(); }
+    }
+    if !root.video-mode: PillButton {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.whole-box;
+        label: "Whole image";
+        ui-scale: root.ui-scale;
+        clicked => { root.whole-chosen(); }
+    }
+
+    Hairline {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.hairline-bottom;
+    }
+
+    // The footer: Reset where the helper's words stand on every other
+    // card, go at the right. Escape says no on every card either way.
+    PillButton {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.helper-box;
+        label: "Reset";
+        ui-scale: root.ui-scale;
+        clicked => { root.reset-chosen(); }
+    }
+
+    // The ring the keyboard puts around go.
+    Rectangle {
+        x: root.run-box.x - 3px; y: root.run-box.y - 3px;
+        width: root.run-box.width + 6px; height: root.run-box.height + 6px;
+        border-radius: Tokens.radius-control + 3px;
+        border-width: 2px;
+        border-color: Tokens.accent;
+        visible: root.button-focus == 2;
+    }
+    Rectangle {
+        x: root.run-box.x; y: root.run-box.y;
+        width: root.run-box.width; height: root.run-box.height;
+        border-radius: Tokens.radius-control;
+        background: !root.run-enabled ? Tokens.quiet
+                   : (run-touch.pressed ? Tokens.quiet-pressed
+                   : (run-touch.has-hover ? Tokens.quiet-hover : Tokens.quiet));
+
+        run-touch := TouchArea {
+            enabled: root.run-enabled;
+            clicked => { root.run-chosen(); }
+        }
+
+        Text {
+            text: root.run-label;
+            color: root.run-enabled ? Tokens.text : Tokens.text-muted;
+            font-size: root.ui-scale * 13px;
+            font-weight: 500;
+            font-family: "Segoe UI";
+            vertical-alignment: center;
+            horizontal-alignment: center;
+        }
+    }
+}

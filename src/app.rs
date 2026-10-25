@@ -269,6 +269,9 @@ struct App {
     tool_window: crate::platform::windows::toolwindow::ToolWindow,
     /// The window a video is trimmed in, hidden until a trim is picked.
     timeline_window: crate::platform::windows::timelinewindow::TimelineWindow,
+    /// The window a video or a picture is cropped in, hidden until a crop
+    /// is picked.
+    crop_window: crate::platform::windows::cropwindow::CropWindow,
 }
 
 /// The end of a drag that has not been acted on yet.
@@ -374,6 +377,25 @@ impl App {
             crate::platform::windows::timelinewindow::TimelineWindow::new(timeline_sender)
                 .map_err(|reason| reason)?;
 
+        // The window a crop is asked in, with the media's own picture and
+        // the rectangle standing over it. What its buttons say comes back
+        // the same way, into the same message: the crop is only another
+        // tool that was asked of a window.
+        let (crop_sender, crop_messages) =
+            std::sync::mpsc::channel::<crate::platform::windows::toolwindow::ToolEvent>();
+        {
+            let sender = sender.clone();
+            std::thread::spawn(move || {
+                while let Ok(event) = crop_messages.recv() {
+                    if sender.send(Message::ToolWindow(event)).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+        let crop_window = crate::platform::windows::cropwindow::CropWindow::new(crop_sender)
+            .map_err(|reason| reason)?;
+
         Ok(Self {
             controller,
             animation: WheelAnimation::new(),
@@ -419,6 +441,7 @@ impl App {
             sender: sender.clone(),
             tool_window,
             timeline_window,
+            crop_window,
         })
     }
 
@@ -618,6 +641,14 @@ impl App {
     /// to say no. When the window is answered, what it was asked comes
     /// back as a message and the work starts then.
     fn open_tool_window(&mut self, segment: &Segment, files: &[std::path::PathBuf]) {
+        // A crop asks for its own card the media stands on: the rectangle
+        // that is kept, and the ratio it wears. It is not the plain
+        // window's form of typed fields.
+        if segment.id == "tools.crop" {
+            self.crop_window
+                .show_for(&segment.id, &segment.label, &segment.detail, files);
+            return;
+        }
         // A trim asks for a timeline, not a form: the video is shown at
         // its own moments, and the window reads the length and the frames
         // itself. A split asks for the same window in its split skin —

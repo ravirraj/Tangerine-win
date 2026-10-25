@@ -2,6 +2,7 @@
 
 pub mod appearance;
 pub mod clipboard;
+pub mod cropwindow;
 pub mod droptarget;
 pub mod explorer;
 pub mod input;
