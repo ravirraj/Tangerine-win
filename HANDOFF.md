@@ -73,7 +73,8 @@ All `reference\…` paths above are relative to the repo root
   → `9584c9a` (normalize volume backend) → `df67df1` (shared LabeledSlider control)
   → `bee8c6e` (normalize volume window host + Slint card)
   → `3380dbd` (convert audio channels backend)
-  → `42b08d8` (convert audio channels window host + Slint card).
+  → `42b08d8` (convert audio channels window host + Slint card)
+  → `6b5dbd8` (unify normalize volume and audio channels window UI with Windows shell standard).
 - Tools wheel now has **10** implemented ops: compress, crop, trim, split, rotate,
   resize, merge, metadata, normalize, channels. Dedicated windows exist for
   Trim Video, Split Video, Crop Video/Image, Compress, Edit Metadata, Trim Audio,
