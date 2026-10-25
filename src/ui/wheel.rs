@@ -90,19 +90,39 @@ impl TargetPixel for Bgra8 {
 }
 
 /// The platform that hands out our own window to Slint.
-struct WheelPlatform {
-    window: Rc<MinimalSoftwareWindow>,
-}
+/// The platform of the program: every component is given a window of its
+/// own, drawn in software into a buffer the caller holds.
+///
+/// A component is made right after its window is put in the line, so the
+/// component and the window find each other: `create_window_adapter` hands
+/// out the windows in the order they were put there, one per component.
+/// A component made with none waiting — a component the program did not
+/// put a window aside for — is given a window of its own that nobody
+/// renders, which is better than the whole program stopping.
+struct WheelPlatform;
 
 impl Platform for WheelPlatform {
     fn create_window_adapter(&self) -> Result<Rc<dyn WindowAdapter>, PlatformError> {
-        Ok(self.window.clone())
+        Ok(WINDOWS
+            .with(|queue| queue.borrow_mut().pop_front())
+            .unwrap_or_else(|| {
+                MinimalSoftwareWindow::new(RepaintBufferType::ReusedBuffer)
+            }))
     }
 }
 
 thread_local! {
-    static WINDOW: Rc<MinimalSoftwareWindow> =
-        MinimalSoftwareWindow::new(RepaintBufferType::ReusedBuffer);
+    static WINDOWS: std::cell::RefCell<std::collections::VecDeque<Rc<MinimalSoftwareWindow>>> =
+        std::cell::RefCell::new(std::collections::VecDeque::new());
+}
+
+/// Puts a window aside for the component that is made next.
+///
+/// The window and the component belong together; this is the introduction.
+pub fn window_for_next_component() -> Rc<MinimalSoftwareWindow> {
+    let window = MinimalSoftwareWindow::new(RepaintBufferType::ReusedBuffer);
+    WINDOWS.with(|queue| queue.borrow_mut().push_back(window.clone()));
+    window
 }
 
 /// Everything the wheel needs to draw itself.
@@ -359,12 +379,10 @@ pub struct WheelUi {
 impl WheelUi {
     /// Creates the wheel. `scale` is the device scale factor of the display.
     pub fn new(scale: f32) -> Result<Self, String> {
-        let window = WINDOW.with(|window| window.clone());
+        let window = window_for_next_component();
         // Installing the platform only works once per process; a second call
         // simply keeps the first one, which is what we want.
-        let _ = slint::platform::set_platform(Box::new(WheelPlatform {
-            window: window.clone(),
-        }));
+        let _ = slint::platform::set_platform(Box::new(WheelPlatform));
 
         let wheel = Wheel::new().map_err(|error| error.to_string())?;
 

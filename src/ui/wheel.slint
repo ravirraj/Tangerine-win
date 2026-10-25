@@ -4,6 +4,12 @@
 // as plain values. The software renderer that draws the overlay does not
 // support element transforms, so the entrance animation scales the geometry
 // itself instead of scaling an element.
+//
+// This file is the one the compiler is asked for, and it also gathers the
+// card a tool is asked on: the one generated module the program includes
+// holds every shape there is.
+
+export * from "tool_window.slint";
 
 export struct SegmentData {
     // The outline of the segment, in disc coordinates.

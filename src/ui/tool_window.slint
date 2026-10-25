@@ -1,0 +1,145 @@
+// The card a tool is asked on.
+//
+// The geometry is worked out in Rust, where the fields the person types
+// into are placed by the same numbers: the card only draws what it is
+// told, where it is told. Every position and size is in the pixels of the
+// window, so what is drawn and where the typing fields sit can never
+// disagree.
+
+struct Panel {
+    x: length,
+    y: length,
+    width: length,
+    height: length,
+}
+
+export component ToolCard inherits Window {
+    // What the card says.
+    in property <string> title-text;
+    in property <string> file-text;
+    in property <image> preview;
+    in property <bool> has-preview;
+    in property <bool> wants-size;
+
+    // Where everything is.
+    in property <Panel> title-box;
+    in property <Panel> file-box;
+    in property <Panel> preview-box;
+    in property <Panel> width-box;
+    in property <Panel> height-box;
+    in property <Panel> cancel-box;
+    in property <Panel> run-box;
+
+    // The colours, the same tokens the wheel is drawn with.
+    in property <color> surface: #ffffff;
+    in property <color> card: #ecedef;
+    in property <color> card-hover: #e3e5eb;
+    in property <color> accent: #ff5a1f;
+    in property <color> accent-hover: #ff7138;
+    in property <color> text: #242424;
+    in property <color> text-dim: #737373;
+
+    callback run-chosen();
+    callback cancel-chosen();
+
+    Rectangle {
+        background: root.surface;
+    }
+
+    // The words of the tool, and the file it will work on.
+    Text {
+        x: root.title-box.x; y: root.title-box.y;
+        width: root.title-box.width; height: root.title-box.height;
+        text: root.title-text;
+        color: root.text;
+        font-size: 19px;
+        font-weight: 700;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+        horizontal-alignment: center;
+        overflow: elide;
+    }
+    Text {
+        x: root.file-box.x; y: root.file-box.y;
+        width: root.file-box.width; height: root.file-box.height;
+        text: root.file-text;
+        color: root.text-dim;
+        font-size: 13px;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+        horizontal-alignment: center;
+        overflow: elide;
+    }
+
+    // The picture of the file, on a card of its own.
+    Rectangle {
+        x: root.preview-box.x; y: root.preview-box.y;
+        width: root.preview-box.width; height: root.preview-box.height;
+        border-radius: 10px;
+        background: root.card;
+        clip: true;
+
+        if root.has-preview: Image {
+            x: 12px; y: 12px;
+            width: parent.width - 24px;
+            height: parent.height - 24px;
+            source: root.preview;
+            image-fit: contain;
+        }
+    }
+
+    // The boxes the typing fields sit in, when the tool asks a size.
+    if root.wants-size: Rectangle {
+        x: root.width-box.x; y: root.width-box.y;
+        width: root.width-box.width; height: root.width-box.height;
+        border-radius: 8px;
+        background: root.card;
+    }
+    if root.wants-size: Rectangle {
+        x: root.height-box.x; y: root.height-box.y;
+        width: root.height-box.width; height: root.height-box.height;
+        border-radius: 8px;
+        background: root.card;
+    }
+
+    // The buttons. Cancel is quiet; Run is the colour of the product.
+    Rectangle {
+        x: root.cancel-box.x; y: root.cancel-box.y;
+        width: root.cancel-box.width; height: root.cancel-box.height;
+        border-radius: 8px;
+        background: cancel-touch.has-hover ? root.card-hover : root.card;
+
+        cancel-touch := TouchArea {
+            clicked => { root.cancel-chosen(); }
+        }
+
+        Text {
+            text: "Cancel";
+            color: root.text;
+            font-size: 14px;
+            font-family: "Segoe UI";
+            vertical-alignment: center;
+            horizontal-alignment: center;
+        }
+    }
+    Rectangle {
+        x: root.run-box.x; y: root.run-box.y;
+        width: root.run-box.width; height: root.run-box.height;
+        border-radius: 8px;
+        background: run-touch.has-hover ? root.accent-hover : root.accent;
+
+        run-touch := TouchArea {
+            clicked => { root.run-chosen(); }
+        }
+
+        Text {
+            text: "Run";
+            color: #ffffff;
+            font-size: 14px;
+            font-weight: 600;
+            font-family: "Segoe UI";
+            vertical-alignment: center;
+            horizontal-alignment: center;
+        }
+    }
+}
