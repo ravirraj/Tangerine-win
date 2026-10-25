@@ -726,6 +726,45 @@ Deliberate differences from the mockups, and why:
   ("compressed"/"clean"/"edited" suffixes), so the metadata entry's
   InPlace is corrected rather than honoured.
 
+### B-10.9 Audio Trio (roadmap P3-10) — Trim Audio, Normalize Volume, Convert Audio Channels
+Reference: `tool-windows/trimAudio.webp`, `normalizeAudio.webp`, `audioChannels.webp`, `press/audio-tools.png` + `AudioToolViews.swift`, `AudioOps.swift`, `AudioEngine.swift`.
+
+Audit of reference behavior & our backends (2026-10-25):
+- TRIM AUDIO (`trimAudio.webp` + `TrimAudioToolView`):
+  - Swift: stream-copy trim `-ss <start> -to <end> -i <input> -vn <codec_args> <destination>`.
+  - Output naming: `{base} trimmed.{ext}` beside original.
+  - UI: timeline range track displaying vertical waveform amplitude bars (accent orange `#ff5a1f` on light background with dotted center line), solid orange end caps with white vertical slit grips (`TimelineRange`), Start/End timecodes in mono, "Trim silent ends automatically" checkbox, "Play Selected Range" button, and Apply footer button.
+  - Backend audit: `src/radial/tools.rs` `trim_args` already uses stream-copy (`-c copy`) with `-ss` and `-t` which works for audio. `src/radial/registry.rs` currently restricts `tools.trim` to `FileKind::Video`; needs widening to `&[FileKind::Video, FileKind::Audio]` and `Requirement::Or(&[Requirement::Processor("video"), Requirement::Processor("audio")])`.
+  - Window audit: `timelinewindow.rs` / `trim_window.slint` already provides the twin layout, cap dragging, timecode formatting, and keyboard walk. For audio, it needs to sample audio peak amplitudes and render waveform bars onto the timeline strip instead of video frames.
+- NORMALIZE VOLUME (`normalizeAudio.webp` + `NormalizeAudioToolView`):
+  - Swift: FFmpeg `loudnorm` filter `-i <input> -vn -af loudnorm=I=<target>:LRA=<range>:TP=<peak> <codec_args> <destination>`.
+  - Presets: Podcast (I=-16, LRA=11, TP=-1.5), Music (I=-14, LRA=9, TP=-1.0), Broadcast (I=-23, LRA=7, TP=-2.0).
+  - Sliders: Target loudness (-30..-8 LUFS), Loudness range (1..20 LU), True peak (-9..0 dBTP).
+  - Output naming: `{base} normalized.{ext}` beside original.
+  - Requires new shared `Slider` control in `shell.slint` with orange fill from track start to thumb, white thumb with subtle shadow, and tick dots along track.
+- CONVERT AUDIO CHANNELS (`audioChannels.webp` + `AudioChannelsToolView`):
+  - Swift: channel remapping via `pan` filter (`stereo`, `mono`, `leftOnly`, `rightOnly`, `swap`) with per-channel volume sliders (0%..200%).
+  - Output naming: `{base} {mono|channels}.{ext}` beside original.
+
+Decisions asked and answered (2026-10-25, via question tool):
+1. **Staging:** Step-by-step: Step 1: Trim Audio (extend timeline window to audio, audio waveform rendering); Step 2: Normalize Volume (shared Slider with orange fill and ticks); Step 3: Convert Audio Channels (channel preview, segmented Mono/Stereo, volume sliders).
+2. **Slider control style:** Orange accent fill from track start to thumb, white thumb with subtle shadow, tick dots along track (matches `DESIGN-SPEC.md` & press mockups).
+3. **Trim Audio waveform:** Sample real peak amplitudes via FFmpeg to render authentic vertical waveform bars behind the trim caps.
+
+Progress & Plan:
+- [x] Phase A — Evidence & Audit: mockups read (`trimAudio.webp`, `normalizeAudio.webp`, `audioChannels.webp`, `press/audio-tools.png`), Swift sources read (`AudioToolViews.swift`, `AudioOps.swift`), design questions answered, todo section initialized.
+- [ ] Phase B.1 — Trim Audio Backend: widen `tools.trim` in `registry.rs` to accept `FileKind::Audio`, verify audio stream-copy args, unit test + real FFmpeg trim audio test.
+- [ ] Phase C.1 — Trim Audio Window: add waveform generator in `src/media/frames.rs` / `src/media/audio.rs`, adapt `timelinewindow.rs` / `trim_window.slint` for audio mode (waveform strip, start/end timecodes, silence checkbox, play selection button), capture `target/shots/trim-audio-window.png` and verify against `trimAudio.webp`.
+- [ ] Phase B.2 — Normalize Volume Backend: register `tools.normalize` in `registry.rs`, add `normalize_args` with `loudnorm` filter in `tools.rs`, unit tests + real FFmpeg test.
+- [ ] Phase C.2 — Normalize Volume Window & Shared Slider: build `Slider` in `shell.slint`, create `normalizewindow.rs` and `normalize_window.slint`, capture `target/shots/normalize-window.png`.
+- [ ] Phase B.3 — Audio Channels Backend: register `tools.channels` in `registry.rs`, add `channels_args` with `pan` filter in `tools.rs`, unit tests + real FFmpeg test.
+- [ ] Phase C.3 — Audio Channels Window: create `channelswindow.rs` and `channels_window.slint`, capture `target/shots/channels-window.png`.
+- [ ] Full regression check: 381+ tests, all baseline window captures byte-identical.
+
+Deliberate differences from the mockups, and why:
+- Native Windows title bar ("Trim", "Normalize", "Convert channels") with left alignment and close top-right — matching all tool windows.
+- Keyboard walk (Tab, Shift+Tab, Arrow keys, Enter to run, Esc to close) preserved across all audio tool windows.
+
 ### B-10.2 FFmpeg-backed windows (1-3 days each once template exists)
 - [ ] Change video speed (setpts/atempo, preserve pitch)
 - [ ] Split video (custom points or equal parts, one output folder)
