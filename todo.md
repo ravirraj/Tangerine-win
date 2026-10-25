@@ -484,6 +484,85 @@ Deliberate differences from splitVideo.webp, and why:
   "· each about T" to the points row after Set, instead of a second caption
   line the mockup does not carry.
 
+### B-10.7 Crop video + image (roadmap P3-8) — reference: tool-windows/cropVideo.webp + cropImage.webp + CropSpeedJoinVideoToolViews.swift / CropImageToolView.swift / Shared/ImageCanvas.swift
+
+Original behavior (Swift, authoritative — read in this order, video first):
+both tools share one canvas — drag empty space draws the rect, dragging
+inside moves it (clamped to the media), dragging near a corner (12 px in
+display space) resizes that corner, and an aspect preset constrains
+`height = width / ratio` while drawing or resizing. The rect starts at a
+10 % inset of the media, integral. Presets both tools:
+Free (no ratio) · Original (−1, the media's own) · Square · 4:3 · 3:2 ·
+16:9 · 9:16 · 3:4 · 2:3 · 5:4.
+- VIDEO: the frame follows a scrub bar (TransportBar); the sidebar says
+  "Crop area: W × H at X, Y" and "Video: W × H"; Output dimensions has a
+  "Same as crop area" toggle (default on) over Width/Height fields that
+  are disabled while it holds; "Audio is kept as is. Output is MP4
+  (H.264)". Save: x/y rounded, w/h rounded DOWN to even (and output dims
+  likewise), `crop=W:H:X:Y` (+ `scale=W:H` only when the toggle is off),
+  audio copied; enabled when the rect is wider and taller than 8.
+- IMAGE: same editor on a checkerboard, zoomable; "Dimensions" Width and
+  Height are two-way (typing resizes the rect, kept inside the image),
+  "Original: W × H" under them, and Center + Whole image buttons; saved
+  at full resolution in the input's own format; enabled at 1×1.
+
+- [x] Plan (this section), evidence read in the order above — Swift
+      behavior before the mockups; conflicts resolved toward Swift and
+      listed below.
+- [ ] Backend: ToolSettings grows `crop_x/crop_y/crop_w/crop_h` (the
+      source rectangle; `width/height` double as the optional output
+      scale, exactly as resize uses them). `crop_args` builds the video
+      path — `crop=W:H:X:Y` (+ `,scale=W:H` when the window says a size),
+      `-c:a copy`, the target's own encoder/muxer — with w/h even-rounded
+      defensively. The image path is Rust-native: decode, crop, optional
+      resize, save in the input's format; svg refuses (raster crop of a
+      vector would quietly change what the file is).
+- [ ] Registry: `tools.crop` categories widen to Image + Video; a new
+      `Requirement::AnyProcessor(&["image", "video"])` says what crop
+      actually needs (the image path needs nothing, the video path needs
+      the program).
+- [ ] Window: a dedicated crop window (cropwindow.rs + crop_window.slint)
+      — crop is timeline-neutral, and trim/split stay untouched. The
+      layout-twin pattern as everywhere: the stage shows the fitted media
+      with the rect over it (create/move/corner-resize hit-testing in
+      stage coordinates, aspect constraint), preset chips in two rows, the
+      crop-area caption, the video's scrub row (slider + step glyphs +
+      timecode, the frame from the same fast seek the trim uses), the
+      image's Center/Whole buttons, and a footer whose Reset puts the
+      10 % rect back and whose Run is enabled by the Swift rule.
+- [ ] Dispatch: app.rs routes `tools.crop` to the crop window (video and
+      image alike); the plain card keeps the rest.
+- [ ] Tests: unit pins for the crop stack and the fit/clamp/aspect math,
+      `crop_args` shapes (filter string, even rounding, audio copy), and
+      the registry/menu pins (the wheel stays 8 segments — crop was
+      already there); real-FFmpeg: a 3 s video cropped to an asked
+      rectangle with the output dimensions probed, and an image cropped
+      with its dimensions read back.
+- [ ] Captures: crop-video-window.png against cropVideo.webp and
+      crop-image-window.png against cropImage.webp; trim-window.png and
+      split-window.png retaken and unchanged.
+- [ ] Manual verification: drag a video → Tools wheel → Crop → draw the
+      rect → Run; drag an image → the same; both results beside the
+      originals.
+
+Deliberate differences from the mockups, and why:
+- Native title bar ("Crop") instead of the frameless centred header — the
+  B-10.4 chrome decision every window keeps.
+- Swift writes video crops as MP4 whatever the input; we keep the input's
+  own container (BesideAsInput) — the tool convention since B-8.
+- Swift names the result "{base} cropped.{ext}"; we publish beside the
+  original with collision Rename — the same B-8 convention.
+- Ten Swift presets shown as a wrapping pair of chip rows; the mockup
+  draws six in one row — the Swift list wins.
+- Four corner handles (Swift's); the mockup's edge-midpoint pills are not
+  drawn — the corners are what the behavior knows.
+- The checkerboard and the pinch-zoom canvas (Swift ZoomableView) become
+  a fitted stage on the card's own background — zoom is later polish, and
+  nothing in the crop math needs it.
+- The video scrub is a plain slider the window draws itself, not the
+  shared Slider control — that control is built when P3-9 first needs it,
+  per the handoff's note on speculative controls.
+
 ### B-10.2 FFmpeg-backed windows (1-3 days each once template exists)
 - [ ] Change video speed (setpts/atempo, preserve pitch)
 - [ ] Split video (custom points or equal parts, one output folder)
