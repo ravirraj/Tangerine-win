@@ -1,0 +1,242 @@
+// The card a video is trimmed in.
+//
+// The skeleton is the shell's (shell.slint); the body is the timeline's:
+// the frame at the moment the playhead stands on, the bar with the two
+// handles that hold where the video begins and ends, the three time
+// codes, and the step buttons that nudge the handle the keyboard is on.
+// The card only draws the timeline: the pressing, dragging and stepping
+// are read by the window itself, which holds the same geometry the card
+// was given — the way the wheel works.
+
+import { Tokens } from "tokens.slint";
+import { Panel } from "tokens.slint";
+import { CardHeader, Hairline, CardFooter } from "shell.slint";
+
+export component TrimCard inherits Window {
+    // What the card says.
+    in property <string> file-name;
+    in property <string> detail;
+    in property <float> ui-scale: 1.0;
+
+    // The frame at the playhead, and whether there is one.
+    in property <image> frame;
+    in property <bool> has-frame;
+
+    // Where everything is.
+    in property <Panel> header-box;
+    in property <Panel> detail-box;
+    in property <Panel> hairline-top;
+    in property <Panel> hairline-bottom;
+    in property <Panel> frame-box;
+    in property <Panel> timeline-box;
+    in property <Panel> codes-box;
+    in property <Panel> step-back-box;
+    in property <Panel> step-forward-box;
+    in property <Panel> hint-box;
+    in property <Panel> helper-box;
+    in property <Panel> cancel-box;
+    in property <Panel> run-box;
+
+    // Where the video begins and ends, and where the playhead stands,
+    // each a share of the whole (0 to 1).
+    in property <float> start-fraction: 0;
+    in property <float> end-fraction: 1;
+    in property <float> playhead-fraction: 0;
+
+    // What the time codes say.
+    in property <string> start-text;
+    in property <string> playhead-text;
+    in property <string> end-text;
+
+    // 0 no handle, 1 the start handle, 2 the end handle.
+    in property <int> handle-focus;
+    // 0 nothing, 1 cancel, 2 run.
+    in property <int> button-focus;
+
+    callback run-chosen();
+    callback cancel-chosen();
+    // Step the handle the keyboard is on, back or forward.
+    callback step-backward();
+    callback step-forward();
+
+    Rectangle {
+        background: Tokens.surface;
+    }
+
+    CardHeader {
+        file-name: root.file-name;
+        detail: root.detail;
+        ui-scale: root.ui-scale;
+        header-box: root.header-box;
+        detail-box: root.detail-box;
+    }
+    Hairline { box: root.hairline-top; }
+
+    // The frame at the playhead.
+    Rectangle {
+        x: root.frame-box.x; y: root.frame-box.y;
+        width: root.frame-box.width; height: root.frame-box.height;
+        border-radius: 8px;
+        background: Tokens.canvas;
+        clip: true;
+
+        if root.has-frame: Image {
+            x: 0; y: 0;
+            width: parent.width;
+            height: parent.height;
+            source: root.frame;
+            image-fit: contain;
+        }
+    }
+
+    // The timeline: the whole bar, the kept stretch, the playhead, the
+    // two handles, and the touch that takes them all.
+    Rectangle {
+        x: root.timeline-box.x; y: root.timeline-box.y;
+        width: root.timeline-box.width; height: root.timeline-box.height;
+
+        Rectangle {
+            y: (parent.height - 12px) / 2;
+            height: 12px;
+            width: parent.width;
+            border-radius: 6px;
+            background: Tokens.hairline;
+        }
+        Rectangle {
+            y: (parent.height - 12px) / 2;
+            height: 12px;
+            x: root.start-fraction * parent.width;
+            width: (root.end-fraction - root.start-fraction) * parent.width;
+            border-radius: 6px;
+            background: #ff8a3d4d;
+        }
+        // The playhead: a thin dark line standing on the moment.
+        Rectangle {
+            x: root.playhead-fraction * parent.width - 1px;
+            y: 0;
+            width: 2px;
+            height: parent.height;
+            background: Tokens.text;
+        }
+        Rectangle {
+            x: root.start-fraction * parent.width - 7px;
+            y: (parent.height - 28px) / 2;
+            width: 14px;
+            height: 28px;
+            border-radius: 4px;
+            background: root.handle-focus == 1 ? Tokens.accent : Tokens.text;
+        }
+        Rectangle {
+            x: root.end-fraction * parent.width - 7px;
+            y: (parent.height - 28px) / 2;
+            width: 14px;
+            height: 28px;
+            border-radius: 4px;
+            background: root.handle-focus == 2 ? Tokens.accent : Tokens.text;
+        }
+    }
+
+    // The time codes: where the video begins, where the playhead stands,
+    // where it ends.
+    Text {
+        x: root.codes-box.x; y: root.codes-box.y;
+        width: 90px; height: root.codes-box.height;
+        text: root.start-text;
+        color: root.handle-focus == 1 ? Tokens.accent : Tokens.text-dim;
+        font-size: root.ui-scale * 12px;
+        font-weight: root.handle-focus == 1 ? 700 : 400;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+    }
+    Text {
+        x: root.codes-box.x + root.playhead-fraction * root.codes-box.width - 45px;
+        y: root.codes-box.y;
+        width: 90px; height: root.codes-box.height;
+        text: root.playhead-text;
+        color: Tokens.text;
+        font-size: root.ui-scale * 12px;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+        horizontal-alignment: center;
+    }
+    Text {
+        x: root.codes-box.x + root.codes-box.width - 90px;
+        y: root.codes-box.y;
+        width: 90px; height: root.codes-box.height;
+        text: root.end-text;
+        color: root.handle-focus == 2 ? Tokens.accent : Tokens.text-dim;
+        font-weight: root.handle-focus == 2 ? 700 : 400;
+        font-size: root.ui-scale * 12px;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+        horizontal-alignment: right;
+    }
+
+    // The step buttons: they nudge the handle the keyboard is on.
+    Rectangle {
+        x: root.step-back-box.x; y: root.step-back-box.y;
+        width: root.step-back-box.width; height: root.step-back-box.height;
+        border-radius: 6px;
+        background: back-touch.pressed ? #ececea
+                   : (back-touch.has-hover ? #f3f3f1 : Tokens.surface);
+        border-width: 1px;
+        border-color: Tokens.outline;
+
+        back-touch := TouchArea {
+            clicked => { root.step-backward(); }
+        }
+
+        Text {
+            text: "- 1s";
+            color: Tokens.text;
+            font-size: root.ui-scale * 12px;
+            font-family: "Segoe UI";
+            vertical-alignment: center;
+            horizontal-alignment: center;
+        }
+    }
+    Rectangle {
+        x: root.step-forward-box.x; y: root.step-forward-box.y;
+        width: root.step-forward-box.width; height: root.step-forward-box.height;
+        border-radius: 6px;
+        background: forward-touch.pressed ? #ececea
+                   : (forward-touch.has-hover ? #f3f3f1 : Tokens.surface);
+        border-width: 1px;
+        border-color: Tokens.outline;
+
+        forward-touch := TouchArea {
+            clicked => { root.step-forward(); }
+        }
+
+        Text {
+            text: "+ 1s";
+            color: Tokens.text;
+            font-size: root.ui-scale * 12px;
+            font-family: "Segoe UI";
+            vertical-alignment: center;
+            horizontal-alignment: center;
+        }
+    }
+    Text {
+        x: root.hint-box.x; y: root.hint-box.y;
+        width: root.hint-box.width; height: root.hint-box.height;
+        text: "Tab picks a handle \u{b7} \u{2190}\u{2192} move it";
+        color: Tokens.text-dim;
+        font-size: root.ui-scale * 11px;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    Hairline { box: root.hairline-bottom; }
+
+    CardFooter {
+        ui-scale: root.ui-scale;
+        helper-box: root.helper-box;
+        cancel-box: root.cancel-box;
+        run-box: root.run-box;
+        button-focus: root.button-focus;
+        run-chosen => { root.run-chosen(); }
+        cancel-chosen => { root.cancel-chosen(); }
+    }
+}

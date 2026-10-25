@@ -10,4 +10,5 @@ pub mod overlay;
 pub mod publish;
 pub mod shell;
 pub mod shellselection;
+pub mod timelinewindow;
 pub mod toolwindow;

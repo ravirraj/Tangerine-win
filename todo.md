@@ -250,14 +250,50 @@ structural one.
       own Windows skin — left-aligned, native title bar, hairlines, one
       tangerine orange, visible keyboard focus everywhere. Build during
       B-10.1 so TW-2 is the first window to use it.
-      (Deliberately deferred, as planned — TW-1's card is the prototype;
-      TW-2 extracts the skeleton the first time a second body exists.)
-      State after the pass: 313 unit + 27 real green; release rebuilt.
+      DONE 2026-10-25 as shell.slint, in the shape Slint honestly allows:
+      CardHeader / Hairline / FieldTile / CardFooter are shared
+      components in src/ui/shell.slint; ToolCard and TrimCard both wear
+      them, so the chrome cannot drift between windows. (A true @children
+      body slot was not needed: the body is the part that differs, and
+      each window's file says only its body. The re-export chain is
+      wheel.slint -> tool_window.slint -> trim_window.slint because a
+      file may re-export with * only once.)
 
-### B-10.1 Time-range template (TW-2) — the Trim video window
-- [ ] Frame preview via ffmpeg -ss seek (~50-150 ms per scrub update)
-- [ ] Timeline with trim handles, timecodes, frame-step buttons
-- [ ] Template reused by: Trim audio, Split video, Save frames, Bleep
+### B-10.1 Time-range template (TW-2) — the Trim video window — DONE 2026-10-25
+- [x] ToolShell extraction (audit item 10, above) — shell.slint is the
+      skeleton every tool window wears
+- [x] The moments of a video: src/media/frames.rs — duration_of (the
+      probe says format=duration) and frame_at (a fast -ss seek before
+      the input, one frame, PNG over the pipe; the pipe muxer is
+      image2pipe in our build, image2 is not there)
+- [x] The trim itself is real now: tools.trim builds its own arguments
+      (-ss before the input, -t the kept length, -map 0 -c copy — no
+      decoding, no re-encode; without a range it re-muxes the whole
+      file). Before this it went through the single-frame conversion
+      path, which kept ONE FRAME of the video.
+- [x] ToolSettings carries the range (start_ms/end_ms); the plain card
+      sends none, the timeline sends what its handles hold
+- [x] TimelineWindow (src/platform/windows/timelinewindow.rs): the frame
+      at the playhead, the bar with start/end handles, three time codes,
+      -1s/+1s step buttons (Shift = 5s), the shared footer. Pressing near
+      a handle takes that handle, elsewhere scrubs the playhead (the
+      frame is re-drawn when it moves ≥0.25s); Tab/Up/Down walk handles →
+      Cancel → Run, Left/Right step, Enter/Space/Esc do what they say.
+      Same chrome as the card: DPI-scaled size, no maximize box, min
+      size, white brushes, ~100ms layered fade-in. tools.trim is now
+      video-only (gated on the video processor) — a timeline needs a
+      length.
+- [x] Tests: 320 unit + 28 real green; the real test makes a 3s video
+      (rawvideo → mpeg4/mov), trims to 1s and checks the length, and
+      takes a frame from the middle
+- [ ] Manual verification: drag a video → Tools wheel → Trim → timeline
+      with frame preview; drag handles or Tab+arrows → Run → trimmed
+      file appears
+
+Notes for the windows that reuse this template (Trim audio, Split video,
+Save frames, Bleep): the frame seek costs ~50-150ms and runs on the
+thread that draws — fine for one frame, but a waveform or a scrub-happy
+preview should move to a worker + posted message before shipping.
 
 ### B-10.2 FFmpeg-backed windows (1-3 days each once template exists)
 - [ ] Change video speed (setpts/atempo, preserve pitch)

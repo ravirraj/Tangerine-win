@@ -1,0 +1,168 @@
+// The skeleton every tool window wears.
+//
+// A tool window is the same card every time — a header of the file's name
+// and the tool's words, a hairline, whatever the tool asks of the body,
+// another hairline, and a footer whose left says the shortcuts and whose
+// right says no and go. The parts of that skeleton live here, once, so
+// the twenty-one windows the reference product shows feel like one
+// product wearing our skin: each window's file says only its body.
+
+import { Tokens } from "tokens.slint";
+import { Panel } from "tokens.slint";
+
+// The header: the file this is about, and what the tool does.
+export component CardHeader {
+    in property <string> file-name;
+    in property <string> detail;
+    in property <float> ui-scale: 1.0;
+    in property <Panel> header-box;
+    in property <Panel> detail-box;
+
+    Text {
+        x: root.header-box.x; y: root.header-box.y;
+        width: root.header-box.width; height: root.header-box.height;
+        text: root.file-name;
+        color: Tokens.text;
+        font-size: root.ui-scale * 15px;
+        font-weight: 600;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    Text {
+        x: root.detail-box.x; y: root.detail-box.y;
+        width: root.detail-box.width; height: root.detail-box.height;
+        text: root.detail;
+        color: Tokens.text-dim;
+        font-size: root.ui-scale * 12px;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+        overflow: elide;
+    }
+}
+
+// A hairline, full width, holding the card together.
+export component Hairline {
+    in property <Panel> box;
+
+    Rectangle {
+        x: root.box.x; y: root.box.y;
+        width: root.box.width; height: 1px;
+        background: Tokens.hairline;
+    }
+}
+
+// A tile a typing field sits in. The word on the left and the unit on
+// the right are the card's, always there; the typing itself is a real
+// system field laid between them.
+export component FieldTile {
+    in property <string> label: "Width";
+    in property <bool> focused: false;
+    in property <float> ui-scale: 1.0;
+    in property <Panel> box;
+
+    Rectangle {
+        x: root.box.x; y: root.box.y;
+        width: root.box.width; height: root.box.height;
+        border-radius: 6px;
+        background: Tokens.surface;
+        border-width: 1px;
+        border-color: root.focused ? Tokens.accent : Tokens.field-border;
+
+        Text {
+            x: 10px; width: 44px; height: parent.height;
+            text: root.label;
+            color: Tokens.text-dim;
+            font-size: root.ui-scale * 12px;
+            font-family: "Segoe UI";
+            vertical-alignment: center;
+        }
+        Text {
+            x: parent.width - 26px; width: 18px; height: parent.height;
+            text: "px";
+            color: Tokens.text-dim;
+            font-size: root.ui-scale * 12px;
+            font-family: "Segoe UI";
+            vertical-alignment: center;
+        }
+    }
+}
+
+// The footer: the shortcuts on the left, no and go on the right.
+//
+// 0 nothing is under the keyboard, 1 cancel, 2 run.
+export component CardFooter {
+    in property <float> ui-scale: 1.0;
+    in property <string> helper: "Enter to run \u{b7} Esc to close";
+    in property <Panel> helper-box;
+    in property <Panel> cancel-box;
+    in property <Panel> run-box;
+    in property <int> button-focus;
+
+    callback run-chosen();
+    callback cancel-chosen();
+
+    Text {
+        x: root.helper-box.x; y: root.helper-box.y;
+        width: root.helper-box.width; height: root.helper-box.height;
+        text: root.helper;
+        color: Tokens.text-dim;
+        font-size: root.ui-scale * 11px;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    Rectangle {
+        x: root.cancel-box.x; y: root.cancel-box.y;
+        width: root.cancel-box.width; height: root.cancel-box.height;
+        border-radius: 6px;
+        background: cancel-touch.pressed ? #ececea
+                   : (cancel-touch.has-hover ? #f3f3f1 : Tokens.surface);
+        border-width: 1px;
+        border-color: root.button-focus == 1 ? Tokens.accent : Tokens.outline;
+
+        cancel-touch := TouchArea {
+            clicked => { root.cancel-chosen(); }
+        }
+
+        Text {
+            text: "Cancel";
+            color: Tokens.text;
+            font-size: root.ui-scale * 13px;
+            font-family: "Segoe UI";
+            vertical-alignment: center;
+            horizontal-alignment: center;
+        }
+    }
+    // A ring the keyboard puts around the go button when that is what
+    // the keyboard is on.
+    Rectangle {
+        x: root.run-box.x - 3px; y: root.run-box.y - 3px;
+        width: root.run-box.width + 6px; height: root.run-box.height + 6px;
+        border-radius: 9px;
+        border-width: 2px;
+        border-color: Tokens.accent;
+        visible: root.button-focus == 2;
+    }
+    Rectangle {
+        x: root.run-box.x; y: root.run-box.y;
+        width: root.run-box.width; height: root.run-box.height;
+        border-radius: 6px;
+        background: run-touch.pressed ? Tokens.accent-pressed : Tokens.accent;
+
+        run-touch := TouchArea {
+            clicked => { root.run-chosen(); }
+        }
+
+        Text {
+            text: "Run";
+            color: #1a1a1a;
+            font-size: root.ui-scale * 13px;
+            font-weight: 600;
+            font-family: "Segoe UI";
+            vertical-alignment: center;
+            horizontal-alignment: center;
+        }
+    }
+}

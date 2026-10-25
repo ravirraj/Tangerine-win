@@ -1,20 +1,22 @@
 // The card a tool is asked on.
 //
-// The skeleton is the reference's: a header of the file's name and the
-// tool's words, a hairline, the body (the file's own picture, edge to
-// edge), another hairline, and a footer whose left says the shortcuts and
-// whose right says no and go. The geometry is worked out in Rust, where
-// the fields the person types into are placed by the same numbers: the
-// card only draws what it is told, where it is told.
+// The skeleton — header, hairlines, footer — is the shell's, shared by
+// every tool window (shell.slint); this file says only this card's body:
+// the file's own picture, edge to edge, and the tiles a size is typed in.
+// The geometry is worked out in Rust, where the fields the person types
+// into are placed by the same numbers: the card only draws what it is
+// told, where it is told.
 
 import { Tokens } from "tokens.slint";
+import { Panel } from "tokens.slint";
+import { CardHeader, Hairline, FieldTile, CardFooter } from "shell.slint";
 
-export struct Panel {
-    x: length,
-    y: length,
-    width: length,
-    height: length,
-}
+export { Panel } from "tokens.slint";
+// A file may re-export with `*` only once, so the other windows hang off
+// this one in a chain: wheel.slint -> here -> trim_window.slint -> ...
+// The order says nothing about the code; it is only how the one compiled
+// entry gathers every window.
+export * from "trim_window.slint";
 
 export component ToolCard inherits Window {
     // What the card says.
@@ -51,36 +53,16 @@ export component ToolCard inherits Window {
         background: Tokens.surface;
     }
 
-    // The header: the file this is about, and what the tool will do.
-    Text {
-        x: root.header-box.x; y: root.header-box.y;
-        width: root.header-box.width; height: root.header-box.height;
-        text: root.file-name;
-        color: Tokens.text;
-        font-size: root.ui-scale * 15px;
-        font-weight: 600;
-        font-family: "Segoe UI";
-        vertical-alignment: center;
-        overflow: elide;
+    CardHeader {
+        file-name: root.file-name;
+        detail: root.detail;
+        ui-scale: root.ui-scale;
+        header-box: root.header-box;
+        detail-box: root.detail-box;
     }
-    Text {
-        x: root.detail-box.x; y: root.detail-box.y;
-        width: root.detail-box.width; height: root.detail-box.height;
-        text: root.detail;
-        color: Tokens.text-dim;
-        font-size: root.ui-scale * 12px;
-        font-family: "Segoe UI";
-        vertical-alignment: center;
-        overflow: elide;
-    }
+    Hairline { box: root.hairline-top; }
 
-    Rectangle {
-        x: root.hairline-top.x; y: root.hairline-top.y;
-        width: root.hairline-top.width; height: 1px;
-        background: Tokens.hairline;
-    }
-
-    // The body: the file's own picture, edge to edge, on a neutral card.
+    // The body: the file's own picture, filling its whole card.
     Rectangle {
         x: root.preview-box.x; y: root.preview-box.y;
         width: root.preview-box.width; height: root.preview-box.height;
@@ -97,127 +79,28 @@ export component ToolCard inherits Window {
         }
     }
 
-    // The tiles the typing fields sit in. The word on the left and the
-    // unit on the right are the card's; the typing itself is a real
-    // system field laid between them.
-    if root.wants-size: Rectangle {
-        x: root.width-tile.x; y: root.width-tile.y;
-        width: root.width-tile.width; height: root.width-tile.height;
-        border-radius: 6px;
-        background: Tokens.surface;
-        border-width: 1px;
-        border-color: root.width-focused ? Tokens.accent : Tokens.field-border;
-
-        Text {
-            x: 10px; width: 44px; height: parent.height;
-            text: "Width";
-            color: Tokens.text-dim;
-            font-size: root.ui-scale * 12px;
-            font-family: "Segoe UI";
-            vertical-alignment: center;
-        }
-        Text {
-            x: parent.width - 26px; width: 18px; height: parent.height;
-            text: "px";
-            color: Tokens.text-dim;
-            font-size: root.ui-scale * 12px;
-            font-family: "Segoe UI";
-            vertical-alignment: center;
-        }
+    if root.wants-size: FieldTile {
+        box: root.width-tile;
+        label: "Width";
+        focused: root.width-focused;
+        ui-scale: root.ui-scale;
     }
-    if root.wants-size: Rectangle {
-        x: root.height-tile.x; y: root.height-tile.y;
-        width: root.height-tile.width; height: root.height-tile.height;
-        border-radius: 6px;
-        background: Tokens.surface;
-        border-width: 1px;
-        border-color: root.height-focused ? Tokens.accent : Tokens.field-border;
-
-        Text {
-            x: 10px; width: 44px; height: parent.height;
-            text: "Height";
-            color: Tokens.text-dim;
-            font-size: root.ui-scale * 12px;
-            font-family: "Segoe UI";
-            vertical-alignment: center;
-        }
-        Text {
-            x: parent.width - 26px; width: 18px; height: parent.height;
-            text: "px";
-            color: Tokens.text-dim;
-            font-size: root.ui-scale * 12px;
-            font-family: "Segoe UI";
-            vertical-alignment: center;
-        }
+    if root.wants-size: FieldTile {
+        box: root.height-tile;
+        label: "Height";
+        focused: root.height-focused;
+        ui-scale: root.ui-scale;
     }
 
-    Rectangle {
-        x: root.hairline-bottom.x; y: root.hairline-bottom.y;
-        width: root.hairline-bottom.width; height: 1px;
-        background: Tokens.hairline;
-    }
+    Hairline { box: root.hairline-bottom; }
 
-    // The footer: the shortcuts on the left, no and go on the right.
-    Text {
-        x: root.helper-box.x; y: root.helper-box.y;
-        width: root.helper-box.width; height: root.helper-box.height;
-        text: "Enter to run \u{b7} Esc to close";
-        color: Tokens.text-dim;
-        font-size: root.ui-scale * 11px;
-        font-family: "Segoe UI";
-        vertical-alignment: center;
-        overflow: elide;
-    }
-
-    Rectangle {
-        x: root.cancel-box.x; y: root.cancel-box.y;
-        width: root.cancel-box.width; height: root.cancel-box.height;
-        border-radius: 6px;
-        background: cancel-touch.pressed ? #ececea : (cancel-touch.has-hover ? #f3f3f1 : Tokens.surface);
-        border-width: 1px;
-        border-color: root.button-focus == 1 ? Tokens.accent : Tokens.outline;
-
-        cancel-touch := TouchArea {
-            clicked => { root.cancel-chosen(); }
-        }
-
-        Text {
-            text: "Cancel";
-            color: Tokens.text;
-            font-size: root.ui-scale * 13px;
-            font-family: "Segoe UI";
-            vertical-alignment: center;
-            horizontal-alignment: center;
-        }
-    }
-    // A ring the keyboard puts around the go button when that is what
-    // the keyboard is on.
-    Rectangle {
-        x: root.run-box.x - 3px; y: root.run-box.y - 3px;
-        width: root.run-box.width + 6px; height: root.run-box.height + 6px;
-        border-radius: 9px;
-        border-width: 2px;
-        border-color: Tokens.accent;
-        visible: root.button-focus == 2;
-    }
-    Rectangle {
-        x: root.run-box.x; y: root.run-box.y;
-        width: root.run-box.width; height: root.run-box.height;
-        border-radius: 6px;
-        background: run-touch.pressed ? Tokens.accent-pressed : Tokens.accent;
-
-        run-touch := TouchArea {
-            clicked => { root.run-chosen(); }
-        }
-
-        Text {
-            text: "Run";
-            color: #1a1a1a;
-            font-size: root.ui-scale * 13px;
-            font-weight: 600;
-            font-family: "Segoe UI";
-            vertical-alignment: center;
-            horizontal-alignment: center;
-        }
+    CardFooter {
+        ui-scale: root.ui-scale;
+        helper-box: root.helper-box;
+        cancel-box: root.cancel-box;
+        run-box: root.run-box;
+        button-focus: root.button-focus;
+        run-chosen => { root.run-chosen(); }
+        cancel-chosen => { root.cancel-chosen(); }
     }
 }

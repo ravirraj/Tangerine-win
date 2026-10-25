@@ -4,6 +4,16 @@
 // same orange on both, because it is the product's own colour. One place
 // holds the values, so the surfaces cannot drift apart.
 
+// Where a part of a card is, in pixels of the window. The Rust side works
+// the numbers out and hands them over, so what is drawn and where the
+// typing happens can never disagree.
+export struct Panel {
+    x: length,
+    y: length,
+    width: length,
+    height: length,
+}
+
 export global Tokens {
     // The one orange: what the wheel lights a choice with, and what a
     // card says "go" with.

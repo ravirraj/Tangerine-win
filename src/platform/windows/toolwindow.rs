@@ -849,6 +849,7 @@ unsafe fn run(window: HWND) {
         ToolSettings {
             width: number(&field_text(GetDlgItem(Some(window), 50).unwrap_or_default())),
             height: number(&field_text(GetDlgItem(Some(window), 60).unwrap_or_default())),
+            ..Default::default()
         }
     };
     OPEN_FOR.with(|slot| {

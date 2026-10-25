@@ -267,6 +267,8 @@ struct App {
     sender: std::sync::mpsc::Sender<Message>,
     /// The window a tool is asked in, hidden until a tool is picked.
     tool_window: crate::platform::windows::toolwindow::ToolWindow,
+    /// The window a video is trimmed in, hidden until a trim is picked.
+    timeline_window: crate::platform::windows::timelinewindow::TimelineWindow,
 }
 
 /// The end of a drag that has not been acted on yet.
@@ -352,6 +354,26 @@ impl App {
             crate::platform::windows::toolwindow::ToolWindow::new(tool_sender)
                 .map_err(|reason| reason)?;
 
+        // The window a trim is asked in, with the video's own timeline.
+        // What its buttons say comes back the same way, into the same
+        // message: the trim is only another tool that was asked of a
+        // window.
+        let (timeline_sender, timeline_messages) =
+            std::sync::mpsc::channel::<crate::platform::windows::toolwindow::ToolEvent>();
+        {
+            let sender = sender.clone();
+            std::thread::spawn(move || {
+                while let Ok(event) = timeline_messages.recv() {
+                    if sender.send(Message::ToolWindow(event)).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+        let timeline_window =
+            crate::platform::windows::timelinewindow::TimelineWindow::new(timeline_sender)
+                .map_err(|reason| reason)?;
+
         Ok(Self {
             controller,
             animation: WheelAnimation::new(),
@@ -396,6 +418,7 @@ impl App {
             messages,
             sender: sender.clone(),
             tool_window,
+            timeline_window,
         })
     }
 
@@ -595,8 +618,16 @@ impl App {
     /// to say no. When the window is answered, what it was asked comes
     /// back as a message and the work starts then.
     fn open_tool_window(&mut self, segment: &Segment, files: &[std::path::PathBuf]) {
-        // The first picture of the drag is shown, so that what the tool
-        // will do is done to something the person can see.
+        // A trim asks for a timeline, not a form: the video is shown at
+        // its own moments, and the window reads the length and the frames
+        // itself. The first picture of the drag is shown in the plain
+        // card, so that what the tool will do is done to something the
+        // person can see.
+        if segment.id == "tools.trim" {
+            self.timeline_window
+                .show_for(&segment.id, &segment.label, &segment.detail, files);
+            return;
+        }
         let preview = files.iter().find_map(|path| {
             let is_svg = path
                 .extension()

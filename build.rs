@@ -12,6 +12,8 @@ fn main() {
     let path = "src/ui/wheel.slint";
     println!("cargo:rerun-if-changed={path}");
     println!("cargo:rerun-if-changed=src/ui/tool_window.slint");
+    println!("cargo:rerun-if-changed=src/ui/trim_window.slint");
+    println!("cargo:rerun-if-changed=src/ui/shell.slint");
     println!("cargo:rerun-if-changed=src/ui/tokens.slint");
     // The revision is part of what the program is, so the program is made
     // again when the revision moves. The head of the repository points at the

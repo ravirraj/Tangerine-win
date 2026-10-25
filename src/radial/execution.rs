@@ -33,6 +33,10 @@ pub struct ToolSettings {
     pub width: Option<u32>,
     /// A height, in pixels.
     pub height: Option<u32>,
+    /// Where a stretch of time begins, in milliseconds from the start.
+    pub start_ms: Option<u64>,
+    /// Where a stretch of time ends, in milliseconds from the start.
+    pub end_ms: Option<u64>,
 }
 
 /// A request to run an operation.
