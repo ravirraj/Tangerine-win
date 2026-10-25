@@ -32,6 +32,14 @@ pub enum Requirement {
     None,
     /// A processor, by name.
     Processor(&'static str),
+    /// One of several processors - whichever can read the file.
+    ///
+    /// An operation that works on two kinds with two different backs - a
+    /// crop that cuts a video with the conversion program and a picture
+    /// with the program's own two hands - needs either of them to be
+    /// there, and each dragged file has to be readable by the one that
+    /// can take it.
+    AnyProcessor(&'static [&'static str]),
 }
 
 /// How many items an operation takes, and whether they have to be alike.
@@ -615,13 +623,13 @@ pub const OPERATIONS: &[Operation] = &[
         detail: "Trim the edges away",
         icon: IconKind::Crop,
         mode: RadialMode::Tools,
-        categories: &[FileKind::Image],
+        categories: &[FileKind::Image, FileKind::Video],
         batch: Batch::Several,
         folders: false,
         output: Output::BesideAsInput,
         collision: Collision::Rename,
         implemented: true,
-        requires: Requirement::Processor("image"),
+        requires: Requirement::AnyProcessor(&["image", "video"]),
     },
     Operation {
         id: "tools.trim",
@@ -967,33 +975,49 @@ pub fn eligibility(
     if !operation.implemented {
         return Err(Ineligible::NotImplemented);
     }
-    let Requirement::Processor(name) = operation.requires else {
-        // The program does this one itself. There is no backend, and so no
-        // backend to be missing.
-        return Ok(());
-    };
-    let Some(processor) = environment.processor(name) else {
-        return Err(Ineligible::ProcessorMissing(name));
+    // The processors this operation may call on, by its requirement.
+    // An operation the application does itself has no processor at all —
+    // there is nothing more the machine has to say about it: it can run.
+    let processors: Vec<_> = match operation.requires {
+        Requirement::None => return Ok(()),
+        Requirement::Processor(name) => {
+            let Some(processor) = environment.processor(name) else {
+                return Err(Ineligible::ProcessorMissing(name));
+            };
+            vec![processor]
+        }
+        Requirement::AnyProcessor(names) => {
+            let processors: Vec<_> = names
+                .iter()
+                .filter_map(|name| environment.processor(name))
+                .collect();
+            if processors.is_empty() {
+                return Err(Ineligible::ProcessorMissing(names[0]));
+            }
+            processors
+        }
     };
 
-    // The processor has to be able to read every format that was dragged.
+    // Each processor named has to be able to read every format that was
+    // dragged - at least one of them, when the operation takes any.
     for format in selection.formats() {
-        if !processor.can_read(format) {
+        if !processors.iter().any(|processor| processor.can_read(format)) {
             return Err(Ineligible::UnreadableFormat(format.to_string()));
         }
     }
 
-    // And it has to be able to write what the operation is to produce.
+    // And one of them has to be able to write what the operation is to
+    // produce.
     match operation.output {
         Output::Beside(format) => {
-            if !processor.can_write(format) {
+            if !processors.iter().any(|processor| processor.can_write(format)) {
                 return Err(Ineligible::UnwritableFormat(format.to_string()));
             }
         }
         // The result keeps the format of the file it was given.
         Output::BesideAsInput | Output::InPlace => {
             for format in selection.formats() {
-                if !processor.can_write(format) {
+                if !processors.iter().any(|processor| processor.can_write(format)) {
                     return Err(Ineligible::UnwritableFormat(format.to_string()));
                 }
             }
@@ -1882,6 +1906,19 @@ mod tests {
                         reads: Vec::new(),
                         writes: Vec::new(),
                     }),
+                    Requirement::AnyProcessor(names) => {
+                        let mut first = None;
+                        for name in names {
+                            if first.is_none() {
+                                first = Some(Processor {
+                                    name: name.to_string(),
+                                    reads: Vec::new(),
+                                    writes: Vec::new(),
+                                });
+                            }
+                        }
+                        first
+                    }
                     Requirement::None => None,
                 })
                 .collect(),

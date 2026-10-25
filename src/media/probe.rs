@@ -34,7 +34,7 @@ const PDF_PROCESSOR: &str = "pdf";
 /// The kind of a format: the wheels ask for kinds, and the processors are
 /// divided by kind.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Kind {
+pub(crate) enum Kind {
     Image,
     Video,
     Audio,
@@ -42,7 +42,7 @@ enum Kind {
 
 /// The kind a format belongs to, when the conversion program is what works
 /// on it. The formats the program handles in Rust have no kind here.
-fn kind_of(format: &str) -> Option<Kind> {
+pub(crate) fn kind_of(format: &str) -> Option<Kind> {
     match format {
         "png" | "jpeg" | "bmp" | "tiff" | "gif" | "ico" | "webp" => Some(Kind::Image),
         "mp4" | "mkv" | "avi" | "wmv" | "webm" => Some(Kind::Video),

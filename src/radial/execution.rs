@@ -44,6 +44,15 @@ pub struct ToolSettings {
     /// reads these; the tools that keep one stretch of time carry
     /// `start_ms`/`end_ms` instead.
     pub points_ms: Vec<u64>,
+    /// The rectangle a crop keeps, in pixels of the source: where it
+    /// starts, and how much of it there is.
+    ///
+    /// Only `tools.crop` reads these. A crop with no rectangle is not a
+    /// crop, and the handler says so rather than guessing one.
+    pub crop_x: Option<u32>,
+    pub crop_y: Option<u32>,
+    pub crop_w: Option<u32>,
+    pub crop_h: Option<u32>,
 }
 
 /// A request to run an operation.

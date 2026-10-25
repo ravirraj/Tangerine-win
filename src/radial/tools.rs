@@ -15,7 +15,7 @@ use crate::media::command::convert as build_convert_args;
 use crate::media::command::muxer_needs_file;
 use crate::media::locator::Tools as FfmpegTools;
 use crate::media::manifest::Manifest;
-use crate::media::publish::Publisher;
+use crate::media::publish::{PublishError, Publisher};
 use crate::media::runner::{ProcessRunner, SystemRunner};
 use crate::radial::execution::{Failure, Handler, Outcome, Request};
 use crate::radial::registry::{operation_by_id, Output};
@@ -74,9 +74,15 @@ impl<P: Publisher> Tools<P> {
         runner: &dyn ProcessRunner,
         settings: &crate::radial::execution::ToolSettings,
     ) -> Result<PathBuf, ToolError> {
+        // A crop takes two entirely different pairs of hands — a video is
+        // cut by the conversion program, a picture by the program itself —
+        // so it stands apart from the conversions below.
+        if operation_id == "tools.crop" {
+            return self.run_crop(input, target, temporary, runner, settings);
+        }
+
         let resize = resize_filter(settings);
         let video_filter = match operation_id {
-            "tools.crop" => Some("crop=iw/2:ih/2:(iw-iw/2)/2:(ih-iw/2)/2"),
             "tools.rotate" => Some("transpose=1"),
             "tools.resize" => Some(resize.as_str()),
             _ => None,
@@ -101,23 +107,67 @@ impl<P: Publisher> Tools<P> {
             &arguments,
             source,
             temporary,
-            &input.with_extension(target.format.as_str()),
+            &final_names(input, target.format.as_str()),
             runner,
         )
     }
 
+    /// Cuts one file down to the rectangle the window asked for.
+    ///
+    /// A video goes through the conversion program: the picture is made
+    /// again at the rectangle, the sound is carried over as it is. A
+    /// picture is cut with the program's own two hands — decoded,
+    /// clipped, written back in the format it came in — and needs no
+    /// program at all. A sound has no edges to take off.
+    fn run_crop(
+        &self,
+        input: &Path,
+        target: &crate::media::manifest::FormatSupport,
+        temporary: &Path,
+        runner: &dyn ProcessRunner,
+        settings: &crate::radial::execution::ToolSettings,
+    ) -> Result<PathBuf, ToolError> {
+        let source_ext = input
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        match crate::media::probe::kind_of(&source_ext) {
+            Some(crate::media::probe::Kind::Video) => {
+                let Some((x, y, w, h)) = crop_rect(settings) else {
+                    return Err(ToolError::NothingToDo);
+                };
+                let arguments = crop_args(
+                    input,
+                    target,
+                    Some(temporary),
+                    (x, y, w, h),
+                    (settings.width, settings.height),
+                );
+                let finals = final_names(input, target.format.as_str());
+                self.finish(&arguments, target, temporary, &finals, runner)
+            }
+            Some(crate::media::probe::Kind::Image) => {
+                crop_image(input, temporary, settings)?;
+                let finals = final_names(input, &source_ext);
+                self.publish(&finals, temporary)
+            }
+            _ => Err(ToolError::UnsupportedKind),
+        }
+    }
     /// Puts what a command wrote where it belongs.
     ///
     /// A muxer that wants a file writes the temporary itself; one that
     /// pours its result over the pipe is given the temporary as its
-    /// bucket. What was written is moved to the final name, which never
-    /// takes a file that is already there.
+    /// bucket. What was written is moved to the first of the names it
+    /// may take that is free — the conversions name their results the
+    /// same way — and it never takes a file that is already there.
     fn finish(
         &self,
         arguments: &[OsString],
         target: &crate::media::manifest::FormatSupport,
         temporary: &Path,
-        final_name: &Path,
+        finals: &[PathBuf],
         runner: &dyn ProcessRunner,
     ) -> Result<PathBuf, ToolError> {
         let needs_file = muxer_needs_file(&target.write.muxer);
@@ -136,11 +186,24 @@ impl<P: Publisher> Tools<P> {
             return Err(ToolError::ToolFailed);
         }
 
-        self.publisher
-            .publish(temporary, final_name)
-            .map_err(|_| ToolError::WriteError)?;
+        self.publish(finals, temporary)
+    }
 
-        Ok(final_name.to_path_buf())
+    /// Puts a finished file at the first of its names that is free.
+    ///
+    /// When the name it asked for is taken, it takes the same name with a
+    /// number after it — the way a file manager renames, and the way the
+    /// conversions have always named what they copy. Nothing is ever
+    /// written over.
+    fn publish(&self, finals: &[PathBuf], temporary: &Path) -> Result<PathBuf, ToolError> {
+        for final_name in finals {
+            match self.publisher.publish(temporary, final_name) {
+                Ok(()) => return Ok(final_name.clone()),
+                Err(PublishError::DestinationExists) => continue,
+                Err(PublishError::CouldNotMove) => return Err(ToolError::WriteError),
+            }
+        }
+        Err(ToolError::WriteError)
     }
 
     /// Splits, at the points the window carried, into a folder of
@@ -241,7 +304,7 @@ impl<P: Publisher> Tools<P> {
             let final_name = folder.join(&leaf);
             let work_path = folder.join(format!("{leaf}.part"));
             let arguments = trim_args(input, source, source, Some(&work_path), &asked);
-            let made = self.finish(&arguments, source, &work_path, &final_name, runner);
+            let made = self.finish(&arguments, source, &work_path, &[final_name], runner);
             match made {
                 Ok(path) => outputs.push(path),
                 Err(reason) => return Err(reason),
@@ -352,6 +415,144 @@ fn split_segments(points_ms: &[u64], duration: f64) -> Vec<(u64, u64)> {
     segments
 }
 
+/// The rectangle a crop keeps, if the settings carry a whole one.
+fn crop_rect(settings: &crate::radial::execution::ToolSettings) -> Option<(u32, u32, u32, u32)> {
+    Some((
+        settings.crop_x?,
+        settings.crop_y?,
+        settings.crop_w?,
+        settings.crop_h?,
+    ))
+}
+
+/// The names a result that keeps the original's name may take.
+///
+/// The name itself, and the same one with a number after it — because the
+/// name itself is taken: it is the very file the work came from. A cut
+/// that keeps the format lands beside the original like the conversions
+/// do, never over anything.
+fn final_names(input: &Path, extension: &str) -> Vec<PathBuf> {
+    crate::media::publish::names_for(input, extension)
+}
+
+/// A size the video encoders take: both sides even. An odd side is
+/// brought down to the even one below it, the way the original rounds
+/// its crop before it cuts.
+fn even(size: u32) -> u32 {
+    size - (size % 2)
+}
+
+/// Kept inside the picture: a crop that runs past an edge is pulled back
+/// to it, and what is left is never without width or height.
+fn clamp_rect(
+    x: u32,
+    y: u32,
+    w: u32,
+    h: u32,
+    whole_w: u32,
+    whole_h: u32,
+) -> (u32, u32, u32, u32) {
+    let x = x.min(whole_w.saturating_sub(1));
+    let y = y.min(whole_h.saturating_sub(1));
+    let w = w.min(whole_w - x).max(1);
+    let h = h.min(whole_h - y).max(1);
+    (x, y, w, h)
+}
+
+/// The arguments that cut a video down to the rectangle it was asked
+/// for.
+///
+/// The picture is made again — a crop cannot be copied, the pixels
+/// themselves move — and the sound is carried over as it is. When the
+/// window also said a size to come out at, the cut is followed by a
+/// scale; when it did not, the cut area is what comes out.
+fn crop_args(
+    input: &Path,
+    target: &crate::media::manifest::FormatSupport,
+    output_path: Option<&Path>,
+    rect: (u32, u32, u32, u32),
+    output: (Option<u32>, Option<u32>),
+) -> Vec<OsString> {
+    let (x, y, w, h) = rect;
+    // The crop itself is said with colons — width, height, then where it
+    // starts — and a scale that follows is chained on with a comma.
+    let mut filter = format!("crop={w}:{h}:{x}:{y}", w = even(w), h = even(h));
+    match (output.0, output.1) {
+        (Some(ow), Some(oh)) => filter.push_str(&format!(",scale={}:{}", even(ow), even(oh))),
+        (Some(ow), None) => filter.push_str(&format!(",scale={}:{}", even(ow), -1)),
+        (None, Some(oh)) => filter.push_str(&format!(",scale=-1:{}", even(oh))),
+        (None, None) => {}
+    }
+    let mut args = vec![
+        OsString::from("-hide_banner"),
+        OsString::from("-nostdin"),
+        OsString::from("-y"),
+        OsString::from("-f"),
+        OsString::from(&target.read.demuxer),
+        OsString::from("-i"),
+        input.as_os_str().to_os_string(),
+        OsString::from("-vf"),
+        OsString::from(filter.replace('&', ",")),
+        OsString::from("-c:v"),
+        OsString::from(&target.write.encoder),
+        OsString::from("-c:a"),
+        OsString::from("copy"),
+        OsString::from("-f"),
+        OsString::from(&target.write.muxer),
+    ];
+    match output_path {
+        Some(path) => args.push(path.as_os_str().to_os_string()),
+        None => args.push(OsString::from("pipe:1")),
+    }
+    args
+}
+
+/// Cuts a picture down to the rectangle it was asked for, with the
+/// program's own two hands, and writes it where the temporary waits —
+/// in the format it came in.
+fn crop_image(
+    input: &Path,
+    temporary: &Path,
+    settings: &crate::radial::execution::ToolSettings,
+) -> Result<(), ToolError> {
+    let extension = input
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    let Some(format) = image_format_of(&extension) else {
+        return Err(ToolError::UnsupportedKind);
+    };
+    let picture = image::open(input).map_err(|_| ToolError::ReadError)?;
+    let Some((x, y, w, h)) = crop_rect(settings) else {
+        return Err(ToolError::NothingToDo);
+    };
+    let (x, y, w, h) = clamp_rect(x, y, w, h, picture.width(), picture.height());
+    let mut cut = picture.crop_imm(x, y, w, h);
+    if let (Some(ow), Some(oh)) = (settings.width, settings.height) {
+        if ow > 0 && oh > 0 {
+            cut = cut.resize_exact(ow, oh, image::imageops::FilterType::Lanczos3);
+        }
+    }
+    cut.save_with_format(temporary, format)
+        .map_err(|_| ToolError::WriteError)
+}
+
+/// The picture format a file's ending names, as far as the picture
+/// library writes them.
+fn image_format_of(extension: &str) -> Option<image::ImageFormat> {
+    match extension {
+        "png" => Some(image::ImageFormat::Png),
+        "jpeg" | "jpg" => Some(image::ImageFormat::Jpeg),
+        "bmp" => Some(image::ImageFormat::Bmp),
+        "tiff" | "tif" => Some(image::ImageFormat::Tiff),
+        "gif" => Some(image::ImageFormat::Gif),
+        "webp" => Some(image::ImageFormat::WebP),
+        "ico" => Some(image::ImageFormat::Ico),
+        _ => None,
+    }
+}
+
 /// The filter that resizes a picture, from what was asked.
 ///
 /// A side that was not said keeps its share: `-1` is the conversion
@@ -382,12 +583,6 @@ impl<P: Publisher> Handler for Tools<P> {
             return self.run_split(request, &SystemRunner);
         }
 
-        let Output::Beside(extension) = operation.output else {
-            return Outcome::Failed {
-                reason: Failure::NotImplemented,
-            };
-        };
-
         let manifest = Manifest::get();
         let runner = SystemRunner;
 
@@ -410,9 +605,14 @@ impl<P: Publisher> Handler for Tools<P> {
                 continue;
             };
 
-            let target = match manifest.format(extension) {
-                Some(t) => t,
-                None => {
+            // What the operation writes: the format it was told, or — when
+            // it keeps what it was given — the format of this very file.
+            // The per-input answer is what lets one operation take kinds
+            // of different backs at all.
+            let extension = match operation.output {
+                Output::Beside(fixed) => fixed,
+                Output::BesideAsInput => source_ext.as_str(),
+                Output::InPlace | Output::Nothing => {
                     failed += 1;
                     let name = ToolError::UnsupportedKind.name();
                     diagnostics::log(Level::Warn, "action", &format!("a file was not processed: {name}"));
@@ -421,6 +621,16 @@ impl<P: Publisher> Handler for Tools<P> {
                     }
                     continue;
                 }
+            };
+
+            let Some(target) = manifest.format(extension) else {
+                failed += 1;
+                let name = ToolError::UnsupportedKind.name();
+                diagnostics::log(Level::Warn, "action", &format!("a file was not processed: {name}"));
+                if first_reason.is_none() {
+                    first_reason = Some(name.to_string());
+                }
+                continue;
             };
 
             let target_ext = extension;
@@ -833,5 +1043,340 @@ mod tests {
             }
             other => panic!("unexpected outcome: {other:?}"),
         }
+    }
+
+    #[test]
+    fn the_crop_is_said_the_way_the_program_reads_it() {
+        let mp4 = crate::media::manifest::Manifest::get()
+            .format("mp4")
+            .expect("mp4 is in the manifest");
+        let args = crop_args(
+            Path::new("one.mp4"),
+            mp4,
+            Some(Path::new("one.mp4.part")),
+            (10, 8, 81, 61),
+            (None, None),
+        );
+        let filter = args
+            .iter()
+            .position(|said| said.to_string_lossy() == "-vf")
+            .map(|at| args[at + 1].to_string_lossy().into_owned())
+            .expect("the crop carries a filter");
+        // The odd sides are brought down to even ones, and the rectangle
+        // is said width, height, then where it starts.
+        assert_eq!(filter, "crop=80:60:10:8", "{args:?}");
+        // The sound is carried over as it is, not made again.
+        let audio = args
+            .iter()
+            .position(|said| said.to_string_lossy() == "-c:a")
+            .map(|at| args[at + 1].to_string_lossy().into_owned())
+            .expect("the crop says what its sound does");
+        assert_eq!(audio, "copy");
+    }
+
+    #[test]
+    fn a_crop_that_is_also_resized_says_so() {
+        let mp4 = crate::media::manifest::Manifest::get()
+            .format("mp4")
+            .expect("mp4 is in the manifest");
+        let args = crop_args(
+            Path::new("one.mp4"),
+            mp4,
+            Some(Path::new("one.mp4.part")),
+            (0, 0, 100, 100),
+            (Some(41), None),
+        );
+        let filter = args
+            .iter()
+            .position(|said| said.to_string_lossy() == "-vf")
+            .map(|at| args[at + 1].to_string_lossy().into_owned())
+            .expect("the crop carries a filter");
+        assert_eq!(filter, "crop=100:100:0:0,scale=40:-1", "{args:?}");
+    }
+
+    #[test]
+    fn a_crop_that_runs_past_the_edge_is_pulled_back() {
+        // A rect that starts past the picture is brought to its edge.
+        assert_eq!(clamp_rect(60, 60, 20, 20, 64, 64), (60, 60, 4, 4));
+        // One that is bigger than the picture is cut down to it.
+        assert_eq!(clamp_rect(0, 0, 100, 100, 64, 64), (0, 0, 64, 64));
+        // And one inside stays exactly as it was.
+        assert_eq!(clamp_rect(4, 4, 32, 24, 64, 64), (4, 4, 32, 24));
+    }
+
+    /// A publisher shaped like the real one: the move happens only when
+    /// nothing stands at the name it is asked for.
+    struct RealShaped;
+
+    impl Publisher for RealShaped {
+        fn publish(
+            &self,
+            temporary: &Path,
+            destination: &Path,
+        ) -> Result<(), crate::media::publish::PublishError> {
+            if destination.is_file() {
+                return Err(crate::media::publish::PublishError::DestinationExists);
+            }
+            std::fs::copy(temporary, destination)
+                .map(|_| ())
+                .map_err(|_| crate::media::publish::PublishError::CouldNotMove)
+        }
+    }
+
+    #[test]
+    fn a_result_that_keeps_the_name_lands_beside_the_original() {
+        // A cut that keeps the format wants the original's own name, and
+        // the original is standing there: the result takes the next free
+        // name instead. Nothing is ever written over.
+        let scratch = std::env::temp_dir().join("open-tangerine-publish-beside-test");
+        let _ = std::fs::remove_dir_all(&scratch);
+        std::fs::create_dir_all(&scratch).expect("the scratch folder was made");
+        let input = scratch.join("one.mp4");
+        std::fs::write(&input, b"original").expect("the original could be made");
+        let temporary = scratch.join("one.mp4.part");
+        std::fs::write(&temporary, b"made").expect("the work could be made");
+
+        let tools = Tools {
+            ffmpeg_tools: crate::media::locator::Tools {
+                ffmpeg: PathBuf::from("ffmpeg"),
+                ffprobe: PathBuf::from("ffprobe"),
+            },
+            publisher: RealShaped,
+        };
+        let made = tools
+            .publish(&final_names(&input, "mp4"), &temporary)
+            .expect("a free name was found");
+        assert_eq!(made, scratch.join("one (2).mp4"));
+        assert_eq!(
+            std::fs::read(&made).expect("the result is there"),
+            b"made",
+            "what was made is what arrived"
+        );
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    /// A publisher shaped like the real one: the work is copied to the
+    /// name it is given, or refused when something is already standing
+    /// there — the handler is the one that then tries the next name.
+    struct CopyPublisher;
+
+    impl Publisher for CopyPublisher {
+        fn publish(
+            &self,
+            temporary: &Path,
+            destination: &Path,
+        ) -> Result<(), crate::media::publish::PublishError> {
+            if destination.is_file() {
+                return Err(crate::media::publish::PublishError::DestinationExists);
+            }
+            std::fs::copy(temporary, destination)
+                .map(|_| ())
+                .map_err(|_| crate::media::publish::PublishError::CouldNotMove)
+        }
+    }
+
+    /// Makes the three-second test video the trim test makes, and says
+    /// where it is.
+    fn make_test_video(scratch: &Path) -> PathBuf {
+        let ffmpeg = Path::new("vendor").join("ffmpeg").join("ffmpeg.exe");
+        assert!(ffmpeg.is_file(), "the conversion program is not there");
+        let raw = scratch.join("three.raw");
+        std::fs::write(&raw, vec![255u8, 0, 0, 255].repeat(160 * 120 * 30))
+            .expect("the pixels could be written");
+        let input = scratch.join("clip.mp4");
+        let making: Vec<OsString> = [
+            "-hide_banner",
+            "-nostdin",
+            "-y",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgba",
+            "-s",
+            "160x120",
+            "-r",
+            "10",
+            "-i",
+        ]
+        .iter()
+        .map(|word| OsString::from(*word))
+        .chain([
+            raw.as_os_str().to_os_string(),
+            OsString::from("-c:v"),
+            OsString::from("mpeg4"),
+            OsString::from("-pix_fmt"),
+            OsString::from("yuv420p"),
+            OsString::from("-f"),
+            OsString::from("mov"),
+            input.as_os_str().to_os_string(),
+        ])
+        .collect();
+        let made = SystemRunner
+            .run(&ffmpeg, &making, None)
+            .expect("the video was made");
+        assert!(made.succeeded(), "the test video was not made: {}", made.stderr);
+        input
+    }
+
+    /// How big the picture in a video is, as the probe says.
+    fn video_size(ffprobe: &Path, video: &Path) -> (u32, u32) {
+        let asking: Vec<OsString> = [
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=width,height",
+            "-of",
+            "csv=p=0:s=x",
+        ]
+        .iter()
+        .map(|word| OsString::from(*word))
+        .chain([video.as_os_str().to_os_string()])
+        .collect();
+        let run = SystemRunner
+            .run(ffprobe, &asking, None)
+            .expect("the probe ran");
+        assert!(run.succeeded(), "the probe did not finish: {}", run.stderr);
+        let said = String::from_utf8_lossy(&run.stdout);
+        let (w, h) = said.trim().split_once('x').expect("the probe said a size");
+        (w.parse().expect("a width"), h.parse().expect("a height"))
+    }
+
+    #[test]
+    #[ignore = "needs the conversion program"]
+    fn a_video_is_cropped_to_the_rectangle_it_was_asked_for() {
+        let folder = Path::new("vendor").join("ffmpeg");
+        let ffmpeg = folder.join("ffmpeg.exe");
+        let ffprobe = folder.join("ffprobe.exe");
+        if !ffmpeg.is_file() || !ffprobe.is_file() {
+            eprintln!("the program is not there; this test needs it");
+            return;
+        }
+        let scratch = std::env::temp_dir().join("open-tangerine-crop-video-test");
+        std::fs::create_dir_all(&scratch).expect("the scratch folder was made");
+        let input = make_test_video(&scratch);
+
+        // The crop goes the whole way through the handler, the way the
+        // wheel drives it: the rectangle is odd on purpose, and the even
+        // sides are what come out.
+        let tools = Tools {
+            ffmpeg_tools: crate::media::locator::Tools {
+                ffmpeg,
+                ffprobe: ffprobe.clone(),
+            },
+            publisher: CopyPublisher,
+        };
+        let request = Request {
+            operation: "tools.crop".to_string(),
+            inputs: vec![input.clone()],
+            settings: ToolSettings {
+                crop_x: Some(10),
+                crop_y: Some(8),
+                crop_w: Some(81),
+                crop_h: Some(61),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let outcome = tools.run(&request, &Selection::inspect(&[input.clone()]));
+        let outputs = match outcome {
+            Outcome::Succeeded { outputs } => outputs,
+            Outcome::Failed { reason } => panic!("the crop failed: {:?}", reason),
+            Outcome::Cancelled => panic!("the crop was not asked to stop"),
+        };
+        assert_eq!(outputs.len(), 1, "one file in, one file out");
+        let made = outputs.first().expect("the crop is there");
+        assert!(made.is_file(), "the cropped video exists");
+        let (w, h) = video_size(&ffprobe, made);
+        assert_eq!((w, h), (80, 60), "the crop is the rectangle, evened");
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    #[ignore = "needs the picture library and nothing more"]
+    fn a_picture_is_cropped_with_the_programs_own_hands() {
+        let scratch = std::env::temp_dir().join("open-tangerine-crop-image-test");
+        std::fs::create_dir_all(&scratch).expect("the scratch folder was made");
+        let input = scratch.join("photo.png");
+        image::DynamicImage::new_rgb8(64, 48)
+            .save(&input)
+            .expect("the picture was made");
+
+        let tools = Tools {
+            ffmpeg_tools: crate::media::locator::Tools {
+                ffmpeg: PathBuf::from("ffmpeg"),
+                ffprobe: PathBuf::from("ffprobe"),
+            },
+            publisher: CopyPublisher,
+        };
+        let request = Request {
+            operation: "tools.crop".to_string(),
+            inputs: vec![input.clone()],
+            settings: ToolSettings {
+                crop_x: Some(4),
+                crop_y: Some(4),
+                crop_w: Some(32),
+                crop_h: Some(24),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let outcome = tools.run(&request, &Selection::inspect(&[input.clone()]));
+        let outputs = match outcome {
+            Outcome::Succeeded { outputs } => outputs,
+            Outcome::Failed { reason } => panic!("the crop failed: {:?}", reason),
+            Outcome::Cancelled => panic!("the crop was not asked to stop"),
+        };
+        let made = outputs.first().expect("the crop is there");
+        let picture = image::open(made).expect("the crop reads back");
+        assert_eq!((picture.width(), picture.height()), (32, 24));
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    #[ignore = "needs the conversion program"]
+    fn a_trim_runs_the_whole_way_from_the_wheel_path() {
+        // A trim keeps the format it was given, and there was a time when
+        // the handler only knew how to answer a named format â€” the trim
+        // was refused before it began. This walks the very path the wheel
+        // drives, so the refusal can never come back unnoticed.
+        let folder = Path::new("vendor").join("ffmpeg");
+        let ffmpeg = folder.join("ffmpeg.exe");
+        if !ffmpeg.is_file() {
+            eprintln!("the program is not there; this test needs it");
+            return;
+        }
+        let scratch = std::env::temp_dir().join("open-tangerine-trim-wheel-test");
+        std::fs::create_dir_all(&scratch).expect("the scratch folder was made");
+        let input = make_test_video(&scratch);
+
+        let tools = Tools {
+            ffmpeg_tools: crate::media::locator::Tools {
+                ffmpeg,
+                ffprobe: Path::new("vendor").join("ffmpeg").join("ffprobe.exe"),
+            },
+            publisher: CopyPublisher,
+        };
+        let request = Request {
+            operation: "tools.trim".to_string(),
+            inputs: vec![input.clone()],
+            settings: ToolSettings {
+                start_ms: Some(0),
+                end_ms: Some(1_000),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let outcome = tools.run(&request, &Selection::inspect(&[input.clone()]));
+        match outcome {
+            Outcome::Succeeded { outputs } => {
+                assert_eq!(outputs.len(), 1, "one file in, one file out");
+                assert!(outputs.first().is_some_and(|made| made.is_file()));
+            }
+            Outcome::Failed { reason } => panic!("the trim failed: {:?}", reason),
+            Outcome::Cancelled => panic!("the trim was not asked to stop"),
+        }
+        let _ = std::fs::remove_dir_all(&scratch);
     }
 }
