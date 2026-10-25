@@ -509,19 +509,23 @@ Free (no ratio) · Original (−1, the media's own) · Square · 4:3 · 3:2 ·
 - [x] Plan (this section), evidence read in the order above — Swift
       behavior before the mockups; conflicts resolved toward Swift and
       listed below.
-- [ ] Backend: ToolSettings grows `crop_x/crop_y/crop_w/crop_h` (the
+- [x] Backend (committed `5f9f3a5`): ToolSettings grows `crop_x/crop_y/crop_w/crop_h` (the
       source rectangle; `width/height` double as the optional output
       scale, exactly as resize uses them). `crop_args` builds the video
       path — `crop=W:H:X:Y` (+ `,scale=W:H` when the window says a size),
       `-c:a copy`, the target's own encoder/muxer — with w/h even-rounded
       defensively. The image path is Rust-native: decode, crop, optional
       resize, save in the input's format; svg refuses (raster crop of a
-      vector would quietly change what the file is).
-- [ ] Registry: `tools.crop` categories widen to Image + Video; a new
+      vector would quietly change what the file is). The audit fixed two
+      things on the way in: results publish beside the original (the
+      finals are looped through the same naming the other tools take),
+      and rotate/resize stay `[.image]`-only as Swift pins them — the
+      earlier widening back to video was reverted.
+- [x] Registry (committed `5f9f3a5`): `tools.crop` categories widen to Image + Video; a new
       `Requirement::AnyProcessor(&["image", "video"])` says what crop
       actually needs (the image path needs nothing, the video path needs
       the program).
-- [ ] Window: a dedicated crop window (cropwindow.rs + crop_window.slint)
+- [x] Window (committed `a4ad5bb`): a dedicated crop window (cropwindow.rs + crop_window.slint)
       — crop is timeline-neutral, and trim/split stay untouched. The
       layout-twin pattern as everywhere: the stage shows the fitted media
       with the rect over it (create/move/corner-resize hit-testing in
@@ -529,18 +533,31 @@ Free (no ratio) · Original (−1, the media's own) · Square · 4:3 · 3:2 ·
       crop-area caption, the video's scrub row (slider + step glyphs +
       timecode, the frame from the same fast seek the trim uses), the
       image's Center/Whole buttons, and a footer whose Reset puts the
-      10 % rect back and whose Run is enabled by the Swift rule.
-- [ ] Dispatch: app.rs routes `tools.crop` to the crop window (video and
-      image alike); the plain card keeps the rest.
-- [ ] Tests: unit pins for the crop stack and the fit/clamp/aspect math,
-      `crop_args` shapes (filter string, even rounding, audio copy), and
-      the registry/menu pins (the wheel stays 8 segments — crop was
-      already there); real-FFmpeg: a 3 s video cropped to an asked
-      rectangle with the output dimensions probed, and an image cropped
-      with its dimensions read back.
-- [ ] Captures: crop-video-window.png against cropVideo.webp and
-      crop-image-window.png against cropImage.webp; trim-window.png and
-      split-window.png retaken and unchanged.
+      10 % rect back and whose Run is enabled by the Swift rule. A
+      lesson the crop badge pins for keeps: every sub-component instance
+      that places itself by its box needs `x/y/width/height` at the
+      instance, the way the shell's pills do — one left unmeasured is
+      centred by the compiler and lands nowhere.
+- [x] Dispatch (committed `a4ad5bb`): app.rs routes `tools.crop` to the crop window (video and
+      image alike) on its own relay; the plain card keeps the rest.
+- [x] Tests green: 355 unit passes, 0 failures, 36 ignored (the real-FFmpeg
+      credits and the captures). The crop stack, the fit/clamp/aspect
+      math, picking (corner reach/move inset/draw-otherwise), corner
+      anchoring under a ratio, the drop rules, `crop_args` shapes
+      (filter string, even rounding, audio copy) and the registry/menu
+      pins (the wheel stays 8 segments); real-FFmpeg: a 3 s video
+      cropped to an asked rectangle with the output dimensions probed,
+      and an image cropped with its dimensions read back; a window test
+      presses the Square chip through the card's own events and the
+      rectangle comes back square.
+- [x] Captures: crop-video-window.png against cropVideo.webp and
+      crop-image-window.png against cropImage.webp — stage with the
+      orange rect and its four corner squares, the label and the two
+      rows of ten chips, the words, the video's scrub row / the image's
+      Center + Whole image, the Reset and Crop footer, all in place;
+      trim-window.png and split-window.png retaken and unchanged
+      (shell.slint, timelinewindow.rs and trim_window.slint untouched in
+      git).
 - [ ] Manual verification: drag a video → Tools wheel → Crop → draw the
       rect → Run; drag an image → the same; both results beside the
       originals.

@@ -26,9 +26,10 @@
 | B-10.0–B-10.1 | ✅ Done | Tool window shell + the real Trim Video window |
 | P0/P1 design | ✅ Done | Reference tokens + trim window at parity (B-10.4 in todo.md) |
 | B-10.5–B-10.6 | ✅ Done | Repo↔reference audit with a traceable mapping + the Split Video window at parity (B-10.5/B-10.6 in todo.md; ordering per the external reference/tangerine/MAPPING-ROADMAP.md) |
+| B-10.7 | ✅. Done | The Crop video+image window at parity (tools.crop backend + cropwindow.rs/crop_window.slint on phase/b-10-tool-windows; todo.md B-10.7) |
 
 **Current branch:** `feature/image-conversion` → phase branches `phase/b-9-*`, `phase/b-10-*` (all local, no push; merge only when the user says)
-**Tests:** 330 unit + 31 ignored (real-FFmpeg operations and the two window captures), 0 failures
+**Tests:** 355 unit + 36 ignored (real-FFmpeg operations and the four window captures), 0 failures
 
 ---
 

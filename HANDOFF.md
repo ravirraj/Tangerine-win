@@ -64,15 +64,18 @@ All `reference\…` paths above are relative to the repo root
 
 - Branch `phase/b-10-tool-windows`, tree clean. Chain ends:
   `… c3be929` (B-10.4 trim) → `e9476e1` (docs reconciliation) → `a37ae61` (split backend)
-  → `5d167db` (split window) → `90da4f9` (docs tally). Reviewable range for the whole
-  split batch: `git diff c3be929..HEAD` (11 files, +1332 −66).
-- Tools wheel now has **8** implemented ops: compress, crop, trim, **split**, rotate,
-  resize, merge, metadata. Trim (B-10.4) and Split (B-10.6) have real windows.
-- Tests at handoff: **330 unit + 31 ignored, 0 failures** (the ignored suite = real-FFmpeg
-  operation tests incl. the split one + the two window-capture tests).
-  These numbers will grow as you work; state real numbers after running.
+  → `5d167db` (split window) → `90da4f9` (docs tally) → `5f9f3a5` (crop backend)
+  → `a4ad5bb` (crop window). Reviewable range for the whole crop batch:
+  `git diff 90da4f9..HEAD` (12 files, +4107 −37).
+- Tools wheel now has **8** implemented ops: compress, crop, trim, split, rotate,
+  resize, merge, metadata. Trim (B-10.4), Split (B-10.6) and Crop (B-10.7) have
+  real windows.
+- Tests at handoff: **355 unit + 36 ignored, 0 failures** (the ignored suite =
+  real-FFmpeg operation tests incl. the two crop ones + the four window-capture
+  tests: trim, split, crop video, crop image).
 - `ToolSettings` fields today: `width, height (u32)`, `start_ms, end_ms (u64)`,
-  `points_ms: Vec<u64>` (only `tools.split` reads points).
+  `points_ms: Vec<u64>` (only `tools.split` reads points),
+  `crop_x, crop_y, crop_w, crop_h (Option<u32>)` (only `tools.crop`).
 
 ## 4. The conventions a new window must follow
 
@@ -82,6 +85,9 @@ All `reference\…` paths above are relative to the repo root
    `x:0; y:0; width: card-width; height: card-height` and position
    themselves from `Panel` properties (`{x,y,width,height}`), NOT from a
    layout container. Never use slint layout containers inside cards.
+   An instance left unmeasured is auto-centred (width 0, `x = card/2`) by
+   the compiler and lands nowhere — the crop chips bug (B-10.7); the pin
+   above is not a style preference, it is what makes the boxes reachable.
 2. **Unit system (scale-independent).** All coordinates are designed in "units"
    for a `CARD_W = 420` card and multiplied by a DPI scale factor:
    `at(|u| u * scale)`. Content stacks: trim `CONTENT_UNITS = 282` +
@@ -123,52 +129,36 @@ All `reference\…` paths above are relative to the repo root
 ## 5. The next plan (evidence-based order came from MAPPING-ROADMAP)
 
 The roadmap's P2 = shared control library built *before* per-tool bodies; P3
-items: 6 trim ✅, **7 split ✅**, **8 crop NEXT**, 9 compress+metadata,
+items: 6 trim ✅, **7 split ✅**, **8 crop ✅**, **9 compress+metadata NEXT**,
 10 audio trio, 11 redact, 12 snapshots, 13 join/merge, 14 organize PDF,
 15 annotate/frame/collage. "Resize" is NOT a reference window — its mapping
 row routes resize/crop to the Crop window; our Resize ToolCard stands until
 that polish naturally covers it.
 
-### B-10.7 — Crop video + image (P3-8), the immediate batch
+### B-10.7 — Crop video + image (P3-8) — DONE
 
-Evidence to read first (in this order):
-1. `tool-windows/cropVideo.webp` and `cropImage.webp` (visual layout);
-2. `Sources\Tools\Video\CropSpeedJoinVideoToolViews.swift` (video crop behavior —
-   same file also carries speed + join, which you will need later; extract only
-   the crop part now);
-3. `Sources\Tools\Image\CropImageToolView.swift`, `Image\ImageCanvas.swift` +
-   `Operations\VideoOps.crop` / `Operations\ImageOps.crop` for the actual math;
-4. `DESIGN-SPEC.md` for the crop controls (aspect presets, numeric fields).
+Landed as `5f9f3a5` (backend, `src/radial/tools.rs`: the real crop args —
+`crop=W:H:X:Y` from `crop_x/y/w/h`, even-rounded; the Rust-native image path;
+`finish()` publishing results beside the original by the shared naming) and
+`a4ad5bb` (window: `src/platform/windows/cropwindow.rs` +
+`src/ui/crop_window.slint`, dispatch, exports, tests). The window keeps the
+crop's own geometry and reads the pointer itself — corner reach, track, draw —
+with the aspect ratio laid on by the presets, the way Swift's canvas does.
 
-Known starting points in our code:
-- Backend today is a **center-half placeholder**: `tools.rs` `run_one` maps
-  `"tools.crop"` to `crop=iw/2:ih/2:(iw-iw/2)/2:(ih-iw/2)/2`. The registry row is
-  `categories: [Image]` — a discrepancy to resolve: the reference crops BOTH
-  video and image, and the roadmap marks cropVideo P3-8. Expected outcome:
-  either widen the category list per reference eligibility, or keep two
-  behaviors routed by input kind (the handler already branches by op id).
-- `ToolSettings` will need crop fields (e.g. `crop: {x, y, w, h}` or aspect +
-  preset). Follow the B-10.6 pattern: the window computes what it can; the
-  backend stays "cut to the asked rectangle".
-- The window: crop is a *timeline-neutral* tool — do NOT assume it belongs in
-  the timeline window. Decide after reading the mockups; the generic
-  `toolwindow.rs`/`tool_window.slint` plain-card shell is the likely host, with
-  the image crop needing a canvas to drag on (ZoomableView in Swift is the
-  behavior hint). The card stack + hit-testing twin pattern applies either way.
+The audit fixed two backend mistakes before they landed: results publish
+beside the input through the same `finish()` loop every other tool takes,
+and `tools.rotate`/`tools.resize` stay `[.image]`-only (an earlier widening
+to video was reverted — Swift pins both to image).
 
-Plan the batch IN `todo.md` FIRST as B-10.7 with checkboxes and a
-deliberate-differences area (B-10.5/B-10.6 are the template), then implement
-backend → registry/dispatch → window → tests → captures, committing in
-2–4 reviewable conventional commits authored Ravi, never pushed.
+Deliberate differences are recorded at the bottom of the B-10.7 section of
+`todo.md` (no W/H fields — keep-size always; no edge-midpoint handles; four
+corner squares, not circles; run label "Crop"; a fitted stage instead of the
+pinch-zoom canvas; no filmstrip — crop is timeline-neutral).
 
-Acceptance criteria:
-- cropVideo.webp / cropImage.webp parity with a screenshot pair each;
-- real-FFmpeg test(s) cutting a real fixture to an asked rectangle (and image
-  crop real test);
-- crop output preserves input format beside the original (`File::BesideAsInput`
-  semantics, collision Rename) with Swift's naming rules if it names files;
-- trim + split captures re-verified unchanged;
-- unit + ignored suites green with refreshed counts in PLAN.md/todo.md.
+Acceptance evidence: `target/shots/crop-video-window.png` +
+`crop-image-window.png` against the two mockups; `trim-window.png` +
+`split-window.png` retaken unchanged; 355 unit + 36 ignored, 0 failures.
+Manual drag-and-run verification is the one thing a person still has to do.
 
 ### The queue after B-10.7 (each one reads its own evidence first)
 
@@ -201,9 +191,9 @@ the split card's is inline; extract to a shared `Stepper` when P3-9 needs one.)
 
 ```
 cargo check --tests        # must be 0 before committing anything
-cargo test                 # unit suite; at handoff: 330 passed, 31 ignored
-cargo test -- --ignored    # real-FFmpeg ops + window captures; at handoff: 31 passed
-cargo test capture -- --ignored --nocapture   # regenerate the two window shots
+cargo test                 # unit suite; at handoff: 355 passed, 36 ignored
+cargo test -- --ignored    # real-FFmpeg ops + window captures; at handoff: 36 passed
+cargo test capture -- --ignored --nocapture   # regenerate the four window shots
 ```
 - Real tests need `vendor\ffmpeg\*.exe` (committed? no — vendored locally; if
   absent they print "the program is not there" and pass vacuously — never take
@@ -215,11 +205,30 @@ cargo test capture -- --ignored --nocapture   # regenerate the two window shots
   when a command's success matters, capture it:
   `cmd > $null 2>&1; Write-Output "EXIT=$LASTEXITCODE"`.
 
-## 7. Gotchas learned the hard way (B-10.6)
+## 7. Gotchas learned the hard way (B-10.6 + B-10.7)
 
 - **Slint setters are generated only for the ROOT component's in-properties.**
   To reach a sub-component property (e.g. `CardFooter.run-enabled`), add a
   passthrough in-property on the card and wire it in the instance.
+- **Sub-component instances must be measured.** An instance with no
+  `x/y/width/height` at the instantiation site is auto-centred by the slint
+  compiler (`x = card/2`, width 0): its inner absolutely-positioned content
+  draws off-window and its TouchAreas sit outside every hit-test — the
+  chips answered nothing until each `Chip {…}` got the four-line pin the
+  pills already had. The working double was `PillButton` with the pin; the
+  broken one was `Chip` without it (B-10.7).
+- **Never re-enter a thread-local that is already borrowed.** A helper
+  called from inside a `HOST.with(borrow_mut)` closure must not itself read
+  `HOST` — the crop's first `stand_media` re-read the stage through the
+  thread-local instead of taking it as an argument and panicked
+  (`RefCell already borrowed`) in the plain `show_for` path. Take geometry
+  as function arguments; the timeline window's own code never nests Borrows.
+- **Do not hold the HOST borrow while dispatching input events.**
+  `software.window().dispatch_event(...)` runs slint callbacks *inside* the
+  call, and a callback (`choose_aspect`, the pills' answers) reads HOST on
+  its own. The window proc clones the `Rc<MinimalSoftwareWindow>` out of
+  the CELL, dispatches without the borrow, then draws. Same shape the
+  trim window already avoids by never dispatching under a borrow.
 - **Array properties (`[float]`)**: from Rust use
   `std::rc::Rc::new(slint::VecModel::from(vec)).into()` — `Vec` alone is not a
   `Model`.
@@ -233,5 +242,5 @@ cargo test capture -- --ignored --nocapture   # regenerate the two window shots
 - One test run exited `0xC0000409` (fail-fast) during a back-to-back
   unit+ignored run; it never reproduced (three clean reruns, incl. the identical
   sequence). If you see it once, rerun; record it if you can make it stable.
-- Docs: exactly-phrase test counts from the runner ("330 unit + 31 ignored
-  (real-FFmpeg operations and the two window captures), 0 failures").
+- Docs: exactly-phrase test counts from the runner ("355 unit + 36 ignored
+  (real-FFmpeg operations and the four window captures), 0 failures").
