@@ -231,6 +231,10 @@ pub struct ToolSettings {
     ///
     /// Only `tools.speed` reads this.
     pub speed_percent: Option<u32>,
+    /// The page assembly sequence for an organized PDF: (source_doc_index, source_page_index, rotation_degrees).
+    ///
+    /// Only `tools.organize_pdf` reads this.
+    pub pdf_pages: Vec<(usize, usize, i32)>,
 }
 
 impl ToolSettings {

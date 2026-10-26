@@ -825,6 +825,20 @@ pub const OPERATIONS: &[Operation] = &[
         implemented: true,
         requires: Requirement::Processor("audio"),
     },
+    Operation {
+        id: "tools.organize_pdf",
+        label: "Organize",
+        detail: "Organize PDF pages",
+        icon: IconKind::Document,
+        mode: RadialMode::Tools,
+        categories: &[FileKind::Pdf],
+        batch: Batch::SeveralAlike,
+        folders: false,
+        output: Output::Beside("pdf"),
+        collision: Collision::Rename,
+        implemented: true,
+        requires: Requirement::Processor("pdf"),
+    },
     // ------------------------------------------------------ file actions
     Operation {
         id: "actions.copy-path",
@@ -1633,6 +1647,7 @@ mod tests {
             "tools.metadata",
             "tools.normalize",
             "tools.channels",
+            "tools.organize_pdf",
             "actions.copy-path",
             "actions.duplicate",
             "actions.rename",

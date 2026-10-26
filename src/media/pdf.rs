@@ -223,6 +223,63 @@ pub fn merge(inputs: &[PathBuf], output: &Path) -> Result<(), PdfError> {
     Ok(())
 }
 
+/// A specification for one page in an assembled PDF: which document from
+/// the inputs list, which page within that document, and how many degrees
+/// clockwise it is turned.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PageSpec {
+    pub source_doc: usize,
+    pub source_index: usize,
+    pub rotation_degrees: i32,
+}
+
+/// Assembles a new PDF from selected pages and rotations of source documents.
+pub fn assemble(
+    inputs: &[PathBuf],
+    pages: &[PageSpec],
+    output: &Path,
+) -> Result<(), PdfError> {
+    if inputs.is_empty() || pages.is_empty() {
+        return Err(PdfError::NotAPdf);
+    }
+    let pdfium = pdfium()?;
+    let mut docs = Vec::with_capacity(inputs.len());
+    for input in inputs {
+        let doc = pdfium
+            .load_pdf_from_file(input, None)
+            .map_err(|_| PdfError::NotAPdf)?;
+        docs.push(doc);
+    }
+    let mut destination = pdfium
+        .create_new_pdf()
+        .map_err(|_| PdfError::NotAPdf)?;
+
+    for (dest_idx, spec) in pages.iter().enumerate() {
+        let source = docs.get(spec.source_doc).ok_or(PdfError::NotAPdf)?;
+        destination
+            .pages_mut()
+            .copy_page_from_document(source, spec.source_index as i32, dest_idx as i32)
+            .map_err(|_| PdfError::NotAPdf)?;
+
+        let rot = match ((spec.rotation_degrees % 360) + 360) % 360 {
+            90 => PdfPageRenderRotation::Degrees90,
+            180 => PdfPageRenderRotation::Degrees180,
+            270 => PdfPageRenderRotation::Degrees270,
+            _ => PdfPageRenderRotation::None,
+        };
+
+        if let Ok(mut page) = destination.pages_mut().get(dest_idx as i32) {
+            page.set_rotation(rot);
+        }
+    }
+
+    if destination.pages().is_empty() {
+        return Err(PdfError::NotAPdf);
+    }
+    destination.save_to_file(output).map_err(|_| PdfError::NotAPdf)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -385,5 +442,31 @@ mod tests {
 
         let pages = render_pages(&merged_path, 72, Encoding::Png).expect("rendered merged pages");
         assert_eq!(pages.len(), 4, "combined document has all 4 pages");
+    }
+
+    #[test]
+    #[ignore = "needs pdfium.dll"]
+    fn assemble_reorders_and_rotates_pages() {
+        let Some(_) = library() else {
+            eprintln!("the library is not there; this test needs it");
+            return;
+        };
+        let folder = TempFolder::new("assemble_test");
+        let src = two_page_pdf(&folder.path);
+        let out = folder.path.join("organized.pdf");
+
+        // Take page 1 first rotated 90°, then duplicate page 0 rotated 0°
+        let specs = [
+            PageSpec { source_doc: 0, source_index: 1, rotation_degrees: 90 },
+            PageSpec { source_doc: 0, source_index: 0, rotation_degrees: 0 },
+        ];
+        assemble(&[src], &specs, &out).expect("assembled pdf");
+        assert!(out.is_file(), "output exists");
+
+        let pdfium = pdfium().expect("pdfium library");
+        let doc = pdfium.load_pdf_from_file(&out, None).expect("load assembled");
+        assert_eq!(doc.pages().len(), 2);
+        assert_eq!(doc.pages().get(0).expect("p0").rotation().expect("rot"), PdfPageRenderRotation::Degrees90);
+        assert_eq!(doc.pages().get(1).expect("p1").rotation().expect("rot"), PdfPageRenderRotation::None);
     }
 }

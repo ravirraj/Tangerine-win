@@ -1050,6 +1050,92 @@ impl<P: Publisher> Tools<P> {
         self.publish(&dest_names, &temporary)
     }
 
+    /// Assembles an organized PDF from pages and rotations specified in settings,
+    /// or copies all pages if none were specified.
+    fn run_organize_pdf(&self, request: &Request) -> Outcome {
+        if request.inputs.is_empty() {
+            return Outcome::Failed {
+                reason: Failure::InvalidInput("at least one file is needed to organize".to_string()),
+            };
+        }
+        let first = &request.inputs[0];
+        let stem = first
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "document".to_string());
+        let temporary = first.with_file_name(format!("{stem}.organize-part.pdf"));
+
+        let specs: Vec<crate::media::pdf::PageSpec> = if request.settings.pdf_pages.is_empty() {
+            // Default: all pages from all inputs in order, 0 rotation
+            let mut all_specs = Vec::new();
+            for (doc_idx, input) in request.inputs.iter().enumerate() {
+                match crate::media::pdf::render_pages(input, 72, crate::media::pdf::Encoding::Png) {
+                    Ok(rendered) => {
+                        for page_idx in 0..rendered.len() {
+                            all_specs.push(crate::media::pdf::PageSpec {
+                                source_doc: doc_idx,
+                                source_index: page_idx,
+                                rotation_degrees: 0,
+                            });
+                        }
+                    }
+                    Err(err) => {
+                        let name = match err {
+                            crate::media::pdf::PdfError::LibraryMissing => ToolError::ToolFailed.name(),
+                            _ => ToolError::ReadError.name(),
+                        };
+                        return Outcome::Failed {
+                            reason: Failure::Error(format!("the file could not be read: {name}")),
+                        };
+                    }
+                }
+            }
+            all_specs
+        } else {
+            request
+                .settings
+                .pdf_pages
+                .iter()
+                .map(|&(source_doc, source_index, rotation_degrees)| {
+                    crate::media::pdf::PageSpec {
+                        source_doc,
+                        source_index,
+                        rotation_degrees,
+                    }
+                })
+                .collect()
+        };
+
+        if specs.is_empty() {
+            return Outcome::Failed {
+                reason: Failure::InvalidInput("the document would have no pages".to_string()),
+            };
+        }
+
+        if let Err(err) = crate::media::pdf::assemble(&request.inputs, &specs, &temporary) {
+            let name = match err {
+                crate::media::pdf::PdfError::LibraryMissing => ToolError::ToolFailed.name(),
+                _ => ToolError::ReadError.name(),
+            };
+            return Outcome::Failed {
+                reason: Failure::Error(format!("the pages could not be organized: {name}")),
+            };
+        }
+
+        let dest_names = metadata_final_names(first, "organized", "pdf");
+        match self.publish(&dest_names, &temporary) {
+            Ok(output) => Outcome::Succeeded {
+                outputs: vec![output],
+            },
+            Err(reason) => {
+                let name = reason.name();
+                Outcome::Failed {
+                    reason: Failure::Error(format!("the file could not be saved: {name}")),
+                }
+            }
+        }
+    }
+
     /// Joins multiple videos into one MP4 movie, clips scaled to fit the first clip.
     fn merge_videos(&self, inputs: &[PathBuf]) -> Result<PathBuf, ToolError> {
         let first = &inputs[0];
@@ -2922,6 +3008,12 @@ impl<P: Publisher> Handler for Tools<P> {
         // concatenated into a single movie, or PDFs merged page by page.
         if request.operation == "tools.merge" {
             return self.run_merge(request, &SystemRunner);
+        }
+
+        // An organize reorders, duplicates, removes, or rotates pages of
+        // one or more PDF documents into a newly assembled PDF.
+        if request.operation == "tools.organize_pdf" {
+            return self.run_organize_pdf(request);
         }
 
         let manifest = Manifest::get();
@@ -5571,6 +5663,84 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&scratch1);
         let _ = std::fs::remove_dir_all(&scratch2);
+    }
+
+    #[test]
+    fn organize_pdf_empty_inputs_fails() {
+        let tools = Tools {
+            ffmpeg_tools: crate::media::locator::Tools {
+                ffmpeg: PathBuf::from("ffmpeg"),
+                ffprobe: PathBuf::from("ffprobe"),
+            },
+            publisher: CopyPublisher,
+        };
+        let request = Request {
+            operation: "tools.organize_pdf".to_string(),
+            inputs: vec![],
+            ..Default::default()
+        };
+        let outcome = tools.run(&request, &Selection::inspect(&[]));
+        assert!(matches!(outcome, Outcome::Failed { .. }));
+    }
+
+    #[test]
+    #[ignore = "needs pdfium.dll"]
+    fn organize_pdf_assembles_selected_pages_with_rotation() {
+        if crate::media::pdf::library().is_none() {
+            eprintln!("pdfium.dll is not there; this test needs it");
+            return;
+        }
+        let scratch = std::env::temp_dir().join(format!("ot-pdf-org-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&scratch);
+        let pdf = scratch.join("my_doc.pdf");
+
+        let doc_bytes = {
+            let content = b"BT /F1 12 Tf 20 50 Td (Page) Tj ET";
+            format!(
+                "%PDF-1.4\n\
+                 1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n\
+                 2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n\
+                 3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] \
+                 /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >> endobj\n\
+                 4 0 obj << /Length {} >> stream\n{}\nendstream endobj\n\
+                 5 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj\n\
+                 trailer << /Root 1 0 R /Size 6 >>",
+                content.len(),
+                String::from_utf8_lossy(content)
+            )
+        };
+        std::fs::write(&pdf, &doc_bytes).expect("pdf written");
+
+        let tools = Tools {
+            ffmpeg_tools: crate::media::locator::Tools {
+                ffmpeg: PathBuf::from("ffmpeg"),
+                ffprobe: PathBuf::from("ffprobe"),
+            },
+            publisher: CopyPublisher,
+        };
+        let request = Request {
+            operation: "tools.organize_pdf".to_string(),
+            inputs: vec![pdf.clone()],
+            settings: ToolSettings {
+                pdf_pages: vec![(0, 0, 90), (0, 0, 0)],
+                ..Default::default()
+            },
+        };
+        let outcome = tools.run(&request, &Selection::inspect(&[pdf.clone()]));
+        let outputs = match outcome {
+            Outcome::Succeeded { outputs } => outputs,
+            Outcome::Failed { reason } => panic!("organize pdf failed: {:?}", reason),
+            Outcome::Cancelled => panic!("cancelled"),
+        };
+        let made = outputs.first().expect("output exists");
+        assert!(made.is_file(), "organized file exists: {:?}", made);
+        assert!(made.to_string_lossy().contains("my_doc organized.pdf"));
+
+        let pages = crate::media::pdf::render_pages(made, 72, crate::media::pdf::Encoding::Png)
+            .expect("rendered pages");
+        assert_eq!(pages.len(), 2, "assembled document has 2 pages");
+
+        let _ = std::fs::remove_dir_all(&scratch);
     }
 
     #[test]

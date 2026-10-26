@@ -523,7 +523,7 @@ mod tests {
         }));
         assert_eq!(c.state(), InteractionState::WheelVisible);
         assert_eq!(c.mode(), RadialMode::Tools);
-        assert_eq!(c.segments().len(), 15, "the tools wheel counts its own");
+        assert_eq!(c.segments().len(), 16, "the tools wheel counts its own");
         assert_eq!(effects, vec![Effect::UpdateWheel]);
     }
 
