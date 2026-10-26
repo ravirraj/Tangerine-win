@@ -867,13 +867,14 @@ DESIGN-SPEC.md controls for redact (§5, §15, §16):
 - §17 Image: redact canvas + Style/Color rows.
 
 Decisions asked and answered (before building):
-- None yet — this is Phase A.
+- Redact backend design (recorded with the audit round, `756c139`): `RedactStyle` Solid (default, per mockup)/Blur/Pixelate; areas in thousandths of the file's own size so one drawn rectangle lands on every file of a batch; default strength half; effect = 2%..30% of the smaller side; suffixes "redacted"/"bleeped".
+- Bleep tone amplitude 0.5 (−6 dBFS) — asked of the user 2026-10-26 (the Swift level was not recorded); stands in the differences below.
 
 Progress & Plan:
-- [ ] Phase A — Evidence & Audit: mockups listed, Swift sources read (RedactImageToolView, SnapshotsRedactVideoToolViews, AudioToolViews/RedactAudioToolView), operations read (FaceBlur, ImageOps.redact, VideoOps.redact, AudioOps.bleep), design specs read (§5/§6/§7/§15/§16), todo section initialized.
-- [ ] Phase B.1 — Redact image backend: register `tools.redact_image` in `registry.rs`, add `run_redact_image` + `redact_image_one` in `tools.rs` (image crate compositing: blur/pixelate/solid boxes), `ToolSettings` fields (redact_style, redact_strength, redact_color), unit tests + real FFmpeg test.
-- [ ] Phase B.2 — Redact video backend: register `tools.redact_video` in `registry.rs`, add `run_redact_video` + `redact_video_one` in `tools.rs` (FFmpeg drawbox/boxblur/pixellate filters with per-area time enable), unit tests + real FFmpeg test.
-- [ ] Phase B.3 — Bleep audio backend: register `tools.bleep` in `registry.rs`, add `run_bleep` + `bleep_one` in `tools.rs` (FFmpeg filter_complex mute+sine tone), unit tests + real FFmpeg test.
+- [x] Phase A — Evidence & Audit: mockups listed, Swift sources read (RedactImageToolView, SnapshotsRedactVideoToolViews, AudioToolViews/RedactAudioToolView), operations read (FaceBlur, ImageOps.redact, VideoOps.redact, AudioOps.bleep), design specs read (§5/§6/§7/§15/§16), todo section initialized. (Committed with the audit round, `756c139`.)
+- [x] Phase B.1 — Redact image backend: register `tools.redact_image` in `registry.rs`, add `run_redact_image` + `redact_image_one` in `tools.rs` (image crate compositing: blur/pixelate/solid boxes), `ToolSettings` fields (redact_style, redact_strength, redact_color), unit tests + real FFmpeg test. (Commit `df1afed` — solid paste / gaussian smear / nearest-neighbor squares composited in Rust, no conversion program; 3 unit + 3 real pixel tests. The pixelate middle asserts a dark band, not exact black: the image crate's averaging filter bleeds ~12% of the page into block centers.)
+- [x] Phase B.2 — Redact video backend: register `tools.redact_video` in `registry.rs`, add `run_redact_video` + `redact_video_one` in `tools.rs` (FFmpeg drawbox/boxblur/pixellate filters with per-area time enable), unit tests + real FFmpeg test. (Commit `dcfba7a` — drawbox for solid, but the build carries no boxblur/pixelize: a smear is crop made small and laid back large, squares laid back with `flags=neighbor`; per-area `enable='between(t,start,end)'` kept, no range = whole day-sentinel. Copy made again in the source container at constant `-q:v 5` — see differences below. 5 unit + 1 real mixed-graph test.)
+- [x] Phase B.3 — Bleep audio backend: register `tools.bleep` in `registry.rs`, add `run_bleep` + `bleep_one` in `tools.rs` (FFmpeg filter_complex mute+sine tone), unit tests + real FFmpeg test. (Commit `2ed6e62` — the planned filter graph is unreachable on this build (no sine/volume/amix/adelay/lavfi), so bleep runs the normalize path: decode to 16-bit PCM through the program, drop the marked stretches and synthesize the tone in Rust at half scale, write back into the container. 6 unit + 1 real test.)
 - [ ] Phase C.1 — Redact photo window: `redactimagewindow.rs` + `redact_image_window.slint` (RectangleEditorCanvas-equivalent with drag/resize/move handles, style picker, strength slider, color picker, areas list), capture `target/shots/redact-image-window.png`, verify against redactImage.webp.
 - [ ] Phase C.2 — Redact video window: `redactvideowindow.rs` + `redact_video_window.slint` (frame stage + RangeTrack time ranges per area), capture `target/shots/redact-video-window.png`, verify against redactVideo.webp.
 - [ ] Phase C.3 — Bleep audio window: `bleepwindow.rs` + `bleep_window.slint` (RangeTrack with markers, frequency slider, timecode fields), capture `target/shots/bleep-window.png`, verify against redactAudio.webp.
@@ -882,6 +883,11 @@ Progress & Plan:
 Deliberate differences from the mockups, and why:
 - Face detection (Apple Vision) is Mac-only; on Windows redact works via hand-drawn areas only. "Find faces" / "Hide faces" controls are stubbed — not implemented — with a note in the UI. Recorded so P3-15 doesn't re-open this.
 - Native Windows title bars ("Redact image", "Redact video", "Bleep") instead of frameless centered headers — the B-10.4 chrome decision every window keeps.
+- The vendored FFmpeg 9.0.2 build carries few filters (probed 2026-10-26: drawbox/crop/scale/split/overlay/format on the picture side, only aformat/aresample/atrim on the sound side; no boxblur, no pixelize, no sine/volume/amix/adelay, no lavfi input demuxer, no H.264/HEVC encoders). Video smears and squares are built from crop+scale+overlay; the bleep tone is synthesized in Rust PCM the way normalize processes volume. Any future filter-based plan must be checked against `-filters` first.
+- Redact video keeps the file's own container; the Swift's `VideoOps.redact` always wrote MP4. House keeps containers where no conversion was asked for.
+- Redact video re-encodes the picture at a constant quality (`-q:v 5` on the manifest encoder) instead of a bitrate picked from a target size — a redaction is not about the size.
+- Bleep tone level is half of full scale (−6 dBFS), the same tone in every channel; the reference's level was not recorded in the Phase A notes. Asked and confirmed 2026-10-26.
+- Photo pixelate: the image crate's resize averages, so a little of the surroundings bleeds into block centers (~12% at test sizes); the test asserts the center stays dark, not that it stays exactly black.
 
 - [ ] Change video speed (setpts/atempo, preserve pitch)
 - [ ] Split video (custom points or equal parts, one output folder)
