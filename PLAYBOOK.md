@@ -193,6 +193,22 @@ $before | Out-String | Set-Content "$env:LOCALAPPDATA\Temp\opencode\shots-before
 *intended* to change that window's pixels. `bisect-*`, `trim-after*`,
 `crop-strip/footer/artifact` are old debug artifacts — ignore them.
 
+**Amended by the B-10.11 audit (2026-10-26): the byte gate is narrower than
+this.** The system-drawn title band (title text, minimize/maximize/close
+glyphs) flips between a grayscale antialias face and a ClearType subpixel
+face from run to run — same glyphs in the same places, different edge
+pixels. App-drawn surfaces never moved: every buffer shot and window body
+matched across five capture runs at one HEAD. So:
+1. **Buffer pngs are the byte gate** (plus window bodies) — they must be
+   byte-identical after a change you did not mean to draw.
+2. A window-png diff confined to the title band is NOT a regression.
+   Judge it with a pixel mask (a System.Drawing red-mask diff was used in
+   the B-10.11 audit; scripts live in `%LOCALAPPDATA%\Temp\opencode\audit-runs\`).
+3. Disk hashes alone never proved determinism — they compare old bytes
+   with old bytes. Re-render, then compare via (1) + (2).
+`capture_probe_the_metadata_window_thrice` (`metadatawindow.rs`, added in
+`95f3f15`) captures one window three times per run as face-race evidence.
+
 `target\shots\<tool>-buffer.png` = what our renderer drew (pure card
 truth); `<tool>-window.png` = what Windows composited (real chrome). Both
 must match the mockup; read both.

@@ -74,14 +74,26 @@ All `reference\…` paths above are relative to the repo root
   → `bee8c6e` (normalize volume window host + Slint card)
   → `3380dbd` (convert audio channels backend)
   → `42b08d8` (convert audio channels window host + Slint card)
-  → `6b5dbd8` (unify normalize volume and audio channels window UI with Windows shell standard).
+  → `6b5dbd8` (unify normalize volume and audio channels window UI with Windows shell standard)
+  → `aeeba44` (docs: HANDOFF unification note) → `1c01ef3` (chrome-aware outer
+  size) → `bf62786` (titlebar chrome parity fixes)
+  → `0efe153` (docs: Redact Phase A evidence and plan for B-10.10)
+  → `95f3f15` (must-use warnings quieted in the new window hosts, dead metadata
+  code dropped, three-shot capture probe test added). The 2026-10-26 audit round
+  over these twenty commits is recorded in `todo.md` B-10.11; the capture-hash
+  protocol it amended lives in PLAYBOOK §3.
 - Tools wheel now has **10** implemented ops: compress, crop, trim, split, rotate,
   resize, merge, metadata, normalize, channels. Dedicated windows exist for
   Trim Video, Split Video, Crop Video/Image, Compress, Edit Metadata, Trim Audio,
   Normalize Volume, and Convert Audio Channels matching reference behavior and visual mockups.
-- Tests at handoff: **408 unit + 51 ignored, 0 failures** (real-FFmpeg operation
-  tests + window captures: trim, split, crop video, crop image, compress,
-  metadata, trim-audio, normalize, channels).
+- Tests at handoff: **408 unit + 52 ignored, 0 failures** (`cargo test`:
+  `test result: ok. 408 passed; 0 failed; 52 ignored` — real-FFmpeg operation
+  tests, the 10 window captures (trim, split, crop video, crop image,
+  compress, metadata, trim-audio, normalize, channels), and the capture
+  face probe from `95f3f15`; `cargo test -- --ignored`:
+  `52 passed; 0 failed … finished in 10.05s`). Warnings: **43**
+  (was 60 — `95f3f15` removed the new-window-host must-use noise and the
+  dead metadata window code; pre-existing crop/timeline/toolwindow noise stays).
 - `ToolSettings` fields today: `width, height (u32)`, `start_ms, end_ms (u64)`,
   `points_ms: Vec<u64>`, `crop_x, crop_y, crop_w, crop_h (Option<u32>)`,
   `compress_strong: bool`, `target_bytes: Option<u64>`,
@@ -228,15 +240,18 @@ IconButton, PillButton, TimelineRange with markers/has-range, RoundCheckbox).
 
 ```
 cargo check --tests        # must be 0 before committing anything
-cargo test                 # unit suite; at handoff: 381 passed, 45 ignored
-cargo test -- --ignored    # real-FFmpeg ops + window captures; at handoff: 36 passed
-cargo test capture -- --ignored --nocapture   # regenerate the four window shots
+cargo test                 # unit suite; at handoff: 408 passed, 0 failed, 52 ignored
+cargo test -- --ignored    # real-FFmpeg ops + captures; at handoff: 52 passed, 0 failed
+cargo test capture -- --ignored --nocapture   # regenerate the window shots
 ```
 - Real tests need `vendor\ffmpeg\*.exe` (committed? no — vendored locally; if
   absent they print "the program is not there" and pass vacuously — never take
   that as success when claiming FFmpeg work).
 - After any change touching `shell.slint` or `timelinewindow.rs`, re-run BOTH
   capture tests and eyeball `trim-window.png` + `split-window.png`.
+- Window-shot byte diffs confined to the title band are the capture face
+  race (grayscale vs ClearType), not a regression — PLAYBOOK §3's amended
+  protocol is the rule; buffer shots are the byte gate.
 - Shell quirks to avoid noise: PowerShell has **no `&&`**
   (use `;` or separate calls); `Select-String` exits **1** on no-match —
   when a command's success matters, capture it:

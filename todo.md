@@ -699,8 +699,12 @@ Decisions asked and answered (2026-10-25, with the question tool):
 - [x] Dispatch: app.rs routes `tools.compress` and `tools.metadata` to
       their respective dedicated windows.
 - [x] Tests green: 381 unit passed, 0 failed, 45 ignored; all 6 baseline
-      window capture hashes byte-identical; metadata-window.png matches
-      mockup at 100% visual parity.
+      window capture hashes byte-identical on disk. (Re-worded by the
+      B-10.11 audit: those hashes compared disk bytes, not fresh renders —
+      a re-render flips the system-drawn title band, see B-10.11 Finding 1.
+      And "matches mockup at 100% visual parity" was overstated: the
+      window follows the Swift form-and-presets design rather than the
+      mockup's raw tag list; the deliberate differences above record where.)
 - [ ] Manual verification (a person): drag a file → wheel → Compress →
       run with and without a target size; drag a picture → wheel →
       Metadata → change a field, remove all; results beside.
@@ -755,15 +759,86 @@ Progress & Plan:
 - [x] Phase A — Evidence & Audit: mockups read (`trimAudio.webp`, `normalizeAudio.webp`, `audioChannels.webp`, `press/audio-tools.png`), Swift sources read (`AudioToolViews.swift`, `AudioOps.swift`), design questions answered, todo section initialized.
 - [x] Phase B.1 — Trim Audio Backend: widen `tools.trim` in `registry.rs` to accept `FileKind::Audio`, verify audio stream-copy args, unit test + real FFmpeg trim audio test (committed `453681b`).
 - [x] Phase C.1 — Trim Audio Window: add waveform generator in `src/media/audio.rs` (PCM extraction, peak sampling, silence detection, strip rendering), adapt `timelinewindow.rs` / `trim_window.slint` for audio mode (waveform strip on elevated bg with dotted centerline, start/end timecodes, silence checkbox, play selection button), capture `target/shots/trim-audio-window.png` and verify against `trimAudio.webp`.
-- [ ] Phase B.2 — Normalize Volume Backend: register `tools.normalize` in `registry.rs`, add `normalize_args` with `loudnorm` filter in `tools.rs`, unit tests + real FFmpeg test.
-- [ ] Phase C.2 — Normalize Volume Window & Shared Slider: build `Slider` in `shell.slint`, create `normalizewindow.rs` and `normalize_window.slint`, capture `target/shots/normalize-window.png`.
-- [ ] Phase B.3 — Audio Channels Backend: register `tools.channels` in `registry.rs`, add `channels_args` with `pan` filter in `tools.rs`, unit tests + real FFmpeg test.
-- [ ] Phase C.3 — Audio Channels Window: create `channelswindow.rs` and `channels_window.slint`, capture `target/shots/channels-window.png`.
-- [ ] Full regression check: 381+ tests, all baseline window captures byte-identical.
+- [x] Phase B.2 — Normalize Volume Backend: register `tools.normalize` in `registry.rs`, add `normalize_args` with `loudnorm` filter in `tools.rs`, unit tests + real FFmpeg test (committed `9584c9a`; built as PCM peak gain in-process instead of `loudnorm` args, honoring the question-tool outcome).
+- [x] Phase C.2 — Normalize Volume Window & Shared Slider: build `Slider` in `shell.slint`, create `normalizewindow.rs` and `normalize_window.slint`, capture `target/shots/normalize-window.png` (shared `LabeledSlider` at `df67df1`, window at `bee8c6e`).
+- [x] Phase B.3 — Audio Channels Backend: register `tools.channels` in `registry.rs`, add `channels_args` with `pan` filter in `tools.rs`, unit tests + real FFmpeg test (committed `3380dbd`; built as PCM pan matrix in-process, five modes per the Swift).
+- [x] Phase C.3 — Audio Channels Window: create `channelswindow.rs` and `channels_window.slint`, capture `target/shots/channels-window.png` (committed `42b08d8`).
+- [ ] Full regression check: 408+ tests, all baseline window captures byte-identical (see audit below for the titleband-capture caveat).
 
 Deliberate differences from the mockups, and why:
 - Native Windows title bar ("Trim", "Normalize", "Convert channels") with left alignment and close top-right — matching all tool windows.
 - Keyboard walk (Tab, Shift+Tab, Arrow keys, Enter to run, Esc to close) preserved across all audio tool windows.
+- Convert channels shows one waveform strip instead of the mockup's separate
+  L and R preview lanes, and the mode row is five pills (Stereo/Mono/Left/Right/Swap)
+  instead of "Output: Mono | Stereo" — the Swift behavior authority has all five
+  remapping modes (`channels_args` audit above); one strip serves when L and R
+  are identical at 100%. The per-lane play chips collapse into one transport
+  chip. (Recorded by the 2026-10-26 audit round; built earlier in `42b08d8`.)
+
+### B-10.11 Audit of the P3-9/P3-10 batches (2026-10-26)
+A second-pair-of-eyes round over the twenty unreviewed commits (P3-9 Compress+Metadata,
+P3-10 Audio Trio, chrome fixes, Redact Phase A). Everything below was verified by this
+session alone — run, read, diffed — not carried over from the batch docs.
+
+Runner lines (this session, at `0efe153` + audit commits):
+- `cargo test`: **408 passed; 0 failed; 51 ignored** at the audit start.
+- `cargo test capture -- --ignored --nocapture`: **`10 passed; 0 failed; 0 ignored;
+  449 filtered out; finished in 3.04s`** — 10 window captures, all green.
+- After the lint commit `95f3f15` (probe test added): 11 capture tests run,
+  **11 passed; 0 failed**, full-suite expected 408/0/52.
+- Warnings: 60 → **43** (`95f3f15` cleaned 15 must-use/import sites + 2 dead-code
+  items in the new window hosts; pre-existing crop/timeline/toolwindow noise left).
+
+FINDING 1 — window-capture titles are run-nondeterministic (system-side):
+- Re-running the same captures at the same HEAD changed bytes in six window pngs
+  (compress ×2, metadata, split, trim, crop-video); masks show **every differing
+  pixel is a glyph of the system-drawn titlebar** (title text, minimize dash,
+  maximize square, close X), never app content. Sample pixels show the two faces:
+  perfectly-gray AA (a=(159,159,159)) vs ClearType subpixel fringe (b=(33,34,35)).
+- The app-drawn surfaces are perfectly deterministic: every buffer shot (7) and
+  every window body has matched across **five capture runs** at this HEAD.
+- `capture_probe_the_metadata_window_thrice` (added in `95f3f15`): three
+  back-to-back captures of one window matched in-run (a=b=c=`EC816619…`,
+  twice), then once flipped between calls after a pause (a=b=`6FA8DF52…`,
+  c=`E09DC2F8…`). The face is a momentary system state, rarely flipping.
+- Consequences for the baseline-hash protocol:
+  1. **Buffer captures are the byte gate** — window-body pixels too.
+  2. Window png byte diffs confined to the titleband are NOT regressions;
+     judge with a pixel mask (PowerShell System.Drawing scripts used this round).
+  3. Docs claiming "all baseline window captures byte-identical" were only ever
+     comparing disk bytes, not re-renders; recorded window hashes are approximate.
+  Recorded in PLAYBOOK §protocol and HANDOFF §3.
+
+FINDING 2 — compress video codec row is a ghost (needs a decision):
+- The card offers "Video codec: H.264 | HEVC" (Swift parity) with hints
+  ("H.264 plays everywhere."), but `video_compress_args` always emits
+  `source.write.encoder` (mpeg4 for mp4/mkv/avi), `ToolSettings` has no codec
+  field, and `ffprobe -encoders` lists no H.264/HEVC encoder in the vendored ffmpeg.
+  Resolution and fps rows DO plumb (`max_long_edge`, `max_fps` verified `840-867`).
+- Options: (a) drop the row, one honest line instead (recommended; matches the
+  image-size cut), or (b) relabel honestly. **Ask the user before B-10.10 Phase B.**
+
+FINDING 3 — docs accuracy fixes (this commit):
+- The "metadata-window.png matches mockup at 100% visual parity" claim is wrong:
+  removeMetadata.webp is a raw tag list with per-row circles; the port is a form
+  with presets, as recorded in the same commit's deliberate-differences list.
+  Re-worded to "structure matches the Swift; layout differences are the recorded ones".
+- Metadata REALLY diverges only where the list says (checkbox removal, fields
+  editable); the audit confirms the built window follows the list.
+- Compress image card: image-size dropdown absence is documented Swift-true;
+  preset chips vs segmented and the round checkbox are recorded decisions. ✓
+- Normalize vs normalizeAudio.webp: strong parity (waves, three sliders with the
+  same defaults, helper text). Trim-audio vs trimAudio.webp: excellent parity
+  (caps+grips, waveform, timecodes, checkbox, play chip). Channels vs
+  audioChannels.webp: five-mode pills are Swift-authoritative; the one-strip
+  simplification was BUILT but not recorded — recorded now in B-10.9's list.
+- B-10.9's Phase B.2/B.3/C.2/C.3 checkboxes were never ticked though the work
+  shipped; ticked now with the commit hashes of each piece.
+- Backend contracts spot-checked this round: beside-input naming
+  (`metadata_final_names` with "clean"/"edited"/"normalized" suffixes), wheel
+  entries present, `ToolEvent::Run/Cancelled` wired via STATE-held senders,
+  no user paths in error strings.
+
 
 ### B-10.10 Redact photo / video / bleep audio (roadmap P3-11)
 Reference: `tool-windows/redactImage.webp`, `tool-windows/redactVideo.webp`, `tool-windows/redactAudio.webp` + `DESIGN-SPEC.md` §5/§6/§7/§15/§16 + `reference/extracted/Open-Tangerine-main/NativeApp/Sources/Tools/Images/RedactImageToolView.swift`, `Tools/Video/SnapshotsRedactVideoToolViews.swift`, `Tools/Audio/AudioToolViews.swift` + `Operations/FaceBlur.swift`, `Operations/ImageOps.swift`, `Operations/VideoOps.swift`, `Operations/AudioOps.swift`.
