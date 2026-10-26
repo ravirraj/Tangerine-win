@@ -977,6 +977,37 @@ Deliberate differences from mockups:
 - Two-pane layout: 820x560 (standard wide tool window, matching `metadatawindow`).
 - Keyboard shortcuts: Arrow keys to navigate pages, Space to toggle selection, Left/Right bracket or L/R to rotate, Del to remove, Enter to save copy, Esc to close.
 
+### B-10.15 Add Background / Frame Image (roadmap P3-15)
+Reference: `tool-windows/frameImage.webp` (880x1300 at 2x) + `press/add-background.png` + `DESIGN-SPEC.md` §5/§6 + Swift `Tools/Images/FrameImageToolView.swift`, `Operations/ImageOps.swift` (`ImageOps.framed`), `ToolID.swift` (`case .frameImage: return "ADD BG"`).
+
+Original behavior (Swift + operations, authoritative — read 2026-10-26):
+- Window layout: Portrait card (~440x650 pt), live preview stage showing framed image with padding, corner radius, drop shadow, and background.
+- Background options:
+  - Gradient swatches: curated palette of linear gradients (multi-color / sunset / ocean / etc.) + angle.
+  - Solid color swatches: curated palette (white, cream, yellows, greens, teals, blues, purples, slates, black).
+  - Blurred source image: scaled copy of the source photo with gaussian/box blur.
+  - Custom background image: file picker for custom wallpaper/background.
+- Canvas controls:
+  - Spacing / Padding: slider (default ~0.08 / ~160 px relative to canvas).
+  - Corner radius: slider (default 24 px, range 0..200 px).
+  - Drop shadow: slider (default 24 px, range 0..120 px, offset downward by shadow / 3, 35% black).
+  - Aspect ratio: segmented control (`Auto` / Original, `1:1`, `16:9`, `4:5`).
+- Footer: "Reset" on left, "Save with Background" on right (accent orange).
+- Output: `{stem} framed.png` beside original image, preserving format or PNG for transparency/gradients.
+
+Progress & Plan:
+- [x] Phase A — Evidence & Audit: mockups read (`frameImage.webp`, `add-background.png`), Swift sources read (`FrameImageToolView.swift`, `ImageOps.swift`), todo section created.
+- [ ] Phase B — Backend: Rust image compositing module `src/media/frame.rs` (padding, aspect ratio fitting, rounded corner clipping, drop shadow generation, blur/gradient/solid/image backgrounds), register `tools.frame_image` for `FileKind::Image`, `run_frame_image` in `tools.rs`, unit tests.
+- [ ] Phase C — Window: twin layout host `frameimagewindow.rs` + Slint card `frame_image_window.slint`, stage canvas preview, swatch grids, sliders, ratio segmented picker, footer actions, dispatch in `app.rs`.
+- [ ] Phase D — Proof: pump test, capture test (`target/shots/frame-image-window.png`), visual check against `ref-frameImage.png`.
+- [ ] Phase E — Docs: update `todo.md`, `HANDOFF.md`, `PLAN.md`, `ui-preview.md`.
+
+Deliberate differences from mockups:
+- Windows native chrome ("Add Background") with close top-right.
+- Dimensions: 460x660 (matching standard vertical tool card layout).
+- Fast software compositing in Rust: separable box blur / gaussian blur without external C++ or platform-dependent CoreImage.
+
+
 ### Reference notes
 Headline says "26 file tools" but /tools documents 21 windows. Old todo's
 "19 of 26 missing" count was wrong; this section is the verified list.
