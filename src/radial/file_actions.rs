@@ -36,6 +36,52 @@ impl<P: Publisher> FileActions<P> {
         }
     }
 
+    /// Put the selection in one archive, beside it.
+    ///
+    /// The other actions are one file's work said once for each file;
+    /// an archive is made of all the files together, so the request is
+    /// taken whole. The archive is named for the folder the files stand
+    /// in when they share it, and for the first file's own name when
+    /// they do not; a name already taken is refused, the way the other
+    /// actions refuse to step on a finished file.
+    fn zip_together(&self, inputs: &[PathBuf]) -> Result<PathBuf, FileActionError> {
+        let Some(folder) = inputs[0]
+            .parent()
+            .map(|parent| parent.to_path_buf())
+            .filter(|parent| !parent.as_os_str().is_empty())
+        else {
+            return Err(FileActionError::UnsupportedKind);
+        };
+        let shared = inputs
+            .iter()
+            .all(|input| input.parent() == Some(folder.as_path()));
+        let name = if shared {
+            folder
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+        } else {
+            None
+        }
+        .unwrap_or_else(|| {
+            inputs[0]
+                .file_stem()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "archive".to_string())
+        });
+
+        let entries = collect_entries(inputs)?;
+        if entries.is_empty() {
+            return Err(FileActionError::UnsupportedKind);
+        }
+        let target = folder.join(format!("{name}.zip"));
+        if target.exists() {
+            return Err(FileActionError::WriteError);
+        }
+        write_zip(&entries, &target)
+            .map_err(|_| FileActionError::WriteError)?;
+        Ok(target)
+    }
+
     /// Copy the full path to the clipboard.
     fn copy_path(&self, input: &Path) -> Result<PathBuf, FileActionError> {
         crate::platform::windows::clipboard::set_text(input.to_string_lossy().as_ref())
@@ -172,6 +218,78 @@ fn extract_gz(data: &[u8], target_dir: &Path) -> Result<(), FileActionError> {
     Ok(())
 }
 
+/// What would go into the archive: a name said inside the archive and
+/// the bytes the name stands for. Files are taken by their own name;
+/// folders are taken apart, file by file, each by the road it walks
+/// from the folder's own door.
+fn collect_entries(inputs: &[PathBuf]) -> Result<Vec<(String, Vec<u8>)>, FileActionError> {
+    let mut entries = Vec::new();
+    for input in inputs {
+        if input.is_dir() {
+            gather_folder(input, input, &mut entries)?;
+        } else {
+            let name = input
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .ok_or(FileActionError::UnsupportedKind)?;
+            let bytes = fs::read(input).map_err(|_| FileActionError::ReadError)?;
+            entries.push((name, bytes));
+        }
+    }
+    Ok(entries)
+}
+
+/// Reads a folder's files, said by the road they walk from the root.
+fn gather_folder(
+    root: &Path,
+    under: &Path,
+    entries: &mut Vec<(String, Vec<u8>)>,
+) -> Result<(), FileActionError> {
+    let mut roads = fs::read_dir(under).map_err(|_| FileActionError::ReadError)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| FileActionError::ReadError)?;
+    // The archive is written the same way whoever looks in it will:
+    // by name, whatever the system's own order says.
+    roads.sort_by_key(|road| road.file_name());
+    for road in roads {
+        let road = road.path();
+        let name = road
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .ok_or(FileActionError::UnsupportedKind)?;
+        if road.is_dir() {
+            gather_folder(root, &road, entries)?;
+        } else {
+            let said_road = road
+                .strip_prefix(root)
+                .unwrap_or(road.as_path())
+                .components()
+                .map(|part| part.as_os_str().to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("/");
+            let bytes = fs::read(&road).map_err(|_| FileActionError::ReadError)?;
+            entries.push((said_road, bytes));
+        }
+    }
+    Ok(())
+}
+
+/// Writes the names and the bytes they stand for into one ZIP archive.
+fn write_zip(entries: &[(String, Vec<u8>)], target_path: &Path) -> Result<(), FileActionError> {
+    let file = fs::File::create(target_path).map_err(|_| FileActionError::WriteError)?;
+    let mut writer = zip::ZipWriter::new(file);
+    for (name, bytes) in entries {
+        writer
+            .start_file(name.as_str(), zip::write::FileOptions::default())
+            .map_err(|_| FileActionError::WriteError)?;
+        writer
+            .write_all(bytes)
+            .map_err(|_| FileActionError::WriteError)?;
+    }
+    writer.finish().map_err(|_| FileActionError::WriteError)?;
+    Ok(())
+}
+
 
 impl<P: Publisher> Handler for FileActions<P> {
     fn run(&self, request: &Request, _selection: &Selection) -> Outcome {
@@ -184,6 +302,23 @@ impl<P: Publisher> Handler for FileActions<P> {
         let mut outputs = Vec::new();
         let mut failed = 0usize;
         let mut first_reason: Option<String> = None;
+        // An archive is made of all the files the request carries: said
+        // once whole, not once per file.
+        if request.operation == "actions.zip" {
+            if request.inputs.is_empty() {
+                return Outcome::Failed {
+                    reason: Failure::Error(
+                        "no files to put in the archive".to_string(),
+                    ),
+                };
+            }
+            return match self.zip_together(&request.inputs) {
+                Ok(target) => Outcome::Succeeded { outputs: vec![target] },
+                Err(reason) => Outcome::Failed {
+                    reason: Failure::Error(reason.name().to_string()),
+                },
+            };
+        }
         for input in &request.inputs {
             match self.run_one(&request.operation, input) {
                 Ok(path) => outputs.push(path),
@@ -226,6 +361,73 @@ mod tests {
         }
     }
 
+    /// A folder of its own for a test.
+    struct TempFolder {
+        path: PathBuf,
+    }
+
+    impl TempFolder {
+        /// Makes a folder that no other test uses.
+        fn new(name: &str) -> TempFolder {
+            static COUNTER: std::sync::atomic::AtomicU32 =
+                std::sync::atomic::AtomicU32::new(0);
+            let number =
+                COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "open-tangerine-file-actions-{}-{}-{}",
+                std::process::id(),
+                number,
+                name
+            ));
+            let _ = std::fs::remove_dir_all(&path);
+            std::fs::create_dir_all(&path).expect("the test folder was made");
+            TempFolder { path }
+        }
+
+        /// Writes a file as its road is said inside the folder.
+        fn write(&self, road: &str, said: &str) -> PathBuf {
+            let path = self.path.join(road);
+            if let Some(under) = path.parent() {
+                std::fs::create_dir_all(under).expect("the files' room was made");
+            }
+            fs::write(&path, said).expect("the test file was written");
+            path
+        }
+
+        /// The folder dropped like it was never there.
+        fn try_clear(&self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
+    /// A request whose files are the ones that were dragged: the run
+    /// checks that the two agree before it acts.
+    fn zip_request(inputs: Vec<PathBuf>) -> Request {
+        Request {
+            operation: "actions.zip".to_string(),
+            inputs,
+            ..Default::default()
+        }
+    }
+
+    /// What is inside an archive: names and the bytes, said plainly.
+    fn in_the_archive(archive: &Path) -> Vec<(String, String)> {
+        let data = fs::read(archive).expect("the archive was written");
+        let mut reader = std::io::Cursor::new(data);
+        let mut zip = zip::ZipArchive::new(&mut reader).expect("the archive opened");
+        (0..zip.len())
+            .map(|i| {
+                let mut file = zip.by_index(i).expect("a file in the archive");
+                let mut bytes = Vec::new();
+                file.read_to_end(&mut bytes).expect("the bytes read");
+                (
+                    file.name().to_string(),
+                    String::from_utf8(bytes).expect("letters, not noise"),
+                )
+            })
+            .collect()
+    }
+
     #[test]
     fn unknown_operation_is_rejected() {
         let actions = FileActions { publisher: Nothing };
@@ -242,5 +444,125 @@ mod tests {
             }
             other => panic!("unexpected outcome: {other:?}"),
         }
+    }
+
+    #[test]
+    fn putting_files_in_an_archive_names_it_after_their_folder() {
+        let actions = FileActions { publisher: Nothing };
+        let folder = TempFolder::new("photos");
+        let one = folder.write("photos/apple.txt", "round");
+        let two = folder.write("photos/banana.txt", "long");
+        let inputs = vec![one.clone(), two.clone()];
+        let outcome = crate::radial::execution::run(
+            &zip_request(inputs.clone()),
+            &Selection::inspect(&inputs),
+            &crate::radial::registry::Environment::none(),
+            &actions,
+        );
+        let target = match outcome {
+            Outcome::Succeeded { outputs } => outputs[0].clone(),
+            other => panic!("unexpected outcome: {other:?}"),
+        };
+        assert_eq!(
+            target.file_name().map(|name| name.to_string_lossy().into_owned()),
+            Some("photos.zip".to_string())
+        );
+        // The files stand in it by their own names.
+        assert_eq!(
+            in_the_archive(&target),
+            vec![
+                ("apple.txt".to_string(), "round".to_string()),
+                ("banana.txt".to_string(), "long".to_string()),
+            ]
+        );
+        folder.try_clear();
+    }
+
+    #[test]
+    fn a_folder_is_taken_file_by_file_by_its_own_roads() {
+        let actions = FileActions { publisher: Nothing };
+        let folder = TempFolder::new("album");
+        let _ = folder.write("album/timeless/liner.txt", "quiet");
+        let _ = folder.write("album/cover.txt", "painted");
+        let album = folder.path.join("album");
+        let outcome = crate::radial::execution::run(
+            &zip_request(vec![album.clone()]),
+            &Selection::inspect(&[album]),
+            &crate::radial::registry::Environment::none(),
+            &actions,
+        );
+        let target = match outcome {
+            Outcome::Succeeded { outputs } => outputs[0].clone(),
+            other => panic!("unexpected outcome: {other:?}"),
+        };
+        // The road each file walked from the folder's own door is what
+        // the archive says.
+        assert_eq!(
+            in_the_archive(&target),
+            vec![
+                ("cover.txt".to_string(), "painted".to_string()),
+                ("timeless/liner.txt".to_string(), "quiet".to_string()),
+            ]
+        );
+        folder.try_clear();
+    }
+
+    #[test]
+    fn files_that_share_no_room_are_named_for_the_first_one() {
+        let actions = FileActions { publisher: Nothing };
+        let folder = TempFolder::new("rooms");
+        let one = folder.write("rooms/north/wave.txt", "a");
+        let two = folder.write("rooms/south/wave.txt", "b");
+        let inputs = vec![one.clone(), two.clone()];
+        let outcome = crate::radial::execution::run(
+            &zip_request(inputs.clone()),
+            &Selection::inspect(&inputs),
+            &crate::radial::registry::Environment::none(),
+            &actions,
+        );
+        let target = match outcome {
+            Outcome::Succeeded { outputs } => outputs[0].clone(),
+            other => panic!("unexpected outcome: {other:?}"),
+        };
+        // Two rooms are not one place; the first file's own name says
+        // what the archive is of.
+        assert_eq!(
+            target.file_name().map(|name| name.to_string_lossy().into_owned()),
+            Some("wave.zip".to_string())
+        );
+        // And the files are in it by their own names, whatever room
+        // they came from.
+        assert_eq!(
+            in_the_archive(&target),
+            vec![("wave.txt".to_string(), "a".to_string()),
+                 ("wave.txt".to_string(), "b".to_string())]
+        );
+        folder.try_clear();
+    }
+
+    #[test]
+    fn an_archive_that_would_step_on_one_is_refused() {
+        let actions = FileActions { publisher: Nothing };
+        let folder = TempFolder::new("taken");
+        let one = folder.write("pair.txt", "x");
+        // The name the archive would take — the folder's own — stands
+        // there already.
+        let room = folder.path.file_name().unwrap().to_string_lossy();
+        std::fs::write(folder.path.join(format!("{room}.zip")), b"already")
+            .expect("the older archive was written");
+        let outcome = crate::radial::execution::run(
+            &zip_request(vec![one.clone()]),
+            &Selection::inspect(std::slice::from_ref(&one)),
+            &crate::radial::registry::Environment::none(),
+            &actions,
+        );
+        match outcome {
+            Outcome::Failed { reason } => {
+                let said = format!("{reason:?}");
+                assert!(said.contains("Error"), "unexpected reason: {said}");
+            }
+            other => panic!("unexpected outcome: {other:?}"),
+        }
+        folder.try_clear();
     }
 }

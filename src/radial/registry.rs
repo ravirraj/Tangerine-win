@@ -847,8 +847,10 @@ pub const OPERATIONS: &[Operation] = &[
         folders: true,
         output: Output::Beside("zip"),
         collision: Collision::Rename,
-        implemented: false,
-        requires: Requirement::Processor("archive"),
+        implemented: true,
+        // The program does this one itself: the archive is written in
+        // Rust, no conversion backend is needed.
+        requires: Requirement::None,
     },
     Operation {
         id: "actions.reveal",
@@ -1598,6 +1600,7 @@ mod tests {
             "actions.reveal",
             "actions.terminal",
             "actions.extract",
+            "actions.zip",
         ];
         for entry in OPERATIONS {
             assert_eq!(
@@ -1863,7 +1866,7 @@ mod tests {
             let needs_no_backend = matches!(entry.requires, Requirement::None);
             if entry.mode == RadialMode::Actions {
                 assert!(
-                    needs_no_backend || entry.id == "actions.zip",
+                    needs_no_backend,
                     "{} is a file action and should need no conversion backend",
                     entry.id
                 );

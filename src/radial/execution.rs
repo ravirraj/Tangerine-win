@@ -541,12 +541,14 @@ mod tests {
     }
 
     #[test]
-    fn an_operation_that_is_not_implemented_is_refused() {
+    fn a_handler_that_refuses_what_it_is_given_refuses() {
         let folder = TempFolder::new("not-implemented");
         let path = folder.file("one.png");
         let selection = Selection::inspect(std::slice::from_ref(&path));
         let request = Request {
-            // Putting files in an archive is not something that is implemented.
+            // The registry's own flag keeping things out is checked in
+            // the registry's tests; here the refusal stands for every
+            // handler that turns what it is given away.
             operation: "actions.zip".to_string(),
             inputs: vec![path],
             ..Default::default()
