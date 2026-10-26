@@ -1,0 +1,339 @@
+import { Tokens, Panel } from "tokens.slint";
+import { CardHeader, Hairline } from "shell.slint";
+
+export component AnnotateCard inherits Window {
+    in property <float> ui-scale: 1.0;
+    in property <length> card-width: 440px;
+    in property <length> card-height: 660px;
+
+    in property <Panel> header-box;
+    in property <Panel> detail-box;
+    in property <Panel> hairline-top;
+    in property <string> file-name: "photo.jpg";
+    in property <string> detail: "Annotate photo";
+
+    // Stage preview
+    in property <Panel> stage-box;
+    in property <image> preview-image;
+    in property <bool> has-preview: false;
+
+    // Tool selector chips (Arrow, Box, Text, Pen, Blur)
+    in property <Panel> tool-label-box;
+    in property <[Panel]> tool-chips;
+    in property <int> selected-tool: 0; // 0=Arrow, 1=Box, 2=Text, 3=Pen, 4=Blur
+
+    // Color swatches
+    in property <Panel> color-label-box;
+    in property <[Panel]> color-swatches;
+    in property <int> selected-color: 0; // 0..5
+
+    // Thickness chips
+    in property <Panel> thickness-label-box;
+    in property <[Panel]> thickness-chips;
+    in property <int> selected-thickness: 1; // 0=2px, 1=4px, 2=8px, 3=12px
+
+    // Callout text
+    in property <Panel> text-label-box;
+    in property <Panel> text-field-box;
+    in-out property <string> callout-text: "Note";
+
+    // Footer
+    in property <Panel> hairline-bottom;
+    in property <Panel> reset-box;
+    in property <Panel> helper-box;
+    in property <Panel> cancel-box;
+    in property <Panel> run-box;
+    in property <string> run-label: "Save Annotated";
+    in property <bool> run-enabled: true;
+
+    callback dismiss-chosen();
+    callback tool-chosen(int);
+    callback color-chosen(int);
+    callback thickness-chosen(int);
+    callback text-changed(string);
+    callback add-annotation-chosen();
+    callback reset-defaults-chosen();
+    callback run-chosen();
+    callback cancel-chosen();
+
+    width: root.card-width;
+    height: root.card-height;
+    background: Tokens.window-bg;
+
+    // 1. Header
+    CardHeader {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        file-name: root.file-name;
+        detail: root.detail;
+        ui-scale: root.ui-scale;
+        header-box: root.header-box;
+        detail-box: root.detail-box;
+    }
+
+    Hairline {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.hairline-top;
+    }
+
+    // 2. Stage Preview (contained stage with letterbox)
+    Rectangle {
+        x: root.stage-box.x;
+        y: root.stage-box.y;
+        width: root.stage-box.width;
+        height: root.stage-box.height;
+        border-radius: Tokens.radius-preview;
+        background: #18181A;
+        clip: true;
+
+        if root.has-preview : Image {
+            width: 100%;
+            height: 100%;
+            image-fit: contain;
+            source: root.preview-image;
+        }
+
+        if !root.has-preview : Text {
+            text: "Loading photo…";
+            color: Tokens.text-muted;
+            font-size: 12px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    // 3. Tool Section
+    Text {
+        x: root.tool-label-box.x;
+        y: root.tool-label-box.y;
+        width: root.tool-label-box.width;
+        height: root.tool-label-box.height;
+        text: "Annotation tool";
+        font-size: 11px;
+        font-weight: 700;
+        color: Tokens.text-muted;
+        vertical-alignment: center;
+    }
+
+    for chip[i] in root.tool-chips: Rectangle {
+        x: chip.x;
+        y: chip.y;
+        width: chip.width;
+        height: chip.height;
+        border-radius: 6px;
+        background: root.selected-tool == i ? Tokens.accent : (chip-touch.has-hover ? Tokens.quiet-hover : Tokens.quiet);
+        border-width: 1px;
+        border-color: root.selected-tool == i ? Tokens.accent : Tokens.hairline;
+
+        chip-touch := TouchArea {
+            clicked => { root.tool-chosen(i); }
+        }
+
+        Text {
+            width: 100%;
+            height: 100%;
+            text: i == 0 ? "Arrow" : (i == 1 ? "Box" : (i == 2 ? "Text" : (i == 3 ? "Pen" : "Blur")));
+            color: root.selected-tool == i ? #FFFFFF : Tokens.text;
+            font-size: 11px;
+            font-weight: root.selected-tool == i ? 700 : 500;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    // 4. Color Palette
+    Text {
+        x: root.color-label-box.x;
+        y: root.color-label-box.y;
+        width: root.color-label-box.width;
+        height: root.color-label-box.height;
+        text: "Color";
+        font-size: 11px;
+        font-weight: 700;
+        color: Tokens.text-muted;
+        vertical-alignment: center;
+    }
+
+    for swatch[i] in root.color-swatches: Rectangle {
+        x: swatch.x;
+        y: swatch.y;
+        width: swatch.width;
+        height: swatch.height;
+        border-radius: swatch.width / 2;
+        background: i == 0 ? #FF5C00 : (i == 1 ? #0A84FF : (i == 2 ? #FF3B30 : (i == 3 ? #34C759 : (i == 4 ? #FFFFFF : #000000))));
+        border-width: root.selected-color == i ? 3px : 1px;
+        border-color: root.selected-color == i ? Tokens.accent : #00000030;
+
+        swatch-touch := TouchArea {
+            clicked => { root.color-chosen(i); }
+        }
+    }
+
+    // 5. Thickness Section
+    Text {
+        x: root.thickness-label-box.x;
+        y: root.thickness-label-box.y;
+        width: root.thickness-label-box.width;
+        height: root.thickness-label-box.height;
+        text: "Thickness";
+        font-size: 11px;
+        font-weight: 700;
+        color: Tokens.text-muted;
+        vertical-alignment: center;
+    }
+
+    for chip[i] in root.thickness-chips: Rectangle {
+        x: chip.x;
+        y: chip.y;
+        width: chip.width;
+        height: chip.height;
+        border-radius: 6px;
+        background: root.selected-thickness == i ? Tokens.accent : (th-touch.has-hover ? Tokens.quiet-hover : Tokens.quiet);
+        border-width: 1px;
+        border-color: root.selected-thickness == i ? Tokens.accent : Tokens.hairline;
+
+        th-touch := TouchArea {
+            clicked => { root.thickness-chosen(i); }
+        }
+
+        Text {
+            width: 100%;
+            height: 100%;
+            text: i == 0 ? "2 px" : (i == 1 ? "4 px" : (i == 2 ? "8 px" : "12 px"));
+            color: root.selected-thickness == i ? #FFFFFF : Tokens.text;
+            font-size: 11px;
+            font-weight: root.selected-thickness == i ? 700 : 500;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    // 6. Callout Text Section
+    Text {
+        x: root.text-label-box.x;
+        y: root.text-label-box.y;
+        width: root.text-label-box.width;
+        height: root.text-label-box.height;
+        text: "Callout Text / Note";
+        font-size: 11px;
+        font-weight: 700;
+        color: Tokens.text-muted;
+        vertical-alignment: center;
+    }
+
+    Rectangle {
+        x: root.text-field-box.x;
+        y: root.text-field-box.y;
+        width: root.text-field-box.width;
+        height: root.text-field-box.height;
+        border-radius: 6px;
+        background: Tokens.content;
+        border-width: 1px;
+        border-color: Tokens.hairline;
+
+        TextInput {
+            width: parent.width - 16px;
+            height: 100%;
+            x: 8px;
+            text <=> root.callout-text;
+            font-size: 12px;
+            color: Tokens.text;
+            vertical-alignment: center;
+            edited => { root.text-changed(self.text); }
+        }
+    }
+
+    // 7. Footer
+    Hairline {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.hairline-bottom;
+    }
+
+    // Reset button
+    Rectangle {
+        x: root.reset-box.x;
+        y: root.reset-box.y;
+        width: root.reset-box.width;
+        height: root.reset-box.height;
+        border-radius: Tokens.radius-small;
+        background: Tokens.quiet;
+
+        Text {
+            text: "Clear";
+            font-size: 11px;
+            color: Tokens.text-muted;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+
+        TouchArea {
+            clicked => { root.reset-defaults-chosen(); }
+        }
+    }
+
+    // Helper text
+    Text {
+        x: root.helper-box.x;
+        y: root.helper-box.y;
+        width: root.helper-box.width;
+        height: root.helper-box.height;
+        text: "Click canvas to place · Enter to save";
+        font-size: 11px;
+        color: Tokens.text-muted;
+        vertical-alignment: center;
+    }
+
+    // Cancel button
+    Rectangle {
+        x: root.cancel-box.x;
+        y: root.cancel-box.y;
+        width: root.cancel-box.width;
+        height: root.cancel-box.height;
+        border-radius: Tokens.radius-control;
+        background: Tokens.quiet;
+
+        Text {
+            text: "Cancel";
+            font-size: 12px;
+            color: Tokens.text;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+
+        TouchArea {
+            clicked => { root.cancel-chosen(); }
+        }
+    }
+
+    // Run button
+    Rectangle {
+        x: root.run-box.x;
+        y: root.run-box.y;
+        width: root.run-box.width;
+        height: root.run-box.height;
+        border-radius: Tokens.radius-control;
+        background: root.run-enabled ? Tokens.accent : Tokens.quiet;
+
+        Text {
+            text: root.run-label;
+            font-size: 12px;
+            font-weight: 600;
+            color: root.run-enabled ? #FFFFFF : Tokens.text-muted;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+
+        TouchArea {
+            clicked => {
+                if root.run-enabled {
+                    root.run-chosen();
+                }
+            }
+        }
+    }
+}

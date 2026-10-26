@@ -18,6 +18,7 @@
 //! - [`publish`] puts a finished file at its final name.
 
 pub mod animation;
+pub mod annotate;
 pub mod audio;
 pub mod command;
 pub mod collage;

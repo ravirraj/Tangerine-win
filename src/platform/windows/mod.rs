@@ -1,6 +1,7 @@
 //! Win32 specific code.
 
 pub mod appearance;
+pub mod annotatewindow;
 pub mod channelswindow;
 pub mod collagewindow;
 pub mod clipboard;

@@ -299,6 +299,8 @@ struct App {
     visualizer_window: crate::platform::windows::visualizerwindow::VisualizerWindow,
     /// The window a photo collage is configured in, hidden until collage is picked.
     collage_window: crate::platform::windows::collagewindow::CollageWindow,
+    /// The window a photo is annotated in, hidden until annotate is picked.
+    annotate_window: crate::platform::windows::annotatewindow::AnnotateWindow,
 }
 
 /// The end of a drag that has not been acted on yet.
@@ -629,6 +631,21 @@ impl App {
             crate::platform::windows::collagewindow::CollageWindow::new(collage_sender)
                 .map_err(|reason| reason)?;
 
+        let (annotate_sender, annotate_receiver) = std::sync::mpsc::channel();
+        {
+            let sender = sender.clone();
+            std::thread::spawn(move || {
+                while let Ok(event) = annotate_receiver.recv() {
+                    if sender.send(Message::ToolWindow(event)).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+        let annotate_window =
+            crate::platform::windows::annotatewindow::AnnotateWindow::new(annotate_sender)
+                .map_err(|reason| reason)?;
+
         Ok(Self {
             controller,
             animation: WheelAnimation::new(),
@@ -688,6 +705,7 @@ impl App {
             frame_image_window,
             visualizer_window,
             collage_window,
+            annotate_window,
         })
     }
 
@@ -945,6 +963,12 @@ impl App {
         // A collage asks for its own card: layout chips, spacing, corner radius, canvas shape, and background.
         if segment.id == "tools.collage" {
             self.collage_window
+                .show_for(&segment.id, &segment.label, &segment.detail, files);
+            return;
+        }
+        // An annotation asks for its own card: tool chips, color swatches, thickness, and callout text.
+        if segment.id == "tools.annotate" {
+            self.annotate_window
                 .show_for(&segment.id, &segment.label, &segment.detail, files);
             return;
         }

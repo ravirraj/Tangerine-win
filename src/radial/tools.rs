@@ -1238,6 +1238,76 @@ impl<P: Publisher> Tools<P> {
         }
     }
 
+    /// Draws vector annotations (arrows, boxes, text, pen, blur) onto photos.
+    fn run_annotate(&self, request: &Request) -> Outcome {
+        let manifest = Manifest::get();
+        let mut outputs = Vec::new();
+        let mut failed = 0usize;
+        let mut first_reason: Option<String> = None;
+        let annotations = &request.settings.annotations_data;
+
+        for input in &request.inputs {
+            let result = self.annotate_one(input, &manifest, annotations);
+            match result {
+                Ok(path) => outputs.push(path),
+                Err(reason) => {
+                    failed += 1;
+                    let name = reason.name();
+                    diagnostics::log(Level::Warn, "action", &format!("a file was not processed: {name}"));
+                    if first_reason.is_none() {
+                        first_reason = Some(name.to_string());
+                    }
+                }
+            }
+        }
+
+        if failed == 0 {
+            Outcome::Succeeded { outputs }
+        } else {
+            let because = match first_reason {
+                Some(reason) => format!(": {reason}"),
+                None => String::new(),
+            };
+            Outcome::Failed {
+                reason: Failure::Error(format!(
+                    "{failed} of the files could not be processed{because}"
+                )),
+            }
+        }
+    }
+
+    fn annotate_one(
+        &self,
+        input: &Path,
+        manifest: &Manifest,
+        annotations: &[crate::media::annotate::Annotation],
+    ) -> Result<PathBuf, ToolError> {
+        let source_ext = input
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        let source = manifest
+            .format_of_extension(&source_ext)
+            .or_else(|| manifest.format(&source_ext))
+            .ok_or(ToolError::UnsupportedKind)?;
+        if crate::media::probe::kind_of(&source.format) != Some(crate::media::probe::Kind::Image) {
+            return Err(ToolError::UnsupportedKind);
+        }
+
+        let stem = input
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "file".to_string());
+        let temporary = input.with_file_name(format!("{stem}.annotate-part.png"));
+
+        crate::media::annotate::annotate_file(input, &temporary, annotations)
+            .map_err(|_| ToolError::WriteError)?;
+
+        let finals = metadata_final_names(input, "annotated", "png");
+        self.publish(&finals, &temporary)
+    }
+
     fn run_audio_to_video(&self, request: &Request) -> Outcome {
         let manifest = Manifest::get();
         let mut outputs = Vec::new();
@@ -3247,6 +3317,11 @@ impl<P: Publisher> Handler for Tools<P> {
         // A collage combines two or more photos into a grid, column, row, or hero layout.
         if request.operation == "tools.collage" {
             return self.run_collage(request);
+        }
+
+        // An annotation tool draws arrows, boxes, text, or blur overlays onto photos.
+        if request.operation == "tools.annotate" {
+            return self.run_annotate(request);
         }
 
         let manifest = Manifest::get();
@@ -6271,6 +6346,65 @@ mod tests {
 
         let outcome = tools.run(&request, &Selection::inspect(&[p1]));
         assert!(matches!(outcome, Outcome::Failed { .. }));
+
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn annotate_operation_draws_on_photo() {
+        let scratch = std::env::temp_dir().join(format!("ot-annotate-test-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&scratch);
+
+        let p1 = scratch.join("sample.png");
+        let img1 = image::RgbaImage::from_pixel(200, 200, image::Rgba([240, 240, 240, 255]));
+        img1.save(&p1).unwrap();
+
+        let tools = Tools {
+            ffmpeg_tools: crate::media::locator::Tools {
+                ffmpeg: PathBuf::from("ffmpeg"),
+                ffprobe: PathBuf::from("ffprobe"),
+            },
+            publisher: CopyPublisher,
+        };
+        let request = Request {
+            operation: "tools.annotate".to_string(),
+            inputs: vec![p1.clone()],
+            settings: ToolSettings {
+                annotations_data: vec![
+                    crate::media::annotate::Annotation::Arrow {
+                        x0: 0.2,
+                        y0: 0.2,
+                        x1: 0.8,
+                        y1: 0.8,
+                        color: [255, 92, 0, 255],
+                        width: 4.0,
+                    },
+                    crate::media::annotate::Annotation::Text {
+                        x: 0.1,
+                        y: 0.1,
+                        text: "LABEL".to_string(),
+                        color: [0, 0, 0, 255],
+                        scale: 2,
+                    },
+                ],
+                ..Default::default()
+            },
+        };
+
+        let outcome = tools.run(&request, &Selection::inspect(&[p1.clone()]));
+        let outputs = match outcome {
+            Outcome::Succeeded { outputs } => outputs,
+            Outcome::Failed { reason } => panic!("annotate failed: {:?}", reason),
+            Outcome::Cancelled => panic!("cancelled"),
+        };
+        assert_eq!(outputs.len(), 1);
+        let out_file = &outputs[0];
+        assert!(out_file.is_file(), "output exists: {:?}", out_file);
+        assert!(out_file.to_string_lossy().contains("sample annotated.png"));
+
+        let annotated_img = image::open(out_file).expect("annotated opens");
+        assert_eq!(annotated_img.width(), 200);
+        assert_eq!(annotated_img.height(), 200);
 
         let _ = std::fs::remove_dir_all(&scratch);
     }

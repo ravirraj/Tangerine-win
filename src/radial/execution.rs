@@ -267,6 +267,8 @@ pub struct ToolSettings {
     pub collage_corner_radius: Option<u32>,
     pub collage_bg_color: Option<String>,
     pub collage_aspect: Option<String>,
+    /// Only `tools.annotate` reads this.
+    pub annotations_data: Vec<crate::media::annotate::Annotation>,
 }
 
 impl ToolSettings {

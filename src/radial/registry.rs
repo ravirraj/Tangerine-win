@@ -881,6 +881,20 @@ pub const OPERATIONS: &[Operation] = &[
         implemented: true,
         requires: Requirement::Processor("image"),
     },
+    Operation {
+        id: "tools.annotate",
+        label: "Annotate",
+        detail: "Annotate photo with arrows and text",
+        icon: IconKind::Picture,
+        mode: RadialMode::Tools,
+        categories: &[FileKind::Image],
+        batch: Batch::Several,
+        folders: false,
+        output: Output::Beside("png"),
+        collision: Collision::Rename,
+        implemented: true,
+        requires: Requirement::Processor("image"),
+    },
     // ------------------------------------------------------ file actions
     Operation {
         id: "actions.copy-path",
@@ -1693,6 +1707,7 @@ mod tests {
             "tools.frame_image",
             "tools.audio_to_video",
             "tools.collage",
+            "tools.annotate",
             "actions.copy-path",
             "actions.duplicate",
             "actions.rename",
