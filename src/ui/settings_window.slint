@@ -1,0 +1,449 @@
+// The settings window for Open Tangerine.
+//
+// Allows configuring theme (System/Dark/Light), accent color, output directory,
+// completion sounds, Windows startup, system tray, and Explorer context menu.
+
+import { Tokens } from "tokens.slint";
+import { Panel } from "tokens.slint";
+import { CardHeader, Hairline, PillButton } from "shell.slint";
+
+component SettingsOptionChip {
+    in property <Panel> box;
+    in property <string> label;
+    in property <bool> selected: false;
+
+    callback clicked();
+
+    x: root.box.x;
+    y: root.box.y;
+    width: root.box.width;
+    height: root.box.height;
+
+    Rectangle {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: parent.height;
+        border-radius: 6px;
+        background: root.selected ? Tokens.accent : Tokens.elevated;
+        border-width: root.selected ? 0px : 1px;
+        border-color: Tokens.hairline;
+
+        Text {
+            text: root.label;
+            font-size: 11px;
+            font-weight: root.selected ? 600 : 500;
+            font-family: "Segoe UI";
+            color: root.selected ? white : Tokens.text;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+
+        TouchArea {
+            clicked => { root.clicked(); }
+        }
+    }
+}
+
+component SettingsSwatch {
+    in property <Panel> box;
+    in property <color> fill-color;
+    in property <bool> selected: false;
+
+    callback clicked();
+
+    x: root.box.x;
+    y: root.box.y;
+    width: root.box.width;
+    height: root.box.height;
+
+    Rectangle {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: parent.height;
+        border-radius: parent.width / 2;
+        border-width: 1px;
+        border-color: #00000030;
+        background: root.fill-color;
+
+        TouchArea {
+            clicked => { root.clicked(); }
+        }
+    }
+
+    if root.selected: Rectangle {
+        x: -3px;
+        y: -3px;
+        width: parent.width + 6px;
+        height: parent.height + 6px;
+        border-radius: (parent.width + 6px) / 2;
+        border-width: 2px;
+        border-color: Tokens.accent;
+    }
+}
+
+component ToggleRow {
+    in property <Panel> box;
+    in property <string> label;
+    in property <bool> checked: false;
+
+    callback toggled();
+
+    x: root.box.x;
+    y: root.box.y;
+    width: root.box.width;
+    height: root.box.height;
+
+    Text {
+        x: 0;
+        width: parent.width - 50px;
+        height: parent.height;
+        text: root.label;
+        font-size: 12px;
+        font-weight: 500;
+        font-family: "Segoe UI";
+        color: Tokens.text;
+        vertical-alignment: center;
+    }
+
+    Rectangle {
+        x: parent.width - 44px;
+        y: (parent.height - 22px) / 2;
+        width: 44px;
+        height: 22px;
+        border-radius: 11px;
+        background: root.checked ? Tokens.accent : Tokens.elevated;
+        border-width: 1px;
+        border-color: Tokens.hairline;
+
+        Rectangle {
+            x: root.checked ? 24px : 2px;
+            y: 2px;
+            width: 16px;
+            height: 16px;
+            border-radius: 8px;
+            background: white;
+            drop-shadow-color: #00000020;
+            drop-shadow-blur: 2px;
+        }
+
+        TouchArea {
+            clicked => { root.toggled(); }
+        }
+    }
+}
+
+export component SettingsCard inherits Window {
+    in property <length> card-width: 440px;
+    in property <length> card-height: 580px;
+    in property <float> ui-scale: 1.0;
+
+    in property <Panel> header-box;
+    in property <Panel> hairline-top;
+
+    in property <Panel> theme-label-box;
+    in property <[Panel]> theme-chips;
+
+    in property <Panel> accent-label-box;
+    in property <[Panel]> accent-swatches;
+
+    in property <Panel> hairline-mid1;
+
+    in property <Panel> output-label-box;
+    in property <[Panel]> output-chips;
+    in property <Panel> output-path-box;
+
+    in property <Panel> hairline-mid2;
+
+    in property <Panel> sound-toggle-box;
+    in property <Panel> startup-toggle-box;
+    in property <Panel> tray-toggle-box;
+    in property <Panel> shell-toggle-box;
+
+    in property <Panel> hairline-bot;
+    in property <Panel> helper-box;
+    in property <Panel> close-button-box;
+
+    in property <int> selected-theme: 0; // 0: System, 1: Dark, 2: Light
+    in property <int> selected-accent: 0; // 0..5
+    in property <int> selected-output: 0; // 0: Beside, 1: Custom
+    in property <string> custom-path: "C:\\Users\\User\\Downloads";
+    in property <bool> sound-enabled: true;
+    in property <bool> startup-enabled: false;
+    in property <bool> tray-enabled: true;
+    in property <bool> shell-enabled: true;
+
+    callback theme-selected(int);
+    callback accent-selected(int);
+    callback output-selected(int);
+    callback browse-clicked();
+    callback sound-toggled();
+    callback startup-toggled();
+    callback tray-toggled();
+    callback shell-toggled();
+    callback close-clicked();
+
+    background: Tokens.window-bg;
+
+    Text {
+        x: root.header-box.x;
+        y: root.header-box.y;
+        width: root.header-box.width;
+        height: root.header-box.height;
+        text: "Settings";
+        font-size: 15px;
+        font-weight: 600;
+        font-family: "Segoe UI";
+        color: Tokens.text;
+        vertical-alignment: center;
+    }
+
+    Hairline {
+        box: root.hairline-top;
+    }
+
+    // Appearance: Theme
+    Text {
+        x: root.theme-label-box.x;
+        y: root.theme-label-box.y;
+        width: root.theme-label-box.width;
+        height: root.theme-label-box.height;
+        text: "Appearance";
+        font-size: 13px;
+        font-weight: 600;
+        font-family: "Segoe UI";
+        color: Tokens.text;
+        vertical-alignment: center;
+    }
+
+    SettingsOptionChip {
+        box: root.theme-chips[0];
+        label: "System";
+        selected: root.selected-theme == 0;
+        clicked => { root.theme-selected(0); }
+    }
+
+    SettingsOptionChip {
+        box: root.theme-chips[1];
+        label: "Dark";
+        selected: root.selected-theme == 1;
+        clicked => { root.theme-selected(1); }
+    }
+
+    SettingsOptionChip {
+        box: root.theme-chips[2];
+        label: "Light";
+        selected: root.selected-theme == 2;
+        clicked => { root.theme-selected(2); }
+    }
+
+    // Appearance: Accent
+    Text {
+        x: root.accent-label-box.x;
+        y: root.accent-label-box.y;
+        width: root.accent-label-box.width;
+        height: root.accent-label-box.height;
+        text: "Accent";
+        font-size: 13px;
+        font-weight: 600;
+        font-family: "Segoe UI";
+        color: Tokens.text;
+        vertical-alignment: center;
+    }
+
+    SettingsSwatch {
+        box: root.accent-swatches[0];
+        fill-color: #FF5C00;
+        selected: root.selected-accent == 0;
+        clicked => { root.accent-selected(0); }
+    }
+
+    SettingsSwatch {
+        box: root.accent-swatches[1];
+        fill-color: #007AFF;
+        selected: root.selected-accent == 1;
+        clicked => { root.accent-selected(1); }
+    }
+
+    SettingsSwatch {
+        box: root.accent-swatches[2];
+        fill-color: #34C759;
+        selected: root.selected-accent == 2;
+        clicked => { root.accent-selected(2); }
+    }
+
+    SettingsSwatch {
+        box: root.accent-swatches[3];
+        fill-color: #FF2D55;
+        selected: root.selected-accent == 3;
+        clicked => { root.accent-selected(3); }
+    }
+
+    SettingsSwatch {
+        box: root.accent-swatches[4];
+        fill-color: #FFCC00;
+        selected: root.selected-accent == 4;
+        clicked => { root.accent-selected(4); }
+    }
+
+    SettingsSwatch {
+        box: root.accent-swatches[5];
+        fill-color: #5856D6;
+        selected: root.selected-accent == 5;
+        clicked => { root.accent-selected(5); }
+    }
+
+    Hairline {
+        box: root.hairline-mid1;
+    }
+
+    // Output Destination
+    Text {
+        x: root.output-label-box.x;
+        y: root.output-label-box.y;
+        width: root.output-label-box.width;
+        height: root.output-label-box.height;
+        text: "Save Results";
+        font-size: 13px;
+        font-weight: 600;
+        font-family: "Segoe UI";
+        color: Tokens.text;
+        vertical-alignment: center;
+    }
+
+    SettingsOptionChip {
+        box: root.output-chips[0];
+        label: "Beside original";
+        selected: root.selected-output == 0;
+        clicked => { root.output-selected(0); }
+    }
+
+    SettingsOptionChip {
+        box: root.output-chips[1];
+        label: "Custom folder";
+        selected: root.selected-output == 1;
+        clicked => { root.output-selected(1); }
+    }
+
+    if root.selected-output == 1: Rectangle {
+        x: root.output-path-box.x;
+        y: root.output-path-box.y;
+        width: root.output-path-box.width;
+        height: root.output-path-box.height;
+        border-radius: 6px;
+        background: Tokens.elevated;
+        border-width: 1px;
+        border-color: Tokens.hairline;
+
+        Text {
+            x: 10px;
+            width: parent.width - 90px;
+            height: parent.height;
+            text: root.custom-path;
+            font-size: 11px;
+            font-family: "Segoe UI";
+            color: Tokens.text;
+            overflow: elide;
+            vertical-alignment: center;
+        }
+
+        Rectangle {
+            x: parent.width - 76px;
+            y: 4px;
+            width: 70px;
+            height: parent.height - 8px;
+            border-radius: 4px;
+            background: Tokens.window-bg;
+            border-width: 1px;
+            border-color: Tokens.hairline;
+
+            Text {
+                text: "Browse…";
+                font-size: 11px;
+                font-weight: 600;
+                font-family: "Segoe UI";
+                color: Tokens.text;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+
+            TouchArea {
+                clicked => { root.browse-clicked(); }
+            }
+        }
+    }
+
+    Hairline {
+        box: root.hairline-mid2;
+    }
+
+    // Toggles
+    ToggleRow {
+        box: root.sound-toggle-box;
+        label: "Play completion chime";
+        checked: root.sound-enabled;
+        toggled => { root.sound-toggled(); }
+    }
+
+    ToggleRow {
+        box: root.startup-toggle-box;
+        label: "Launch at Windows startup";
+        checked: root.startup-enabled;
+        toggled => { root.startup-toggled(); }
+    }
+
+    ToggleRow {
+        box: root.tray-toggle-box;
+        label: "Keep in system tray";
+        checked: root.tray-enabled;
+        toggled => { root.tray-toggled(); }
+    }
+
+    ToggleRow {
+        box: root.shell-toggle-box;
+        label: "Show in Explorer right-click menu";
+        checked: root.shell-enabled;
+        toggled => { root.shell-toggled(); }
+    }
+
+    Hairline {
+        box: root.hairline-bot;
+    }
+
+    // Footer
+    Text {
+        x: root.helper-box.x;
+        y: root.helper-box.y;
+        width: root.helper-box.width;
+        height: root.helper-box.height;
+        text: "Changes apply immediately";
+        font-size: 11px;
+        font-family: "Segoe UI";
+        color: Tokens.text-muted;
+        vertical-alignment: center;
+    }
+
+    Rectangle {
+        x: root.close-button-box.x;
+        y: root.close-button-box.y;
+        width: root.close-button-box.width;
+        height: root.close-button-box.height;
+        border-radius: 6px;
+        background: Tokens.accent;
+
+        Text {
+            text: "Done";
+            font-size: 12px;
+            font-weight: 600;
+            font-family: "Segoe UI";
+            color: white;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+
+        TouchArea {
+            clicked => { root.close-clicked(); }
+        }
+    }
+}

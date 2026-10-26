@@ -19,6 +19,7 @@ pub mod publish;
 pub mod redactimagewindow;
 pub mod redactaudiowindow;
 pub mod redactvideowindow;
+pub mod settingswindow;
 pub mod shell;
 pub mod shellselection;
 pub mod speedwindow;
