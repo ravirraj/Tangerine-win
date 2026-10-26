@@ -34,6 +34,7 @@ pub mod probe;
 pub mod publish;
 pub mod runner;
 pub mod svg;
+pub mod visualizer;
 
 #[cfg(test)]
 mod real;

@@ -255,6 +255,12 @@ pub struct ToolSettings {
     pub frame_shadow: Option<u32>,
     /// Aspect ratio: "auto", "1:1", "16:9", "4:5".
     pub frame_aspect: Option<String>,
+    /// Only `tools.audio_to_video` reads this.
+    pub visualizer_style: Option<String>,
+    pub visualizer_shape: Option<String>,
+    pub visualizer_accent: Option<String>,
+    pub visualizer_bg: Option<String>,
+    pub visualizer_image: Option<PathBuf>,
 }
 
 impl ToolSettings {
@@ -400,6 +406,37 @@ impl ToolSettings {
             corner_radius,
             shadow_radius,
             background,
+        }
+    }
+
+    /// Converts settings into typed visualizer settings.
+    pub fn visualizer_settings(&self) -> crate::media::visualizer::VisualizerSettings {
+        let style = self
+            .visualizer_style
+            .as_deref()
+            .map(crate::media::visualizer::VisualizerStyle::parse)
+            .unwrap_or(crate::media::visualizer::VisualizerStyle::Waveform);
+        let shape = self
+            .visualizer_shape
+            .as_deref()
+            .map(crate::media::visualizer::VisualizerShape::parse)
+            .unwrap_or(crate::media::visualizer::VisualizerShape::Landscape16x9);
+        let accent_color = self
+            .visualizer_accent
+            .as_deref()
+            .map(crate::media::visualizer::parse_hex_color)
+            .unwrap_or([255, 92, 0, 255]);
+        let bg_color = self
+            .visualizer_bg
+            .as_deref()
+            .map(crate::media::visualizer::parse_hex_color)
+            .unwrap_or([0, 0, 0, 255]);
+        crate::media::visualizer::VisualizerSettings {
+            style,
+            shape,
+            accent_color,
+            bg_color,
+            image_path: self.visualizer_image.clone(),
         }
     }
 }

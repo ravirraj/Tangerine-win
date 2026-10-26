@@ -853,6 +853,20 @@ pub const OPERATIONS: &[Operation] = &[
         implemented: true,
         requires: Requirement::Processor("image"),
     },
+    Operation {
+        id: "tools.audio_to_video",
+        label: "Visualize",
+        detail: "Audio visualizer",
+        icon: IconKind::Music,
+        mode: RadialMode::Tools,
+        categories: &[FileKind::Audio],
+        batch: Batch::One,
+        folders: false,
+        output: Output::Beside("mp4"),
+        collision: Collision::Rename,
+        implemented: true,
+        requires: Requirement::Processor("audio"),
+    },
     // ------------------------------------------------------ file actions
     Operation {
         id: "actions.copy-path",
@@ -1663,6 +1677,7 @@ mod tests {
             "tools.channels",
             "tools.organize_pdf",
             "tools.frame_image",
+            "tools.audio_to_video",
             "actions.copy-path",
             "actions.duplicate",
             "actions.rename",

@@ -313,6 +313,7 @@ mod tests {
                     "tools.channels | Channels | Convert audio channels | Music",
                     "tools.organize_pdf | Organize | Organize PDF pages | Document",
                     "tools.frame_image | Add BG | Add background or frame to photo | Picture",
+                    "tools.audio_to_video | Visualize | Audio visualizer | Music",
                 ],
             ),
             (

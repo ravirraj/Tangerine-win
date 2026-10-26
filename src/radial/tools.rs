@@ -1206,6 +1206,121 @@ impl<P: Publisher> Tools<P> {
         self.publish(&finals, &temporary)
     }
 
+    fn run_audio_to_video(&self, request: &Request) -> Outcome {
+        let manifest = Manifest::get();
+        let mut outputs = Vec::new();
+        let mut failed = 0usize;
+        let mut first_reason: Option<String> = None;
+        let settings = request.settings.visualizer_settings();
+
+        for input in &request.inputs {
+            let result = self.visualize_audio_one(input, &manifest, &settings);
+            match result {
+                Ok(path) => outputs.push(path),
+                Err(reason) => {
+                    failed += 1;
+                    let name = reason.name();
+                    diagnostics::log(Level::Warn, "action", &format!("a file was not processed: {name}"));
+                    if first_reason.is_none() {
+                        first_reason = Some(name.to_string());
+                    }
+                }
+            }
+        }
+
+        if failed == 0 {
+            Outcome::Succeeded { outputs }
+        } else {
+            let because = match first_reason {
+                Some(reason) => format!(": {reason}"),
+                None => String::new(),
+            };
+            Outcome::Failed {
+                reason: Failure::Error(format!(
+                    "{failed} of the files could not be processed{because}"
+                )),
+            }
+        }
+    }
+
+    fn visualize_audio_one(
+        &self,
+        input: &Path,
+        manifest: &Manifest,
+        settings: &crate::media::visualizer::VisualizerSettings,
+    ) -> Result<PathBuf, ToolError> {
+        let source_ext = input
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        let source = manifest
+            .format_of_extension(&source_ext)
+            .or_else(|| manifest.format(&source_ext))
+            .ok_or(ToolError::UnsupportedKind)?;
+        if crate::media::probe::kind_of(&source.format) != Some(crate::media::probe::Kind::Audio) {
+            return Err(ToolError::UnsupportedKind);
+        }
+
+        let stem = input
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "audio".to_string());
+        let temp_frame_png = input.with_file_name(format!("{stem}.visualizer-frame.png"));
+        let temporary = input.with_file_name(format!("{stem}.visualizer-part.mp4"));
+
+        let (w, h) = settings.shape.dimensions();
+        let peaks = if settings.style != crate::media::visualizer::VisualizerStyle::StillImage {
+            let samples = crate::media::audio::pcm_samples(&self.ffmpeg_tools, input)
+                .map(|(s, _)| s)
+                .unwrap_or_default();
+            crate::media::audio::waveform_peaks(&samples, 180)
+        } else {
+            Vec::new()
+        };
+
+        let frame = crate::media::visualizer::render_visualizer_frame(&peaks, w, h, settings);
+        frame.save(&temp_frame_png).map_err(|_| ToolError::WriteError)?;
+
+        let mut encode_args: Vec<std::ffi::OsString> = Vec::new();
+        encode_args.push(std::ffi::OsString::from("-y"));
+        encode_args.push(std::ffi::OsString::from("-loop"));
+        encode_args.push(std::ffi::OsString::from("1"));
+        encode_args.push(std::ffi::OsString::from("-framerate"));
+        encode_args.push(std::ffi::OsString::from("25"));
+        encode_args.push(std::ffi::OsString::from("-f"));
+        encode_args.push(std::ffi::OsString::from("png_pipe"));
+        encode_args.push(std::ffi::OsString::from("-i"));
+        encode_args.push(temp_frame_png.as_os_str().to_os_string());
+        encode_args.push(std::ffi::OsString::from("-i"));
+        encode_args.push(input.as_os_str().to_os_string());
+        encode_args.push(std::ffi::OsString::from("-c:v"));
+        encode_args.push(std::ffi::OsString::from("mpeg4"));
+        encode_args.push(std::ffi::OsString::from("-q:v"));
+        encode_args.push(std::ffi::OsString::from("5"));
+        encode_args.push(std::ffi::OsString::from("-c:a"));
+        encode_args.push(std::ffi::OsString::from("aac"));
+        encode_args.push(std::ffi::OsString::from("-b:a"));
+        encode_args.push(std::ffi::OsString::from("192k"));
+        encode_args.push(std::ffi::OsString::from("-pix_fmt"));
+        encode_args.push(std::ffi::OsString::from("yuv420p"));
+        encode_args.push(std::ffi::OsString::from("-shortest"));
+        encode_args.push(std::ffi::OsString::from("-f"));
+        encode_args.push(std::ffi::OsString::from("mov"));
+        encode_args.push(temporary.as_os_str().to_os_string());
+
+        let encode_res = SystemRunner.run(&self.ffmpeg_tools.ffmpeg, &encode_args, None);
+        let _ = std::fs::remove_file(&temp_frame_png);
+
+        if encode_res.is_err() || !temporary.exists() {
+            let _ = std::fs::remove_file(&temporary);
+            return Err(ToolError::ToolFailed);
+        }
+
+        let finals = metadata_final_names(input, "visualizer", "mp4");
+        self.publish(&finals, &temporary)
+    }
+
     /// Joins multiple videos into one MP4 movie, clips scaled to fit the first clip.
     fn merge_videos(&self, inputs: &[PathBuf]) -> Result<PathBuf, ToolError> {
         let first = &inputs[0];
@@ -3090,6 +3205,11 @@ impl<P: Publisher> Handler for Tools<P> {
         // with configurable padding, corners, shadow, and background styles.
         if request.operation == "tools.frame_image" {
             return self.run_frame_image(request);
+        }
+
+        // An audio visualizer converts audio to MP4 video with waveform or still image.
+        if request.operation == "tools.audio_to_video" {
+            return self.run_audio_to_video(request);
         }
 
         let manifest = Manifest::get();
@@ -5964,6 +6084,80 @@ mod tests {
         };
         let outcome = tools.run(&request, &Selection::inspect(&[txt]));
         assert!(matches!(outcome, Outcome::Failed { .. }));
+
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn audio_to_video_unsupported_kind_fails() {
+        let scratch = std::env::temp_dir().join(format!("ot-vis-non-aud-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&scratch);
+        let txt = scratch.join("notes.txt");
+        std::fs::write(&txt, b"hello").unwrap();
+
+        let tools = Tools {
+            ffmpeg_tools: crate::media::locator::Tools {
+                ffmpeg: PathBuf::from("ffmpeg"),
+                ffprobe: PathBuf::from("ffprobe"),
+            },
+            publisher: CopyPublisher,
+        };
+        let request = Request {
+            operation: "tools.audio_to_video".to_string(),
+            inputs: vec![txt.clone()],
+            ..Default::default()
+        };
+        let outcome = tools.run(&request, &Selection::inspect(&[txt]));
+        assert!(matches!(outcome, Outcome::Failed { .. }));
+
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn audio_to_video_creates_mp4_with_waveform() {
+        let folder = Path::new("vendor").join("ffmpeg");
+        let ffmpeg = folder.join("ffmpeg.exe");
+        let ffprobe = folder.join("ffprobe.exe");
+        if !ffmpeg.is_file() || !ffprobe.is_file() {
+            return;
+        }
+
+        let scratch = std::env::temp_dir().join(format!("ot-vis-mp4-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&scratch);
+        let tone = scratch.join("sample.wav");
+        let wav = make_wav_bytes(1.0, 44100);
+        std::fs::write(&tone, wav).expect("sample.wav written");
+
+        let tools = Tools {
+            ffmpeg_tools: crate::media::locator::Tools {
+                ffmpeg,
+                ffprobe,
+            },
+            publisher: CopyPublisher,
+        };
+        let request = Request {
+            operation: "tools.audio_to_video".to_string(),
+            inputs: vec![tone.clone()],
+            settings: ToolSettings {
+                visualizer_style: Some("waveform".to_string()),
+                visualizer_shape: Some("16:9".to_string()),
+                visualizer_accent: Some("#FF5C00".to_string()),
+                visualizer_bg: Some("#000000".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let outcome = tools.run(&request, &Selection::inspect(&[tone.clone()]));
+        let outputs = match outcome {
+            Outcome::Succeeded { outputs } => outputs,
+            Outcome::Failed { reason } => panic!("visualizer failed: {:?}", reason),
+            Outcome::Cancelled => panic!("cancelled"),
+        };
+        assert_eq!(outputs.len(), 1);
+        let out_file = &outputs[0];
+        assert!(out_file.is_file(), "output exists: {:?}", out_file);
+        assert!(out_file.to_string_lossy().contains("sample visualizer.mp4"));
+        assert!(out_file.metadata().map(|m| m.len() > 1000).unwrap_or(false));
 
         let _ = std::fs::remove_dir_all(&scratch);
     }
