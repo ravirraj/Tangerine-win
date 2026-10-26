@@ -77,6 +77,36 @@ impl RedactArea {
     }
 }
 
+/// One stretch of a sound to bleep over, in milliseconds.
+///
+/// Unlike a redaction rectangle, a bleep knows exactly where it stands in
+/// time: the window drops markers and the fields are said in
+/// milliseconds, not fractions — a sound has no width to be fractional
+/// about.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BleepRange {
+    /// Where it starts, in milliseconds.
+    pub start_ms: u64,
+    /// Where it stops, in milliseconds.
+    pub end_ms: u64,
+}
+
+impl BleepRange {
+    /// The stretch as a span of frames, clamped inside a sound of this
+    /// many frames.
+    ///
+    /// What hangs off the end is cut away; a range that starts past the
+    /// end of the sound, or was drawn with nothing in it, comes out
+    /// empty.
+    pub fn frame_span(&self, total_frames: usize, sample_rate: u32) -> (usize, usize) {
+        let at =
+            |ms: u64| (ms as u128 * sample_rate as u128 / 1000).min(total_frames as u128) as usize;
+        let start = at(self.start_ms);
+        let end = at(self.end_ms).max(start);
+        (start, end)
+    }
+}
+
 /// The settings a tool was given in its window.
 ///
 /// A tool that is run with no window — from a drag that never opened one —
@@ -182,6 +212,15 @@ pub struct ToolSettings {
     ///
     /// Only `tools.redact_image` and `tools.redact_video` read this.
     pub redact_color: Option<String>,
+    /// The stretches of a sound to bleep over, in milliseconds.
+    ///
+    /// Only `tools.bleep` reads these.
+    pub bleep_ranges: Vec<BleepRange>,
+    /// How high the bleep tone sings, in hertz (the reference's slider
+    /// stands between 300 and 2000).
+    ///
+    /// Only `tools.bleep` reads this.
+    pub bleep_frequency: Option<u32>,
 }
 
 impl ToolSettings {
@@ -246,6 +285,14 @@ impl ToolSettings {
     pub fn redaction_effect(&self, min_side: u32) -> f64 {
         let share = 0.02 + 0.28 * self.redaction_strength_fraction();
         (share * min_side as f64).max(2.0)
+    }
+
+    /// How high the bleep tone sings, in hertz (a thousand when nothing
+    /// was said — the reference's own default — clamped inside the
+    /// slider's own 300..2000, so a setting from an older file cannot
+    /// push the tone where the window could never draw it).
+    pub fn bleep_frequency_hz(&self) -> u32 {
+        self.bleep_frequency.unwrap_or(1000).clamp(300, 2000)
     }
 }
 

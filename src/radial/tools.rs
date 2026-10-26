@@ -389,6 +389,148 @@ impl<P: Publisher> Tools<P> {
         self.finish(&arguments, source, &temporary, &finals, runner)
     }
 
+    /// Bleeps over the stretches of sounds the window marked.
+    ///
+    /// The marks are said in milliseconds: every one of them becomes a
+    /// span of samples where the original is dropped and a tone takes
+    /// its place — the bleep does not hide under the sound, it stands
+    /// over it. An overlap shows the last bleep laid, the way covers
+    /// stand on a picture. The tone sings at the frequency the settings
+    /// ask, and everything outside the marks is carried through for
+    /// nothing to hear the difference.
+    fn run_bleep(&self, request: &Request, runner: &dyn ProcessRunner) -> Outcome {
+        if request.settings.bleep_ranges.is_empty() {
+            return Outcome::Failed {
+                reason: Failure::InvalidInput("there are no bleep ranges".to_string()),
+            };
+        }
+
+        let manifest = Manifest::get();
+        let mut outputs = Vec::new();
+        let mut failed = 0usize;
+        let mut first_reason: Option<String> = None;
+        for input in &request.inputs {
+            let result = self.bleep_one(input, &manifest, runner, &request.settings);
+            match result {
+                Ok(path) => outputs.push(path),
+                Err(reason) => {
+                    failed += 1;
+                    let name = reason.name();
+                    diagnostics::log(Level::Warn, "action", &format!("a file was not processed: {name}"));
+                    if first_reason.is_none() {
+                        first_reason = Some(name.to_string());
+                    }
+                }
+            }
+        }
+
+        if failed == 0 {
+            Outcome::Succeeded { outputs }
+        } else {
+            let because = match first_reason {
+                Some(reason) => format!(": {reason}"),
+                None => String::new(),
+            };
+            Outcome::Failed {
+                reason: Failure::Error(format!(
+                    "{failed} of the files could not be processed{because}"
+                )),
+            }
+        }
+    }
+
+    /// Bleeps over the marked stretches of one sound, the way the
+    /// volume tool works: read as numbers, laid over here, written back
+    /// into the container it came in.
+    fn bleep_one(
+        &self,
+        input: &Path,
+        manifest: &Manifest,
+        runner: &dyn ProcessRunner,
+        settings: &crate::radial::execution::ToolSettings,
+    ) -> Result<PathBuf, ToolError> {
+        let source_ext = input
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        let source = manifest
+            .format_of_extension(&source_ext)
+            .or_else(|| manifest.format(&source_ext))
+            .ok_or(ToolError::UnsupportedKind)?;
+
+        if crate::media::probe::kind_of(&source.format) != Some(crate::media::probe::Kind::Audio) {
+            return Err(ToolError::UnsupportedKind);
+        }
+
+        let pcm = crate::media::audio::decode_full_pcm(&self.ffmpeg_tools, input)
+            .ok_or(ToolError::ReadError)?;
+
+        let mut samples = pcm.samples;
+        let channels = pcm.channels.max(1) as usize;
+        let frames = samples.len() / channels;
+        for range in &settings.bleep_ranges {
+            let (start, end) = range.frame_span(frames, pcm.sample_rate);
+            bleep_over(
+                &mut samples,
+                pcm.channels,
+                start,
+                end,
+                pcm.sample_rate,
+                settings.bleep_frequency_hz(),
+            );
+        }
+
+        let temporary = input.with_extension(format!("{source_ext}.part"));
+
+        if source_ext == "wav" {
+            let wav_bytes = crate::media::audio::encode_wav_bytes(
+                &samples,
+                pcm.sample_rate,
+                pcm.channels,
+            );
+            fs::write(&temporary, wav_bytes).map_err(|_| ToolError::WriteError)?;
+        } else {
+            let staging_wav = input.with_extension("staging_bleep.wav");
+            let wav_bytes = crate::media::audio::encode_wav_bytes(
+                &samples,
+                pcm.sample_rate,
+                pcm.channels,
+            );
+            fs::write(&staging_wav, wav_bytes).map_err(|_| ToolError::WriteError)?;
+
+            let mut args = vec![
+                OsString::from("-hide_banner"),
+                OsString::from("-nostdin"),
+                OsString::from("-y"),
+                OsString::from("-i"),
+                staging_wav.as_os_str().to_os_string(),
+                OsString::from("-vn"),
+                OsString::from("-c:a"),
+                OsString::from(&source.write.encoder),
+            ];
+            if !source.write.muxer.is_empty() {
+                args.push(OsString::from("-f"));
+                args.push(OsString::from(&source.write.muxer));
+            }
+            args.push(temporary.as_os_str().to_os_string());
+
+            let run_res = runner.run(&self.ffmpeg_tools.ffmpeg, &args, None);
+            let _ = fs::remove_file(&staging_wav);
+
+            match run_res {
+                Ok(status) if status.succeeded() => {}
+                _ => {
+                    let _ = fs::remove_file(&temporary);
+                    return Err(ToolError::ToolFailed);
+                }
+            }
+        }
+
+        let finals = metadata_final_names(input, "bleeped", &source_ext);
+        self.publish(&finals, &temporary)
+    }
+
     /// Splits, at the points the window carried, into a folder of
     /// numbered clips.
     ///
@@ -1126,6 +1268,42 @@ fn paste(
     for dy in 0..patch.height() {
         for dx in 0..patch.width() {
             buf.put_pixel(at_x + dx, at_y + dy, *patch.get_pixel(dx, dy));
+        }
+    }
+}
+
+/// How loud the bleep tone sings, against the top of the sound: half.
+///
+/// The reference mixed its tone at no level that was written down; half
+/// of full scale is heard plainly over speech without clipping against
+/// a loud master, and the choice stands recorded with the notes.
+const BLEEP_TONE_AMPLITUDE: f64 = 0.5;
+
+/// Lays the bleep over one stretch of a sound.
+///
+/// Everything the stretch held is dropped first — nothing of the
+/// original is left under the tone — and a sine at the asked frequency
+/// is written in its place, the same tone in every channel the sound
+/// carries. The stretch is said in frames: a frame is one instant of
+/// the sound, whatever number of channels it arrives in.
+fn bleep_over(
+    samples: &mut [i16],
+    channels: u16,
+    start_frame: usize,
+    end_frame: usize,
+    sample_rate: u32,
+    frequency: u32,
+) {
+    let stride = channels.max(1) as usize;
+    for frame in start_frame..end_frame {
+        let time = frame as f64 / sample_rate as f64;
+        let tone = (BLEEP_TONE_AMPLITUDE
+            * (std::f64::consts::TAU * frequency as f64 * time).sin()
+            * i16::MAX as f64)
+            .round()
+            .clamp(i16::MIN as f64, i16::MAX as f64) as i16;
+        for channel in 0..stride {
+            samples[frame * stride + channel] = tone;
         }
     }
 }
@@ -2051,6 +2229,14 @@ impl<P: Publisher> Handler for Tools<P> {
             return self.run_redact_video(request, &SystemRunner);
         }
 
+        // A sound covered the same way, closer to home: the sound is
+        // read as numbers through the program, and the bleep is laid in
+        // these hands — this build of the program carries no tone of its
+        // own to mix in.
+        if request.operation == "tools.bleep" {
+            return self.run_bleep(request, &SystemRunner);
+        }
+
         let manifest = Manifest::get();
         let runner = SystemRunner;
 
@@ -2146,7 +2332,7 @@ impl<P: Publisher> Handler for Tools<P> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::radial::execution::{RedactArea, RedactStyle, ToolSettings};
+    use crate::radial::execution::{BleepRange, RedactArea, RedactStyle, ToolSettings};
 
     #[test]
     fn the_resize_filter_takes_what_was_asked() {
@@ -3447,6 +3633,195 @@ mod tests {
             .position(|word| word == "-q:v")
             .expect("the picture quality was set");
         assert_eq!(words[quality_at + 1], "5");
+    }
+
+    #[test]
+    fn the_bleep_tone_sings_at_the_asked_pitch() {
+        // A thousand samples a second and two hundred and fifty hertz:
+        // one tone wave every four frames, at half of full scale.
+        let mut samples = vec![0i16; 4];
+        bleep_over(&mut samples, 1, 0, 4, 1000, 250);
+        assert_eq!(
+            samples,
+            vec![0, 16384, 0, -16384],
+            "the tone is a half-scale sine at the asked pitch"
+        );
+    }
+
+    #[test]
+    fn the_bleep_replaces_what_it_stands_over_and_nothing_else() {
+        let mut samples = vec![7i16; 12];
+        bleep_over(&mut samples, 1, 1, 3, 1000, 250);
+        assert_eq!(
+            samples,
+            vec![
+                7, 16384, 0, //
+                7, 7, 7, 7, 7, 7, 7, 7, 7,
+            ],
+            "the tone stands over its stretch and nothing else"
+        );
+    }
+
+    #[test]
+    fn the_bleep_tone_sings_the_same_in_every_channel() {
+        // Two channels of one frame at a quarter of the tone's wave:
+        // both ears hear the same instant.
+        let mut samples = vec![0i16; 2];
+        bleep_over(&mut samples, 2, 0, 1, 1000, 250);
+        assert_eq!(
+            samples,
+            vec![0, 0],
+            "frame nought stands at the wave's own nought"
+        );
+
+        let mut samples = vec![0i16; 4];
+        bleep_over(&mut samples, 2, 1, 2, 1000, 250);
+        assert_eq!(samples, vec![0, 0, 16384, 16384]);
+    }
+
+    #[test]
+    fn the_bleep_frequency_is_clamped_where_the_slider_stands() {
+        assert_eq!(ToolSettings::default().bleep_frequency_hz(), 1000);
+        assert_eq!(
+            ToolSettings {
+                bleep_frequency: Some(200),
+                ..ToolSettings::default()
+            }
+            .bleep_frequency_hz(),
+            300
+        );
+        assert_eq!(
+            ToolSettings {
+                bleep_frequency: Some(5000),
+                ..ToolSettings::default()
+            }
+            .bleep_frequency_hz(),
+            2000
+        );
+    }
+
+    #[test]
+    fn a_bleep_off_the_end_of_the_sound_is_no_bleep_at_all() {
+        let range = BleepRange {
+            start_ms: 3000,
+            end_ms: 9000,
+        };
+        // what hangs off the end is cut away, nothing more
+        assert_eq!(range.frame_span(8000, 1000), (3000, 8000));
+        // a range past the end covers nothing
+        let range = BleepRange {
+            start_ms: 9000,
+            end_ms: 9500,
+        };
+        assert_eq!(range.frame_span(8000, 1000), (8000, 8000));
+    }
+
+    #[test]
+    fn a_sound_with_no_bleeps_is_refused_and_said_so() {
+        let tools = Tools {
+            ffmpeg_tools: crate::media::locator::Tools {
+                ffmpeg: PathBuf::from("ffmpeg"),
+                ffprobe: PathBuf::from("ffprobe"),
+            },
+            publisher: CopyPublisher,
+        };
+        let request = Request {
+            operation: "tools.bleep".to_string(),
+            inputs: vec![PathBuf::from("tone.wav")],
+            settings: ToolSettings::default(),
+            ..Default::default()
+        };
+        let outcome = tools.run(&request, &Selection::inspect(&[PathBuf::from("tone.wav")]));
+        match outcome {
+            Outcome::Failed {
+                reason: Failure::InvalidInput(message),
+            } => {
+                assert_eq!(message, "there are no bleep ranges");
+            }
+            other => panic!("the bleep was not refused for saying nothing: {other:?}"),
+        }
+    }
+
+    #[test]
+    #[ignore = "needs the conversion program"]
+    fn a_sound_is_bleeped_the_way_the_ranges_mark() {
+        let ffmpeg = Path::new("vendor").join("ffmpeg").join("ffmpeg.exe");
+        if !ffmpeg.is_file() {
+            eprintln!("the program is not there; this test needs it");
+            return;
+        }
+        let scratch = std::env::temp_dir().join("open-tangerine-bleep-test");
+        std::fs::create_dir_all(&scratch).expect("the scratch folder was made");
+        let input = scratch.join("tone.wav");
+
+        // One second of a dull constant tone in both ears: eight
+        // thousand frames of five thousands.
+        let flat = vec![5000i16; 16000];
+        let wav = crate::media::audio::encode_wav_bytes(&flat, 8000, 2);
+        std::fs::write(&input, wav).expect("tone.wav written");
+
+        let tools = Tools {
+            ffmpeg_tools: crate::media::locator::Tools {
+                ffmpeg,
+                ffprobe: Path::new("vendor").join("ffmpeg").join("ffprobe.exe"),
+            },
+            publisher: CopyPublisher,
+        };
+        let request = Request {
+            operation: "tools.bleep".to_string(),
+            inputs: vec![input.clone()],
+            settings: ToolSettings {
+                // a fifth of a second to half a second: the tone sings
+                // there, at the frequency nobody moved (a thousand)
+                bleep_ranges: vec![BleepRange {
+                    start_ms: 200,
+                    end_ms: 500,
+                }],
+                ..ToolSettings::default()
+            },
+            ..Default::default()
+        };
+        let outcome = tools.run(&request, &Selection::inspect(&[input.clone()]));
+        let outputs = match outcome {
+            Outcome::Succeeded { outputs } => outputs,
+            Outcome::Failed { reason } => panic!("the bleep failed: {reason:?}"),
+            Outcome::Cancelled => panic!("the bleep was not asked to stop"),
+        };
+        let made = outputs.first().expect("the bleeped copy is there");
+        assert!(made.is_file(), "the bleeped copy exists");
+        assert_eq!(
+            made.file_name().and_then(|n| n.to_str()),
+            Some("tone bleeped.wav")
+        );
+
+        // read it back: what the bleep stood over sings at half scale,
+        // and what it stood away from is exactly what was there
+        let bytes = std::fs::read(made).expect("the bleeped copy reads");
+        let (samples, rate) = crate::media::audio::parse_wav_samples(&bytes).expect("parse wav");
+        assert_eq!(rate, 8000, "the sound keeps its rate");
+        assert_eq!(samples.len(), 16000, "the sound keeps its length");
+        assert_eq!(samples[0], 5000, "before the bleep nothing changed");
+        assert_eq!(samples[15999], 5000, "after the bleep nothing changed");
+        let start = 2 * 1600; // two channels, two hundred milliseconds in
+        let end = 2 * 4000; // two channels, half a second in
+        let peak = samples[start..end]
+            .iter()
+            .map(|&s| (s as i32).abs())
+            .max()
+            .unwrap_or(0);
+        assert!(
+            (peak - 16384).abs() <= 1,
+            "the tone stands half of full scale, saw {peak}"
+        );
+        assert_ne!(
+            samples[start],
+            5000,
+            "the start of the bleep is no longer the sound it was"
+        );
+        // both ears hear the same instant of the tone
+        assert_eq!(samples[start], samples[start + 1]);
+
+        let _ = std::fs::remove_dir_all(&scratch);
     }
 
     #[test]

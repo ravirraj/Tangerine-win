@@ -302,6 +302,7 @@ mod tests {
                     "tools.resize | Resize | Change the image size | Resize",
                     "tools.redact_image | Redact | Cover private parts of pictures | Redact",
                     "tools.redact_video | Redact | Cover private parts of videos | Redact",
+                    "tools.bleep | Bleep | Cover private parts of sounds | Redact",
                     "tools.merge | Merge | Join several files together | Merge",
                     "tools.metadata | Metadata | Edit the file metadata | Pencil",
                     "tools.normalize | Normalize | Normalize audio volume | Music",
