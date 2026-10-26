@@ -23,7 +23,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     PostQuitMessage, RegisterClassW, SetForegroundWindow, SetLayeredWindowAttributes, SetTimer,
     SetWindowPos, SetWindowTextW, ShowWindow, TranslateMessage, CW_USEDEFAULT, IDC_ARROW,
     LWA_ALPHA, MSG, PM_REMOVE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER, SW_HIDE, SW_SHOW,
-    WM_CLOSE, WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
+    WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
     WM_PAINT, WM_TIMER, WNDCLASSW, WS_EX_LAYERED,
 };
 
@@ -436,18 +436,18 @@ impl ChannelsWindow {
                 inputs: vec![path],
                 settings,
             });
-            unsafe { ShowWindow(hwnd, SW_HIDE) };
+            unsafe { let _ = ShowWindow(hwnd, SW_HIDE); };
         });
 
         let snd_dismiss = sender.clone();
         card.on_dismiss_chosen(move || {
             let _ = snd_dismiss.send(ToolEvent::Cancelled);
-            unsafe { ShowWindow(hwnd, SW_HIDE) };
+            unsafe { let _ = ShowWindow(hwnd, SW_HIDE); };
         });
         let snd_cancel = sender.clone();
         card.on_cancel_chosen(move || {
             let _ = snd_cancel.send(ToolEvent::Cancelled);
-            unsafe { ShowWindow(hwnd, SW_HIDE) };
+            unsafe { let _ = ShowWindow(hwnd, SW_HIDE); };
         });
 
         card.on_play_chosen(|| {
@@ -592,12 +592,12 @@ impl ChannelsWindow {
             let _ = SetLayeredWindowAttributes(self.window, COLORREF(0), 255, LWA_ALPHA);
             let _ = SetForegroundWindow(self.window);
             SetTimer(Some(self.window), FADE_TIMER_ID, 16, None);
-            ShowWindow(self.window, SW_SHOW);
+            let _ = ShowWindow(self.window, SW_SHOW);
         }
     }
 
     pub fn hide(&self) {
-        unsafe { ShowWindow(self.window, SW_HIDE) };
+        unsafe { let _ = ShowWindow(self.window, SW_HIDE); };
     }
 }
 
@@ -699,7 +699,7 @@ unsafe extern "system" fn channels_card_proc(
                     host.draw();
                 }
             });
-            unsafe { EndPaint(hwnd, &ps) };
+            unsafe { let _ = EndPaint(hwnd, &ps); };
             LRESULT(0)
         }
         WM_LBUTTONDOWN => {

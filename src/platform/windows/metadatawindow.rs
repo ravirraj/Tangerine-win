@@ -795,7 +795,6 @@ impl MetadataHost {
 
 pub struct MetadataWindow {
     pub window: HWND,
-    pub sender: Sender<ToolEvent>,
 }
 
 impl MetadataWindow {
@@ -959,7 +958,7 @@ impl MetadataWindow {
 
         HOST.with(|slot| *slot.borrow_mut() = Some(host));
 
-        Ok(Self { window, sender })
+        Ok(Self { window })
     }
 
     pub fn show_for(&mut self, _op: &str, _title: &str, _detail: &str, files: &[PathBuf]) {
@@ -1105,12 +1104,6 @@ impl MetadataWindow {
         // Set initial focus to first tag edit control
         if !active_tag_defs.is_empty() {
             unsafe { let _ = SetFocus(Some(tag_field_handle(0))); }
-        }
-    }
-
-    pub fn hide(&self) {
-        unsafe {
-            let _ = ShowWindow(self.window, SW_HIDE);
         }
     }
 }
@@ -1701,6 +1694,66 @@ pub mod show_tests {
         capture(window.window, &window_shot);
         assert!(window_shot.is_file(), "metadata-window.png was written");
 
+        unsafe { cancel(window.window) };
+    }
+
+    /// Audit probe: the same window captured three times inside this one
+    /// process, so title bytes of a, b and c say whether the picture race
+    /// of the system chrome is per call or per process.
+    #[test]
+    #[ignore = "captures the same metadata window three times in a row"]
+    fn capture_probe_the_metadata_window_thrice() {
+        crate::ui::wheel::install_platform();
+        use crate::platform::windows::windowhost::screenshot::capture;
+        let (sender, _receiver) = channel();
+        let mut window = MetadataWindow::new(sender).expect("the metadata window was made");
+
+        let out_dir = std::path::Path::new("target").join("shots");
+        let _ = std::fs::create_dir_all(&out_dir);
+        let test_file = out_dir.join("photo.png");
+        let _ = std::fs::write(&test_file, vec![0u8; 1_468_006]);
+
+        window.show_for("tools.metadata", "Edit metadata", "", &[test_file]);
+
+        STATE.with(|slot| {
+            let mut st = slot.borrow_mut();
+            st.tags.insert(MetadataTag::Date, "2026:10:19 14:30:00".to_string());
+            st.original_tags.insert(MetadataTag::Date, "2026:10:19 14:30:00".to_string());
+            st.fields = (0..17)
+                .map(|i| MetadataField {
+                    group: "Exif".to_string(),
+                    key: format!("Field {i}"),
+                    value: "val".to_string(),
+                    sensitive: i < 3,
+                })
+                .collect();
+            st.focus = Focus::Search;
+        });
+        redraw(window.window);
+
+        for _ in 0..100 {
+            unsafe {
+                let mut msg = MSG::default();
+                while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+                    let _ = TranslateMessage(&msg);
+                    DispatchMessageW(&msg);
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            let alpha = STATE.with(|s| s.borrow().fade_alpha);
+            if alpha >= 255 {
+                break;
+            }
+        }
+        pump_messages(10);
+
+        capture(window.window, &out_dir.join("meta-probe-a.png"));
+        pump_messages(5);
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        capture(window.window, &out_dir.join("meta-probe-b.png"));
+        pump_messages(5);
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        capture(window.window, &out_dir.join("meta-probe-c.png"));
         unsafe { cancel(window.window) };
     }
 }
