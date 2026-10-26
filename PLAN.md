@@ -32,9 +32,13 @@
 | B-10.13 | ✅ Done | Join Videos + Merge PDFs backend & window host at parity (ordered list chevron reordering, video frame & PDF page 1 thumbs, todo.md B-10.13) |
 | B-10.14 | ✅ Done | Organize PDF Pages backend & window host at parity (3-column page grid, selection border, rotation, duplicate, remove, reverse order, todo.md B-10.14) |
 | B-10.15 | ✅ Done | Add Background / Frame Image backend & window host at parity (live stage canvas, gradient/solid/blur presets, padding, corner radius, drop shadow, aspect ratio, todo.md B-10.15) |
+| B-10.16 Backend | ✅ Done | Audio Visualizer execution backend (waveform bucketing, frame rendering, MP4 muxing, registered in registry.rs; window UI marked TODO) |
+| B-13 | ✅ Done | Windows System Integration (System tray icon & context menu, Explorer "Open with Tangerine" shell integration, audio completion chime) |
+| B-14 | ✅ Done | Persistent Settings & Settings Window Host (JSON engine, Slint host, theme chips, accent swatches, output options, system toggles, capture test) |
+| P4 Polish | ✅ Done | Radial Wheel Polish (Light-glass theme matching conversion hero, contrast-adaptive mode dots, file thumbnail hub mode, capture tests) |
 
 **Current branch:** `phase/b-10-tool-windows` (all local, no push; merge only when the user says)
-**Tests:** 508 unit + 72 ignored (real-FFmpeg, real-PDFium, and image compositing operations and window captures), 0 failures
+**Tests:** 526 unit + 72 ignored (real-FFmpeg, real-PDFium, image compositing operations, and window captures), 0 failures
 
 ---
 

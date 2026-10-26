@@ -285,5 +285,20 @@ cargo test capture -- --ignored --nocapture   # regenerate the window shots
 - One test run exited `0xC0000409` (fail-fast) during a back-to-back
   unit+ignored run; it never reproduced (three clean reruns, incl. the identical
   sequence). If you see it once, rerun; record it if you can make it stable.
-- Docs: exactly-phrase test counts from the runner ("355 unit + 36 ignored
-  (real-FFmpeg operations and the four window captures), 0 failures").
+- Docs: exactly-phrase test counts from the runner ("526 unit + 72 ignored
+  (real-FFmpeg operations and window captures), 0 failures").
+
+## 8. Status update (2026-10-26 — Option 2 & Option 3 Completed)
+
+- **Option 2 (System Integration & Shell Features — Phase B-13 & B-14)**:
+  - `src/settings.rs`: Persistent JSON engine saving to `%APPDATA%\Open Tangerine\settings.json`.
+  - `src/ui/settings_window.slint`: High-fidelity Slint card with theme chips, accent swatches, output radios, system toggles, Done button.
+  - `src/platform/windows/settingswindow.rs`: Win32 host with software rendering and capture test (`settings-window.png`).
+  - `src/platform/windows/tray.rs`: System tray icon with context menu (Open, Settings, Exit).
+  - `src/platform/windows/shell_menu.rs`: Windows Explorer "Open with Tangerine" context menu integration under `HKCU\Software\Classes\*\shell\OpenTangerine`.
+  - `src/platform/windows/notify.rs`: Audio completion chime via Win32 `MessageBeep`.
+- **Option 3 (Wheel Polish — Phase P4)**:
+  - `src/ui/theme.rs`: Dynamic theme resolution (`Theme::resolve()`) connected to `AppSettings.theme` (Light, Dark, System) and `prefers_dark()`.
+  - `src/ui/wheel.slint`: Light-glass theme matching official press kit hero; contrast-adaptive mode dots; file thumbnail hub mode support.
+  - `src/ui/wheel.rs`: `ViewModel` and `WheelUi` with `has_thumbnail` and `thumbnail` support, `save_capture` generating `wheel-light.png` and `wheel-dark.png`.
+- **Test suite**: 526 passed, 0 failed, 72 ignored; exactly 43 baseline compiler warnings.

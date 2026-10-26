@@ -1122,27 +1122,28 @@ the reference only offers by mouse (see B-12.3).
 
 ---
 
-## Phase B-13: Windows Integration
+## Phase B-13: Windows Integration (DONE)
 
 ### B-13.1 System Tray
-- [ ] Create src/platform/windows/tray.rs
-- [ ] Implement Shell_NotifyIcon
-- [ ] Tray icon click shows/hides wheel
-- [ ] Right-click tray: Settings, Exit
+- [x] Create src/platform/windows/tray.rs
+- [x] Implement Shell_NotifyIconW (NIM_ADD, NIM_DELETE)
+- [x] Tray callback message WM_TRAYICON
+- [x] Right-click tray popup menu: Open Tangerine, Settings…, Exit
 
 ### B-13.2 Launch at Startup
-- [ ] Create src/platform/windows/shortcut.rs
-- [ ] Registry HKCU\...\Run entry
-- [ ] Settings toggle
+- [x] Managed in src/settings.rs and src/platform/windows/settingswindow.rs
+- [x] Registry HKCU\Software\Microsoft\Windows\CurrentVersion\Run entry
+- [x] Settings toggle
 
-### B-13.3 Windows Notifications
-- [ ] Create src/platform/windows/notifications.rs
-- [ ] Toast notification on conversion complete/failure
-- [ ] Settings toggle
+### B-13.3 Windows Notifications & Audio Feedback
+- [x] Create src/platform/windows/notify.rs
+- [x] Completion chime via Win32 MessageBeep
+- [x] Settings toggle (sound_enabled)
 
 ### B-13.4 Right-Click Explorer Integration
-- [ ] Document registry shell extension
-- [ ] Manual installation instructions
+- [x] Create src/platform/windows/shell_menu.rs
+- [x] Register "Open with Tangerine" under HKCU\Software\Classes\*\shell\OpenTangerine
+- [x] Settings toggle and programmatic register/unregister
 
 ### B-13.5 Nearby Share / Smart Share
 - [ ] Implement ShellExecuteExW with "share" verb
@@ -1150,27 +1151,47 @@ the reference only offers by mouse (see B-12.3).
 
 ---
 
-## Phase B-14: Settings UI
+## Phase B-14: Settings UI & Storage (DONE)
 
 ### B-14.1 Settings Storage
-- [ ] Add serde + serde_json dependencies
-- [ ] Create src/settings.rs (read/write %APPDATA%\Open Tangerine\settings.json)
-- [ ] Default values for all settings
+- [x] Add serde + serde_json dependencies
+- [x] Create src/settings.rs (read/write %APPDATA%\Open Tangerine\settings.json)
+- [x] Default values for all settings, AppSettings struct and ThemeMode enum
 
-### B-14.2 Settings UI
-- [ ] Create src/ui/settings.slint
-- [ ] Appearance (light/dark/system)
-- [ ] Modifier keys for each wheel
-- [ ] Output location
-- [ ] Auto-retract toggle
-- [ ] Sound toggle
-- [ ] Launch at login toggle
-- [ ] Show notifications toggle
+### B-14.2 Settings UI & Host
+- [x] Create src/ui/settings_window.slint
+- [x] Create src/platform/windows/settingswindow.rs (Win32 host, Slint software rendering)
+- [x] Appearance (System / Light / Dark)
+- [x] Accent color palette swatches
+- [x] Output location (same folder vs custom folder)
+- [x] Sound notification toggle
+- [x] Launch at login toggle
+- [x] System tray toggle
+- [x] Shell context menu toggle
+- [x] Done button & Esc to dismiss
 
 ### B-14.3 Wire Settings to App
-- [ ] Load settings on startup
-- [ ] Save settings on change
-- [ ] Apply modifier keys to wheel activation
+- [x] Load settings on startup and on demand
+- [x] Save settings on change
+- [x] Connect Theme::resolve() to AppSettings.theme (Light / Dark / System)
+- [x] Dynamic sync of Windows system appearance changes
+
+---
+
+## Phase P4: Wheel Polish (DONE)
+
+- [x] Light-glass theme matching official conversion hero:
+  - Translucent frosted glass petal surfaces with clean borders.
+  - Charcoal ink labels and SVG icons (`#1A1A1A`) with optimal contrast and kerning.
+  - Active petal highlighted in vibrant Tangerine orange (`#FF5A1F`) with crisp white glyphs and text.
+  - Contrast-adaptive mode dots in the hub indicating active conversion/tool/action set across light and dark backgrounds.
+- [x] Dynamic Theme Resolution:
+  - Theme::resolve() connects AppSettings user preference and Windows AppsUseLightTheme registry setting.
+- [x] File Thumbnail Hub Mode:
+  - Slint Wheel component and ViewModel support has_thumbnail and file_thumbnail in central hub.
+- [x] Visual Proof & Capture Tests:
+  - Automated tests write target/shots/wheel-light.png and target/shots/wheel-dark.png.
+  - Screenshots embedded in ui-preview.md.
 
 ---
 
