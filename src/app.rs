@@ -280,6 +280,8 @@ struct App {
     normalize_window: crate::platform::windows::normalizewindow::NormalizeWindow,
     /// The window audio channels are converted in, hidden until channels is picked.
     channels_window: crate::platform::windows::channelswindow::ChannelsWindow,
+    /// The window a picture is covered in, hidden until a redact is picked.
+    redact_image_window: crate::platform::windows::redactimagewindow::RedactImageWindow,
 }
 
 /// The end of a drag that has not been acted on yet.
@@ -404,6 +406,25 @@ impl App {
         let crop_window = crate::platform::windows::cropwindow::CropWindow::new(crop_sender)
             .map_err(|reason| reason)?;
 
+        // The window a picture is covered in, with the rectangles of
+        // cover standing over it. What its buttons say comes back the
+        // same way, into the same message.
+        let (redact_sender, redact_messages) =
+            std::sync::mpsc::channel::<crate::platform::windows::toolwindow::ToolEvent>();
+        {
+            let sender = sender.clone();
+            std::thread::spawn(move || {
+                while let Ok(event) = redact_messages.recv() {
+                    if sender.send(Message::ToolWindow(event)).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+        let redact_image_window =
+            crate::platform::windows::redactimagewindow::RedactImageWindow::new(redact_sender)
+                .map_err(|reason| reason)?;
+
         // The window a compress is asked in.
         let (compress_sender, compress_messages) =
             std::sync::mpsc::channel::<crate::platform::windows::toolwindow::ToolEvent>();
@@ -512,6 +533,7 @@ impl App {
             metadata_window,
             normalize_window,
             channels_window,
+            redact_image_window,
         })
     }
 
@@ -740,6 +762,14 @@ impl App {
         // window's form of typed fields.
         if segment.id == "tools.crop" {
             self.crop_window
+                .show_for(&segment.id, &segment.label, &segment.detail, files);
+            return;
+        }
+        // A redact of a picture asks for its own card the picture stands
+        // on: the rectangles of cover over it, and the look they take. It
+        // is not the plain window's form of typed fields.
+        if segment.id == "tools.redact_image" {
+            self.redact_image_window
                 .show_for(&segment.id, &segment.label, &segment.detail, files);
             return;
         }

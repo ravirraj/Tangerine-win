@@ -1,0 +1,457 @@
+// The card a picture is covered in.
+//
+// The skeleton is the shell's (shell.slint); the body is what the
+// reference lays out for a cover-up: the picture fitted on the dark
+// stage with the rectangles of cover standing over it — orange rims,
+// square hands at the four corners of the chosen one and a pill on
+// each of its edges — the style row with its two ways of covering,
+// the colour well, the detector row, and a footer whose Reset puts
+// the covers away and whose save makes the covered copy.
+//
+// The card only draws. The pressing, the dragging of the covers,
+// their corners and edges are all read by the window itself, which
+// holds the same geometry the card was given — the way the crop does.
+
+import { Tokens } from "tokens.slint";
+import { Panel } from "tokens.slint";
+import { CardHeader, Hairline, PillButton } from "shell.slint";
+
+// One cover chip, the way every chip of the cards wears itself: quiet
+// until it is the one in use — the chosen one wears the orange, the
+// keyboard's arrival the ring.
+component Chip {
+    in property <Panel> box;
+    in property <string> label;
+    in property <bool> focused;
+    in property <bool> selected;
+    in property <float> ui-scale: 1.0;
+
+    callback chosen();
+
+    Rectangle {
+        x: root.box.x; y: root.box.y;
+        width: root.box.width; height: root.box.height;
+        border-radius: Tokens.radius-control;
+        background: root.selected ? Tokens.accent-tint
+                   : (chip-touch.pressed ? Tokens.quiet-pressed
+                   : (chip-touch.has-hover ? Tokens.quiet-hover : Tokens.quiet));
+        border-width: 1px;
+        border-color: root.selected ? Tokens.accent : Tokens.hairline;
+
+        chip-touch := TouchArea {
+            clicked => { root.chosen(); }
+        }
+
+        Text {
+            text: root.label;
+            color: root.selected ? Tokens.accent : Tokens.text;
+            font-size: root.ui-scale * 12px;
+            font-family: "Segoe UI";
+            vertical-alignment: center;
+            horizontal-alignment: center;
+        }
+    }
+    // The ring the keyboard puts around the chip.
+    Rectangle {
+        x: root.box.x - 3px; y: root.box.y - 3px;
+        width: root.box.width + 6px; height: root.box.height + 6px;
+        border-radius: Tokens.radius-control + 3px;
+        border-width: 2px;
+        border-color: Tokens.accent;
+        visible: root.focused;
+    }
+}
+
+// One rectangle of cover, said in the card's own pixels, absolute: the
+// window is the one that decides what it stands over.
+export struct RectData {
+    x: float,
+    y: float,
+    width: float,
+    height: float,
+}
+
+export component RedactImageCard inherits Window {
+    // The size of the card, held here so the renderer reads what the
+    // window really is: the system tells us the client size, and the
+    // renderer draws exactly what these two say.
+    in property <length> card-width: 420px;
+    in property <length> card-height: 560px;
+
+    // What the card says.
+    in property <string> file-name;
+    in property <string> detail;
+    in property <float> ui-scale: 1.0;
+
+    // Where everything stands, in the card's own pixels, absolute.
+    in property <Panel> header-box;
+    in property <Panel> detail-box;
+    in property <Panel> stage-box;
+    in property <Panel> media-box;
+    in property <Panel> style-label-box;
+    in property <Panel> style-box;
+    in property <Panel> solid-box;
+    in property <Panel> blur-box;
+    in property <Panel> color-label-box;
+    in property <Panel> well-box;
+    in property <Panel> detect-label-box;
+    in property <Panel> faces-box;
+    in property <Panel> text-box;
+    in property <Panel> note-box;
+    in property <Panel> hairline-top-box;
+    in property <Panel> hairline-bottom-box;
+    in property <Panel> reset-box;
+    in property <Panel> run-box;
+
+    // The media and whether there is one.
+    in property <image> frame;
+    in property <bool> has-frame: false;
+
+    // The covers, in the card's own pixels, absolute; which one stands
+    // chosen (a hand is only drawn on the chosen one).
+    in property <[RectData]> rects;
+    in property <int> selected-rect: -1;
+
+    // The look the covers will be given: a solid box of one colour, or
+    // a smear. The colour a solid box wears.
+    in property <bool> solid-style: true;
+    in property <color> well-color: #000000;
+
+    // The keyboard's stops: 1 and 2 a style chip, 3 the colour well,
+    // 4 Reset, 5 save.
+    in property <int> focus-stop: 0;
+
+    callback run-chosen();
+    callback reset-chosen();
+    callback style-chosen(int);
+    callback color-chosen();
+
+    width: root.card-width;
+    height: root.card-height;
+
+    Rectangle {
+        background: Tokens.window-bg;
+    }
+
+    CardHeader {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        file-name: root.file-name;
+        detail: root.detail;
+        ui-scale: root.ui-scale;
+        header-box: root.header-box;
+        detail-box: root.detail-box;
+    }
+    Hairline {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.hairline-top-box;
+    }
+
+    // The stage of a cover-up is dark, the way the reference stages a
+    // cover: what stands on it is the picture itself, fitted.
+    Rectangle {
+        x: root.stage-box.x; y: root.stage-box.y;
+        width: root.stage-box.width; height: root.stage-box.height;
+        border-radius: Tokens.radius-preview;
+        background: Tokens.preview-black;
+
+        if root.has-frame: Rectangle {
+            x: root.media-box.x - root.stage-box.x;
+            y: root.media-box.y - root.stage-box.y;
+            width: root.media-box.width;
+            height: root.media-box.height;
+            clip: true;
+
+            Image {
+                x: 0; y: 0;
+                width: parent.width;
+                height: parent.height;
+                source: root.frame;
+                image-fit: fill;
+            }
+        }
+
+        // The covers, the newest standing last. Each carries the look it
+        // will be given — a box of the colour, or the orange wash of
+        // something about to be smeared — and the chosen one carries
+        // hands: a square at each corner, a pill on each edge.
+        for rect[rect-index] in root.rects: Rectangle {
+            x: rect.x * 1px - root.stage-box.x;
+            y: rect.y * 1px - root.stage-box.y;
+            width: rect.width * 1px;
+            height: rect.height * 1px;
+            background: root.solid-style ? root.well-color
+                        : Tokens.accent-tint;
+            border-width: 2px;
+            border-color: Tokens.accent;
+
+            // The four square hands at the corners, the way the crop's
+            // rectangle wears them.
+            Rectangle {
+                x: -6px; y: -6px;
+                width: 11px; height: 11px;
+                border-width: 2px;
+                border-color: Tokens.accent;
+                background: Tokens.content;
+                border-radius: 3px;
+                visible: rect-index == root.selected-rect
+                    && rect.width * 1px > 0px && rect.height * 1px > 0px;
+            }
+            Rectangle {
+                x: parent.width - 5px; y: -6px;
+                width: 11px; height: 11px;
+                border-width: 2px;
+                border-color: Tokens.accent;
+                background: Tokens.content;
+                border-radius: 3px;
+                visible: rect-index == root.selected-rect
+                    && rect.width * 1px > 0px && rect.height * 1px > 0px;
+            }
+            Rectangle {
+                x: -6px; y: parent.height - 5px;
+                width: 11px; height: 11px;
+                border-width: 2px;
+                border-color: Tokens.accent;
+                background: Tokens.content;
+                border-radius: 3px;
+                visible: rect-index == root.selected-rect
+                    && rect.width * 1px > 0px && rect.height * 1px > 0px;
+            }
+            Rectangle {
+                x: parent.width - 5px; y: parent.height - 5px;
+                width: 11px; height: 11px;
+                border-width: 2px;
+                border-color: Tokens.accent;
+                background: Tokens.content;
+                border-radius: 3px;
+                visible: rect-index == root.selected-rect
+                    && rect.width * 1px > 0px && rect.height * 1px > 0px;
+            }
+
+            // The pills on the four edges, the way the reference's
+            // editor carries their handles into the sides.
+            Rectangle {
+                x: parent.width / 2 - 11px; y: -5px;
+                width: 22px; height: 11px;
+                border-width: 2px;
+                border-color: Tokens.accent;
+                background: Tokens.content;
+                border-radius: 5px;
+                visible: rect-index == root.selected-rect
+                    && rect.width * 1px > 44px && rect.height * 1px > 22px;
+            }
+            Rectangle {
+                x: parent.width - 6px; y: parent.height / 2 - 11px;
+                width: 11px; height: 22px;
+                border-width: 2px;
+                border-color: Tokens.accent;
+                background: Tokens.content;
+                border-radius: 5px;
+                visible: rect-index == root.selected-rect
+                    && rect.width * 1px > 44px && rect.height * 1px > 22px;
+            }
+            Rectangle {
+                x: parent.width / 2 - 11px; y: parent.height - 6px;
+                width: 22px; height: 11px;
+                border-width: 2px;
+                border-color: Tokens.accent;
+                background: Tokens.content;
+                border-radius: 5px;
+                visible: rect-index == root.selected-rect
+                    && rect.width * 1px > 44px && rect.height * 1px > 22px;
+            }
+            Rectangle {
+                x: -5px; y: parent.height / 2 - 11px;
+                width: 11px; height: 22px;
+                border-width: 2px;
+                border-color: Tokens.accent;
+                background: Tokens.content;
+                border-radius: 5px;
+                visible: rect-index == root.selected-rect
+                    && rect.width * 1px > 44px && rect.height * 1px > 22px;
+            }
+        }
+    }
+
+    // The rows the look is said in, label at the left, the control at
+    // the right, one line each.
+    Text {
+        x: root.style-label-box.x; y: root.style-label-box.y;
+        width: root.style-label-box.width; height: root.style-label-box.height;
+        text: "Style";
+        color: Tokens.text;
+        font-size: root.ui-scale * 13px;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+    }
+    Chip {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.solid-box; label: "Solid";
+        ui-scale: root.ui-scale;
+        selected: root.solid-style; focused: root.focus-stop == 1;
+        chosen => { root.style-chosen(1); }
+    }
+    Chip {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.blur-box; label: "Blur";
+        ui-scale: root.ui-scale;
+        selected: !root.solid-style; focused: root.focus-stop == 2;
+        chosen => { root.style-chosen(2); }
+    }
+
+    Text {
+        x: root.color-label-box.x; y: root.color-label-box.y;
+        width: root.color-label-box.width; height: root.color-label-box.height;
+        text: "Color";
+        color: Tokens.text;
+        font-size: root.ui-scale * 13px;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+    }
+    // The colour well: the pill of the colour a solid box wears, in a
+    // quiet well. A press turns the wheel to the next colour.
+    Rectangle {
+        x: root.well-box.x - 3px; y: root.well-box.y - 3px;
+        width: root.well-box.width + 6px; height: root.well-box.height + 6px;
+        border-radius: Tokens.radius-control + 3px;
+        border-width: 2px;
+        border-color: Tokens.accent;
+        visible: root.focus-stop == 3;
+    }
+    Rectangle {
+        x: root.well-box.x; y: root.well-box.y;
+        width: root.well-box.width; height: root.well-box.height;
+        border-radius: Tokens.radius-control;
+        background: Tokens.quiet;
+
+        well-touch := TouchArea {
+            clicked => { root.color-chosen(); }
+        }
+
+        Rectangle {
+            x: 3px; y: 3px;
+            width: parent.width - 6px; height: parent.height - 6px;
+            border-radius: 3px;
+            background: root.well-color;
+        }
+    }
+
+    Text {
+        x: root.detect-label-box.x; y: root.detect-label-box.y;
+        width: root.detect-label-box.width; height: root.detect-label-box.height;
+        text: "Detect";
+        color: Tokens.text;
+        font-size: root.ui-scale * 13px;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+    }
+    // The detectors stand in the reference; they are not carried here,
+    // and their chips wear their words grey and take no press.
+    Rectangle {
+        x: root.faces-box.x; y: root.faces-box.y;
+        width: root.faces-box.width; height: root.faces-box.height;
+        border-radius: Tokens.radius-control;
+        background: Tokens.quiet;
+
+        Text {
+            text: "Faces";
+            color: Tokens.text-muted;
+            font-size: root.ui-scale * 12px;
+            font-family: "Segoe UI";
+            vertical-alignment: center;
+            horizontal-alignment: center;
+        }
+    }
+    Rectangle {
+        x: root.text-box.x; y: root.text-box.y;
+        width: root.text-box.width; height: root.text-box.height;
+        border-radius: Tokens.radius-control;
+        background: Tokens.quiet;
+
+        Text {
+            text: "Text";
+            color: Tokens.text-muted;
+            font-size: root.ui-scale * 12px;
+            font-family: "Segoe UI";
+            vertical-alignment: center;
+            horizontal-alignment: center;
+        }
+    }
+    Text {
+        x: root.note-box.x; y: root.note-box.y;
+        width: root.note-box.width; height: root.note-box.height;
+        text: "Faces and text are not found here — draw the covers in your own hand.";
+        color: Tokens.text-muted;
+        font-size: root.ui-scale * 12px;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    Hairline {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.hairline-bottom-box;
+    }
+
+    // The footer: Reset at the left, the making of the copy at the
+    // right. Escape says no either way.
+    Rectangle {
+        x: root.reset-box.x - 3px; y: root.reset-box.y - 3px;
+        width: root.reset-box.width + 6px; height: root.reset-box.height + 6px;
+        border-radius: Tokens.radius-control + 3px;
+        border-width: 2px;
+        border-color: Tokens.accent;
+        visible: root.focus-stop == 4;
+    }
+    PillButton {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.reset-box;
+        label: "Reset";
+        ui-scale: root.ui-scale;
+        clicked => { root.reset-chosen(); }
+    }
+
+    // The ring the keyboard puts around save.
+    Rectangle {
+        x: root.run-box.x - 3px; y: root.run-box.y - 3px;
+        width: root.run-box.width + 6px; height: root.run-box.height + 6px;
+        border-radius: Tokens.radius-control + 3px;
+        border-width: 2px;
+        border-color: Tokens.accent;
+        visible: root.focus-stop == 5;
+    }
+    Rectangle {
+        x: root.run-box.x; y: root.run-box.y;
+        width: root.run-box.width; height: root.run-box.height;
+        border-radius: Tokens.radius-control;
+        background: root.rects.length == 0 ? Tokens.quiet
+                   : (run-touch.pressed ? Tokens.quiet-pressed
+                   : (run-touch.has-hover ? Tokens.quiet-hover : Tokens.quiet));
+
+        run-touch := TouchArea {
+            enabled: root.rects.length > 0;
+            clicked => { root.run-chosen(); }
+        }
+
+        Text {
+            text: "Save Redacted Copy";
+            color: root.rects.length == 0 ? Tokens.text-muted : Tokens.text;
+            font-size: root.ui-scale * 13px;
+            font-weight: 500;
+            font-family: "Segoe UI";
+            vertical-alignment: center;
+            horizontal-alignment: center;
+        }
+    }
+}

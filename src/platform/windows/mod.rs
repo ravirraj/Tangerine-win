@@ -13,6 +13,7 @@ pub mod monitors;
 pub mod normalizewindow;
 pub mod overlay;
 pub mod publish;
+pub mod redactimagewindow;
 pub mod shell;
 pub mod shellselection;
 pub mod timelinewindow;
