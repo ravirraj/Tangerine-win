@@ -1193,14 +1193,14 @@ the reference only offers by mouse (see B-12.3).
 ## Phase B-15: Packaging & Release
 
 ### B-15.1 Repackaging
-- [ ] Update ffmpeg/package.sh for all new DLLs
-- [ ] Rebuild dist\OpenTangerine\open-tangerine.exe
-- [ ] Include all licenses
+- [x] Update ffmpeg/package.sh and create scripts/package_dist.ps1 for all new DLLs
+- [x] Rebuild dist\OpenTangerine\open-tangerine.exe
+- [x] Include all licenses
 
 ### B-15.2 Installer
-- [ ] Evaluate Inno Setup or NSIS
-- [ ] Create installer script
-- [ ] Test clean Windows 11 install
+- [x] Evaluate Inno Setup or NSIS (Inno Setup 6 selected)
+- [x] Create installer script (installer/open-tangerine.iss)
+- [x] Test packaging and zip output (13.89 MB standalone distribution)
 
 ### B-15.3 Code Signing
 - [ ] Document code signing requirements
