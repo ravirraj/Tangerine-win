@@ -85,15 +85,12 @@ All `reference\…` paths above are relative to the repo root
 - Tools wheel now has **10** implemented ops: compress, crop, trim, split, rotate,
   resize, merge, metadata, normalize, channels. Dedicated windows exist for
   Trim Video, Split Video, Crop Video/Image, Compress, Edit Metadata, Trim Audio,
-  Normalize Volume, and Convert Audio Channels matching reference behavior and visual mockups.
-- Tests at handoff: **408 unit + 52 ignored, 0 failures** (`cargo test`:
-  `test result: ok. 408 passed; 0 failed; 52 ignored` — real-FFmpeg operation
-  tests, the 10 window captures (trim, split, crop video, crop image,
-  compress, metadata, trim-audio, normalize, channels), and the capture
-  face probe from `95f3f15`; `cargo test -- --ignored`:
-  `52 passed; 0 failed … finished in 10.05s`). Warnings: **43**
-  (was 60 — `95f3f15` removed the new-window-host must-use noise and the
-  dead metadata window code; pre-existing crop/timeline/toolwindow noise stays).
+  Normalize Volume, Convert Audio Channels, Redact Photo, Redact Video, Bleep Audio,
+  Change Speed, and Join Videos / Merge PDFs matching reference behavior and visual mockups.
+- Tests at handoff: **494 passed; 0 failed; 69 ignored** (`cargo test`:
+  `test result: ok. 494 passed; 0 failed; 69 ignored` — real-FFmpeg and real-PDFium operation
+  tests, and all window captures including `join-videos-window.png` and `merge-pdf-window.png`).
+  Warnings: **43** (exact baseline, 0 new warnings).
 - `ToolSettings` fields today: `width, height (u32)`, `start_ms, end_ms (u64)`,
   `points_ms: Vec<u64>`, `crop_x, crop_y, crop_w, crop_h (Option<u32>)`,
   `compress_strong: bool`, `target_bytes: Option<u64>`,

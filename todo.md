@@ -892,7 +892,7 @@ Deliberate differences from the mockups, and why:
 - [x] Change video speed (setpts/atempo, preserve pitch) - done in commit `71838f2` (windowed, 6 presets [0.25x..4x], format_clock duration, pitch disclosure).
 - [x] Split video (custom points or equal parts, one output folder) - done in B-10.6 below; this line predates it.
 - [x] Save video frames (frame-step picker -> full-resolution PNGs) - done in commit `236a05f` (windowed, frame chip grid, timecodes, beside original).
-- [ ] Join videos (file list reorder -> single MP4; our merge, windowed) - IN PROGRESS: B-10.13 below.
+- [x] Join videos (file list reorder -> single MP4; our merge, windowed) - done in commit `6da91cc` (windowed, reorder chevrons, MP4 scaled to first clip, output `{stem} joined.mp4`).
 - [x] Crop video (exact dimensions, keep audio) - done in B-10.7 below.
 - [x] Crop images (pixel dims + aspect presets; replaces hardcoded center-crop) - done in B-10.7 below.
 - [x] Compress (target exact file size, resize while compressing) - done in B-10.8 below.
@@ -900,7 +900,7 @@ Deliberate differences from the mockups, and why:
 - [x] Normalize volume (loudness range + true peak) - done in B-10.9 below (built as PCM peak gain per the audit; loudness-range in/out UI not carried - see that section's decisions).
 - [x] Convert audio channels (mono/stereo) - done in B-10.9 below (PCM pan matrix, five modes).
 - [x] Trim audio (waveform, trim silence) - done in B-10.9 below (waveform strip worn; silence end-trim is the checkbox the card carries).
-- [ ] Merge PDFs (file list reorder) - IN PROGRESS: B-10.13 below (PDFium backend + reorder list window).
+- [x] Merge PDFs (file list reorder) - done in commit `6da91cc` (PDFium page sequential append, windowed reorder chevrons, output `{stem} merged.pdf`).
 - [ ] Windows for our own Rotate/Resize ops (not in reference set, keep)
 
 ### B-10.13 Join videos + Merge PDFs (roadmap P3-13)
@@ -928,10 +928,10 @@ Shared twin archetype:
 
 Progress & Plan:
 - [x] Phase A — Evidence & Audit: mockups read (`joinVideos.webp`, `mergePDF.webp`), Swift sources read (`CropSpeedJoinVideoToolViews.swift`, `PDFToolViews.swift`, `CreatePDFCollageToolViews.swift`, `VideoOps.swift`, `PDFOps.swift`), todo section created.
-- [ ] Phase B — Backend: register `tools.merge` for Video and PDF with `Requirement::AnyProcessor(&["video", "pdf"])`, implement `run_merge` in `tools.rs` (video concatenation scaled to first clip + PDFium page merging), unit tests + real tests.
-- [ ] Phase C — Window: twin layout host `mergewindow.rs` + Slint card `merge_window.slint`, support reordering via chevrons and keyboard (Up/Down focus, Shift+Up/Down swap), thumbnails/icons, dispatch in `app.rs`.
-- [ ] Phase D — Proof: pump test, capture tests (`target/shots/join-videos-window.png`, `target/shots/merge-pdf-window.png`), eyeballed against `joinVideos.webp` and `mergePDF.webp`.
-- [ ] Phase E — Docs: update `todo.md`, `HANDOFF.md`, `PLAN.md`.
+- [x] Phase B — Backend: register `tools.merge` for Video and PDF with `Requirement::AnyProcessor(&["video", "pdf"])`, implement `run_merge` in `tools.rs` (video concatenation scaled to first clip + PDFium page merging), unit tests + real tests (committed `93d60a3`).
+- [x] Phase C — Window: twin layout host `mergewindow.rs` + Slint card `merge_window.slint`, support reordering via chevrons and keyboard (Up/Down focus, Shift+Up/Down swap), thumbnails/icons, dispatch in `app.rs` (committed `6da91cc`).
+- [x] Phase D — Proof: pump test, capture tests (`target/shots/join-videos-window.png`, `target/shots/merge-pdf-window.png`), eyeballed against `joinVideos.webp` and `mergePDF.webp`.
+- [x] Phase E — Docs: update `todo.md`, `HANDOFF.md`, `PLAN.md`.
 
 Deliberate differences from mockups:
 - Windows native chrome ("Join Videos" / "Merge PDFs") with close top-right.
