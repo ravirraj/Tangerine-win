@@ -2,6 +2,7 @@
 
 pub mod appearance;
 pub mod channelswindow;
+pub mod collagewindow;
 pub mod clipboard;
 pub mod compresswindow;
 pub mod cropwindow;

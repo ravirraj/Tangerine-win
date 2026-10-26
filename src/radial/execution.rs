@@ -261,6 +261,12 @@ pub struct ToolSettings {
     pub visualizer_accent: Option<String>,
     pub visualizer_bg: Option<String>,
     pub visualizer_image: Option<PathBuf>,
+    /// Only `tools.collage` reads these.
+    pub collage_layout: Option<String>,
+    pub collage_spacing: Option<u32>,
+    pub collage_corner_radius: Option<u32>,
+    pub collage_bg_color: Option<String>,
+    pub collage_aspect: Option<String>,
 }
 
 impl ToolSettings {
@@ -437,6 +443,36 @@ impl ToolSettings {
             accent_color,
             bg_color,
             image_path: self.visualizer_image.clone(),
+        }
+    }
+
+    /// The collage settings this tool carries.
+    pub fn collage_settings(&self) -> crate::media::collage::CollageSettings {
+        use crate::media::collage::{CollageLayout, CollageSettings};
+        let layout = self
+            .collage_layout
+            .as_deref()
+            .map(CollageLayout::from_str_name)
+            .unwrap_or(CollageLayout::Grid);
+        let spacing = self.collage_spacing.unwrap_or(24) as f32;
+        let corner_radius = self.collage_corner_radius.unwrap_or(16) as f32;
+        let background = if let Some(hex) = &self.collage_bg_color {
+            crate::media::visualizer::parse_hex_color(hex)
+        } else {
+            [255, 255, 255, 255]
+        };
+        let (width, height) = match self.collage_aspect.as_deref() {
+            Some("16:9") | Some("landscape") => (3000, 2000),
+            Some("9:16") | Some("portrait") => (2000, 3000),
+            _ => (2400, 2400),
+        };
+        CollageSettings {
+            layout,
+            width,
+            height,
+            spacing,
+            corner_radius,
+            background,
         }
     }
 }

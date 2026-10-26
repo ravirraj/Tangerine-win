@@ -867,6 +867,20 @@ pub const OPERATIONS: &[Operation] = &[
         implemented: true,
         requires: Requirement::Processor("audio"),
     },
+    Operation {
+        id: "tools.collage",
+        label: "Collage",
+        detail: "Create photo collage",
+        icon: IconKind::Picture,
+        mode: RadialMode::Tools,
+        categories: &[FileKind::Image],
+        batch: Batch::Several,
+        folders: false,
+        output: Output::Beside("jpg"),
+        collision: Collision::Rename,
+        implemented: true,
+        requires: Requirement::Processor("image"),
+    },
     // ------------------------------------------------------ file actions
     Operation {
         id: "actions.copy-path",
@@ -1678,6 +1692,7 @@ mod tests {
             "tools.organize_pdf",
             "tools.frame_image",
             "tools.audio_to_video",
+            "tools.collage",
             "actions.copy-path",
             "actions.duplicate",
             "actions.rename",

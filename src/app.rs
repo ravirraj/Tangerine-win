@@ -297,6 +297,8 @@ struct App {
     frame_image_window: crate::platform::windows::frameimagewindow::FrameImageWindow,
     /// The window an audio visualizer video is configured in, hidden until visualize is picked.
     visualizer_window: crate::platform::windows::visualizerwindow::VisualizerWindow,
+    /// The window a photo collage is configured in, hidden until collage is picked.
+    collage_window: crate::platform::windows::collagewindow::CollageWindow,
 }
 
 /// The end of a drag that has not been acted on yet.
@@ -612,6 +614,21 @@ impl App {
             crate::platform::windows::visualizerwindow::VisualizerWindow::new(visualizer_sender)
                 .map_err(|reason| reason)?;
 
+        let (collage_sender, collage_receiver) = std::sync::mpsc::channel();
+        {
+            let sender = sender.clone();
+            std::thread::spawn(move || {
+                while let Ok(event) = collage_receiver.recv() {
+                    if sender.send(Message::ToolWindow(event)).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+        let collage_window =
+            crate::platform::windows::collagewindow::CollageWindow::new(collage_sender)
+                .map_err(|reason| reason)?;
+
         Ok(Self {
             controller,
             animation: WheelAnimation::new(),
@@ -670,6 +687,7 @@ impl App {
             organize_pdf_window,
             frame_image_window,
             visualizer_window,
+            collage_window,
         })
     }
 
@@ -921,6 +939,12 @@ impl App {
         // An audio visualizer asks for its own card: live preview, shape chips, style chips, color swatches.
         if segment.id == "tools.audio_to_video" {
             self.visualizer_window
+                .show_for(&segment.id, &segment.label, &segment.detail, files);
+            return;
+        }
+        // A collage asks for its own card: layout chips, spacing, corner radius, canvas shape, and background.
+        if segment.id == "tools.collage" {
+            self.collage_window
                 .show_for(&segment.id, &segment.label, &segment.detail, files);
             return;
         }

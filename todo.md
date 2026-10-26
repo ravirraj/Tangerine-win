@@ -942,9 +942,9 @@ Deliberate differences from mockups:
 - [ ] Edit photos (live preview: dehaze, clarity, grain, denoise, light/
       color/detail — FFmpeg eq curves get partway; assess fidelity)
 - [x] Add background (canvas, blur, rounded corners, shadow — pad+gblur) - done in B-10.15 below (`8422e7f`, `890f3af`)
-- [ ] Create collage (grid/row/column/featured layouts - Rust compositing) — TODO (scheduled after audio visualizer)
-- [ ] Annotate photos (arrows, text, boxes, blur, crop overlays) — TODO (scheduled after audio visualizer)
-- [ ] Audio visualizer (animated waveform -> MP4, orientation options) — TODO (backend done `c71d443`; window UI to complete afterward)
+- [x] Create collage (grid/row/column/featured layouts - Rust compositing) — done (`tools.collage`, `src/media/collage.rs`, `collagewindow.rs`, `collage_window.slint`)
+- [ ] Annotate photos (arrows, text, boxes, blur, crop overlays) — TODO
+- [x] Audio visualizer (animated waveform -> MP4, orientation options) — done (backend `c71d443`, window UI `9529624`)
 - [x] Bleep audio (movable time ranges, original-vs-bleep comparison) - done in B-10.10 above (preview heard through the system's own player; the headmoving time-range asking is the window's own drag; done `0bdf17e`)
 - [x] Redact photos / Redact video (movable solid/blur/pixelate boxes) - done in B-10.10 above (`203f2b7`, `a9cae5b`)
 - [x] Organize PDF pages (rotate/duplicate/remove pages) - done in B-10.14 below (`9ff1973`, `fe5150a`)

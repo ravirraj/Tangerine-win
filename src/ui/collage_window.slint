@@ -1,0 +1,396 @@
+import { Tokens, Panel } from "tokens.slint";
+import { CardHeader, Hairline, CardFooter } from "shell.slint";
+
+export component CollageCard inherits Window {
+    in property <float> ui-scale: 1.0;
+    in property <length> card-width: 440px;
+    in property <length> card-height: 680px;
+
+    in property <Panel> header-box;
+    in property <Panel> detail-box;
+    in property <Panel> hairline-top;
+    in property <string> file-name: "3 photos";
+    in property <string> detail: "Create collage";
+
+    // Stage preview
+    in property <Panel> stage-box;
+    in property <image> preview-image;
+    in property <bool> has-preview: false;
+
+    // Layout chips
+    in property <Panel> layout-label-box;
+    in property <[Panel]> layout-chips;
+    in property <int> selected-layout: 0; // 0=Grid, 1=Columns, 2=Rows, 3=Featured
+
+    // Sliders
+    in property <Panel> spacing-label-box;
+    in property <Panel> spacing-track-box;
+    in property <Panel> spacing-thumb-box;
+    in property <string> spacing-text: "16 px";
+
+    in property <Panel> corner-label-box;
+    in property <Panel> corner-track-box;
+    in property <Panel> corner-thumb-box;
+    in property <string> corner-text: "16 px";
+
+    // Aspect ratio chips
+    in property <Panel> aspect-label-box;
+    in property <[Panel]> aspect-chips;
+    in property <int> selected-aspect: 0; // 0=Square 1:1, 1=Landscape 3:2, 2=Portrait 2:3
+
+    // Background swatches
+    in property <Panel> color-label-box;
+    in property <[Panel]> color-swatches;
+    in property <int> selected-color: 0; // 0..4
+
+    // Footer
+    in property <Panel> hairline-bottom;
+    in property <Panel> reset-box;
+    in property <Panel> helper-box;
+    in property <Panel> cancel-box;
+    in property <Panel> run-box;
+    in property <string> run-label: "Create Collage";
+    in property <bool> run-enabled: true;
+
+    callback dismiss-chosen();
+    callback layout-chosen(int);
+    callback aspect-chosen(int);
+    callback color-chosen(int);
+    callback reset-defaults-chosen();
+    callback run-chosen();
+    callback cancel-chosen();
+
+    width: root.card-width;
+    height: root.card-height;
+    background: Tokens.window-bg;
+
+    // 1. Header
+    CardHeader {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        file-name: root.file-name;
+        detail: root.detail;
+        ui-scale: root.ui-scale;
+        header-box: root.header-box;
+        detail-box: root.detail-box;
+    }
+
+    Hairline {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.hairline-top;
+    }
+
+    // 2. Stage Preview (contained stage with letterbox)
+    Rectangle {
+        x: root.stage-box.x;
+        y: root.stage-box.y;
+        width: root.stage-box.width;
+        height: root.stage-box.height;
+        border-radius: Tokens.radius-preview;
+        background: #18181A;
+        clip: true;
+
+        if root.has-preview : Image {
+            width: 100%;
+            height: 100%;
+            image-fit: contain;
+            source: root.preview-image;
+        }
+
+        if !root.has-preview : Text {
+            text: "Composing collage…";
+            color: Tokens.text-muted;
+            font-size: 12px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    // 3. Layout Section
+    Text {
+        x: root.layout-label-box.x;
+        y: root.layout-label-box.y;
+        width: root.layout-label-box.width;
+        height: root.layout-label-box.height;
+        text: "Layout";
+        font-size: 11px;
+        font-weight: 700;
+        color: Tokens.text-muted;
+        vertical-alignment: center;
+    }
+
+    for chip[i] in root.layout-chips: Rectangle {
+        x: chip.x;
+        y: chip.y;
+        width: chip.width;
+        height: chip.height;
+        border-radius: 6px;
+        background: root.selected-layout == i ? Tokens.accent : (chip-touch.has-hover ? Tokens.quiet-hover : Tokens.quiet);
+        border-width: 1px;
+        border-color: root.selected-layout == i ? Tokens.accent : Tokens.hairline;
+
+        chip-touch := TouchArea {
+            clicked => { root.layout-chosen(i); }
+        }
+
+        Text {
+            width: 100%;
+            height: 100%;
+            text: i == 0 ? "Grid" : (i == 1 ? "Columns" : (i == 2 ? "Rows" : "Featured"));
+            color: root.selected-layout == i ? #FFFFFF : Tokens.text;
+            font-size: 11px;
+            font-weight: root.selected-layout == i ? 700 : 500;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    // 4. Spacing Slider
+    Text {
+        x: root.spacing-label-box.x;
+        y: root.spacing-label-box.y;
+        width: root.spacing-label-box.width;
+        height: root.spacing-label-box.height;
+        text: "Spacing: " + root.spacing-text;
+        font-size: 11px;
+        font-weight: 600;
+        color: Tokens.text;
+        vertical-alignment: center;
+    }
+
+    Rectangle {
+        x: root.spacing-track-box.x;
+        y: root.spacing-track-box.y;
+        width: root.spacing-track-box.width;
+        height: root.spacing-track-box.height;
+        border-radius: 2px;
+        background: Tokens.elevated;
+
+        Rectangle {
+            x: 0;
+            y: 0;
+            width: root.spacing-thumb-box.x - root.spacing-track-box.x + 8px;
+            height: 100%;
+            border-radius: 2px;
+            background: Tokens.accent;
+        }
+    }
+
+    Rectangle {
+        x: root.spacing-thumb-box.x;
+        y: root.spacing-thumb-box.y;
+        width: root.spacing-thumb-box.width;
+        height: root.spacing-thumb-box.height;
+        border-radius: root.spacing-thumb-box.width / 2;
+        background: #FFFFFF;
+        border-width: 1px;
+        border-color: #00000030;
+        drop-shadow-blur: 4px;
+        drop-shadow-color: #00000040;
+    }
+
+    // 5. Corner Radius Slider
+    Text {
+        x: root.corner-label-box.x;
+        y: root.corner-label-box.y;
+        width: root.corner-label-box.width;
+        height: root.corner-label-box.height;
+        text: "Corner radius: " + root.corner-text;
+        font-size: 11px;
+        font-weight: 600;
+        color: Tokens.text;
+        vertical-alignment: center;
+    }
+
+    Rectangle {
+        x: root.corner-track-box.x;
+        y: root.corner-track-box.y;
+        width: root.corner-track-box.width;
+        height: root.corner-track-box.height;
+        border-radius: 2px;
+        background: Tokens.elevated;
+
+        Rectangle {
+            x: 0;
+            y: 0;
+            width: root.corner-thumb-box.x - root.corner-track-box.x + 8px;
+            height: 100%;
+            border-radius: 2px;
+            background: Tokens.accent;
+        }
+    }
+
+    Rectangle {
+        x: root.corner-thumb-box.x;
+        y: root.corner-thumb-box.y;
+        width: root.corner-thumb-box.width;
+        height: root.corner-thumb-box.height;
+        border-radius: root.corner-thumb-box.width / 2;
+        background: #FFFFFF;
+        border-width: 1px;
+        border-color: #00000030;
+        drop-shadow-blur: 4px;
+        drop-shadow-color: #00000040;
+    }
+
+    // 6. Canvas Shape Section
+    Text {
+        x: root.aspect-label-box.x;
+        y: root.aspect-label-box.y;
+        width: root.aspect-label-box.width;
+        height: root.aspect-label-box.height;
+        text: "Canvas shape";
+        font-size: 11px;
+        font-weight: 700;
+        color: Tokens.text-muted;
+        vertical-alignment: center;
+    }
+
+    for chip[i] in root.aspect-chips: Rectangle {
+        x: chip.x;
+        y: chip.y;
+        width: chip.width;
+        height: chip.height;
+        border-radius: 6px;
+        background: root.selected-aspect == i ? Tokens.accent : (aspect-touch.has-hover ? Tokens.quiet-hover : Tokens.quiet);
+        border-width: 1px;
+        border-color: root.selected-aspect == i ? Tokens.accent : Tokens.hairline;
+
+        aspect-touch := TouchArea {
+            clicked => { root.aspect-chosen(i); }
+        }
+
+        Text {
+            width: 100%;
+            height: 100%;
+            text: i == 0 ? "Square 1:1" : (i == 1 ? "Landscape 3:2" : "Portrait 2:3");
+            color: root.selected-aspect == i ? #FFFFFF : Tokens.text;
+            font-size: 11px;
+            font-weight: root.selected-aspect == i ? 700 : 500;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    // 7. Background Color Section
+    Text {
+        x: root.color-label-box.x;
+        y: root.color-label-box.y;
+        width: root.color-label-box.width;
+        height: root.color-label-box.height;
+        text: "Background";
+        font-size: 11px;
+        font-weight: 700;
+        color: Tokens.text-muted;
+        vertical-alignment: center;
+    }
+
+    for swatch[i] in root.color-swatches: Rectangle {
+        x: swatch.x;
+        y: swatch.y;
+        width: swatch.width;
+        height: swatch.height;
+        border-radius: swatch.width / 2;
+        background: i == 0 ? #FFFFFF : (i == 1 ? #FF5C00 : (i == 2 ? #2C2C2E : (i == 3 ? #E5E5EA : #000000)));
+        border-width: root.selected-color == i ? 3px : 1px;
+        border-color: root.selected-color == i ? Tokens.accent : #00000030;
+
+        swatch-touch := TouchArea {
+            clicked => { root.color-chosen(i); }
+        }
+    }
+
+    // 8. Footer
+    Hairline {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.hairline-bottom;
+    }
+
+    // Reset button
+    Rectangle {
+        x: root.reset-box.x;
+        y: root.reset-box.y;
+        width: root.reset-box.width;
+        height: root.reset-box.height;
+        border-radius: Tokens.radius-small;
+        background: Tokens.quiet;
+
+        Text {
+            text: "Reset";
+            font-size: 11px;
+            color: Tokens.text-muted;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+
+        TouchArea {
+            clicked => { root.reset-defaults-chosen(); }
+        }
+    }
+
+    // Helper text
+    Text {
+        x: root.helper-box.x;
+        y: root.helper-box.y;
+        width: root.helper-box.width;
+        height: root.helper-box.height;
+        text: "Enter to create · Esc to close";
+        font-size: 11px;
+        color: Tokens.text-muted;
+        vertical-alignment: center;
+    }
+
+    // Cancel button
+    Rectangle {
+        x: root.cancel-box.x;
+        y: root.cancel-box.y;
+        width: root.cancel-box.width;
+        height: root.cancel-box.height;
+        border-radius: Tokens.radius-control;
+        background: Tokens.quiet;
+
+        Text {
+            text: "Cancel";
+            font-size: 12px;
+            color: Tokens.text;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+
+        TouchArea {
+            clicked => { root.cancel-chosen(); }
+        }
+    }
+
+    // Run button
+    Rectangle {
+        x: root.run-box.x;
+        y: root.run-box.y;
+        width: root.run-box.width;
+        height: root.run-box.height;
+        border-radius: Tokens.radius-control;
+        background: root.run-enabled ? Tokens.accent : Tokens.quiet;
+
+        Text {
+            text: root.run-label;
+            font-size: 12px;
+            font-weight: 600;
+            color: root.run-enabled ? #FFFFFF : Tokens.text-muted;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+
+        TouchArea {
+            clicked => {
+                if root.run-enabled {
+                    root.run-chosen();
+                }
+            }
+        }
+    }
+}

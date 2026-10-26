@@ -20,6 +20,7 @@
 pub mod animation;
 pub mod audio;
 pub mod command;
+pub mod collage;
 pub mod convert;
 pub mod documents;
 pub mod documents2;

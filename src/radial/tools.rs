@@ -1206,6 +1206,38 @@ impl<P: Publisher> Tools<P> {
         self.publish(&finals, &temporary)
     }
 
+    /// Combines two or more photographs into a collage composition.
+    fn run_collage(&self, request: &Request) -> Outcome {
+        if request.inputs.len() < 2 {
+            return Outcome::Failed {
+                reason: Failure::InvalidInput("at least two photos are needed to make a collage".to_string()),
+            };
+        }
+        let settings = request.settings.collage_settings();
+        let first = &request.inputs[0];
+        let stem = first
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "collage".to_string());
+        let temporary = first.with_file_name(format!("{stem}.collage-part.jpg"));
+
+        if let Err(e) = crate::media::collage::create_collage_file(&request.inputs, &temporary, &settings) {
+            return Outcome::Failed {
+                reason: Failure::Error(format!("collage generation failed: {e}")),
+            };
+        }
+
+        let finals = metadata_final_names(first, "collage", "jpg");
+        match self.publish(&finals, &temporary) {
+            Ok(output) => Outcome::Succeeded {
+                outputs: vec![output],
+            },
+            Err(reason) => Outcome::Failed {
+                reason: Failure::Error(reason.name().to_string()),
+            },
+        }
+    }
+
     fn run_audio_to_video(&self, request: &Request) -> Outcome {
         let manifest = Manifest::get();
         let mut outputs = Vec::new();
@@ -3210,6 +3242,11 @@ impl<P: Publisher> Handler for Tools<P> {
         // An audio visualizer converts audio to MP4 video with waveform or still image.
         if request.operation == "tools.audio_to_video" {
             return self.run_audio_to_video(request);
+        }
+
+        // A collage combines two or more photos into a grid, column, row, or hero layout.
+        if request.operation == "tools.collage" {
+            return self.run_collage(request);
         }
 
         let manifest = Manifest::get();
@@ -6158,6 +6195,82 @@ mod tests {
         assert!(out_file.is_file(), "output exists: {:?}", out_file);
         assert!(out_file.to_string_lossy().contains("sample visualizer.mp4"));
         assert!(out_file.metadata().map(|m| m.len() > 1000).unwrap_or(false));
+
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn collage_operation_combines_photos() {
+        let scratch = std::env::temp_dir().join(format!("ot-collage-test-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&scratch);
+
+        let p1 = scratch.join("photo1.png");
+        let p2 = scratch.join("photo2.png");
+        let img1 = image::RgbaImage::from_pixel(100, 100, image::Rgba([255, 0, 0, 255]));
+        let img2 = image::RgbaImage::from_pixel(100, 100, image::Rgba([0, 255, 0, 255]));
+        img1.save(&p1).unwrap();
+        img2.save(&p2).unwrap();
+
+        let tools = Tools {
+            ffmpeg_tools: crate::media::locator::Tools {
+                ffmpeg: PathBuf::from("ffmpeg"),
+                ffprobe: PathBuf::from("ffprobe"),
+            },
+            publisher: CopyPublisher,
+        };
+        let request = Request {
+            operation: "tools.collage".to_string(),
+            inputs: vec![p1.clone(), p2.clone()],
+            settings: ToolSettings {
+                collage_layout: Some("grid".to_string()),
+                collage_spacing: Some(10),
+                collage_corner_radius: Some(8),
+                collage_bg_color: Some("#FFFFFF".to_string()),
+                ..Default::default()
+            },
+        };
+
+        let outcome = tools.run(&request, &Selection::inspect(&[p1.clone(), p2.clone()]));
+        let outputs = match outcome {
+            Outcome::Succeeded { outputs } => outputs,
+            Outcome::Failed { reason } => panic!("collage failed: {:?}", reason),
+            Outcome::Cancelled => panic!("cancelled"),
+        };
+        assert_eq!(outputs.len(), 1);
+        let out_file = &outputs[0];
+        assert!(out_file.is_file(), "output exists: {:?}", out_file);
+        assert!(out_file.to_string_lossy().contains("photo1 collage.jpg"));
+
+        let collage_img = image::open(out_file).expect("collage opens");
+        assert!(collage_img.width() >= 1000);
+        assert!(collage_img.height() >= 1000);
+
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn collage_single_photo_fails() {
+        let scratch = std::env::temp_dir().join(format!("ot-collage-single-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&scratch);
+        let p1 = scratch.join("photo1.png");
+        let img1 = image::RgbaImage::from_pixel(100, 100, image::Rgba([255, 0, 0, 255]));
+        img1.save(&p1).unwrap();
+
+        let tools = Tools {
+            ffmpeg_tools: crate::media::locator::Tools {
+                ffmpeg: PathBuf::from("ffmpeg"),
+                ffprobe: PathBuf::from("ffprobe"),
+            },
+            publisher: CopyPublisher,
+        };
+        let request = Request {
+            operation: "tools.collage".to_string(),
+            inputs: vec![p1.clone()],
+            ..Default::default()
+        };
+
+        let outcome = tools.run(&request, &Selection::inspect(&[p1]));
+        assert!(matches!(outcome, Outcome::Failed { .. }));
 
         let _ = std::fs::remove_dir_all(&scratch);
     }
