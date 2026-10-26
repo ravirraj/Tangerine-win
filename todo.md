@@ -942,8 +942,9 @@ Deliberate differences from mockups:
 - [ ] Edit photos (live preview: dehaze, clarity, grain, denoise, light/
       color/detail — FFmpeg eq curves get partway; assess fidelity)
 - [x] Add background (canvas, blur, rounded corners, shadow — pad+gblur) - done in B-10.15 below (`8422e7f`, `890f3af`)
-- [ ] Create collage (grid/row/column/featured layouts - Rust compositing)
-- [ ] Audio visualizer (animated waveform -> MP4, orientation options)
+- [ ] Create collage (grid/row/column/featured layouts - Rust compositing) — TODO (scheduled after audio visualizer)
+- [ ] Annotate photos (arrows, text, boxes, blur, crop overlays) — TODO (scheduled after audio visualizer)
+- [ ] Audio visualizer (animated waveform -> MP4, orientation options) — in progress B-10.16
 - [x] Bleep audio (movable time ranges, original-vs-bleep comparison) - done in B-10.10 above (preview heard through the system's own player; the headmoving time-range asking is the window's own drag; done `0bdf17e`)
 - [x] Redact photos / Redact video (movable solid/blur/pixelate boxes) - done in B-10.10 above (`203f2b7`, `a9cae5b`)
 - [x] Organize PDF pages (rotate/duplicate/remove pages) - done in B-10.14 below (`9ff1973`, `fe5150a`)
@@ -1006,6 +1007,35 @@ Deliberate differences from mockups:
 - Windows native chrome ("Add Background") with close top-right.
 - Dimensions: 460x660 (matching standard vertical tool card layout).
 - Fast software compositing in Rust: separable box blur / gaussian blur without external C++ or platform-dependent CoreImage.
+
+### B-10.16 Audio Visualizer (roadmap P3-9)
+Reference: `tool-windows/audioToVideo.webp` (800x1262 at 2x -> 400x631 pt) + `MAPPING-ROADMAP.md` #9 + `DESIGN-SPEC.md` + Swift `Tools/Audio/AudioToolViews.swift` (`AudioToVideoToolView`), `Operations/AudioOps.swift` (`AudioOps.visualize`), `ToolID.swift` (`case .audioToVideo: return "VISUALIZE"`).
+
+Original behavior (Swift + operations, authoritative — read 2026-10-26):
+- Window layout: Vertical card (400x631 pt @ 2x: 800x1262 px), live visualizer stage preview with black background and orange waveform bars.
+- Preview Stage:
+  - Black container (`#000000`) with rounded corners (r=12).
+  - Waveform visualizer showing vertical amplitude bars / peaks in Tangerine orange (`#FF5C00`).
+  - Adapts to aspect ratio of selected Shape (16:9 Landscape, 9:16 Portrait, 1:1 Square).
+- Options & Controls:
+  - Style: "Waveform" / "Frequency bars" / "Still image" dropdown / picker.
+  - Shape: "Landscape · 16:9" / "Portrait · 9:16" / "Square · 1:1" dropdown / picker.
+  - Colors: Accent color swatch (default orange `#FF5C00`), Background color swatch (default black `#000000`).
+  - Image picker: When Still Image mode is selected, choose cover art / still image.
+- Footer: "Reset" on left, "Create Visualization" / "Create MP4" on right (accent orange).
+- Output: `{stem} visualizer.mp4` beside input audio file.
+
+Progress & Plan:
+- [x] Phase A — Evidence & Audit: reference mockup `audioToVideo.webp` probed and converted to PNG artifact `ref-audioToVideo.png`, Swift `AudioToVideoToolView` and `AudioOps.visualize` audited, todo section documented.
+- [ ] Phase B — Backend: Audio visualizer module `src/media/visualizer.rs` (waveform sample bucketing, frame rendering, MP4 video multiplexing with input audio), register `tools.visualize_audio` for `FileKind::Audio`, `run_visualize_audio` in `tools.rs`, unit tests.
+- [ ] Phase C — Window: twin layout host `audiovisualizerwindow.rs` + Slint card `audio_visualizer_window.slint`, stage canvas preview, style & shape pickers, color swatches, footer actions, dispatch in `app.rs`.
+- [ ] Phase D — Proof: pump test, capture test (`target/shots/audio-visualizer-window.png`), visual check against `ref-audioToVideo.png`.
+- [ ] Phase E — Docs: update `todo.md`, `HANDOFF.md`, `PLAN.md`, `ui-preview.md`.
+
+Deliberate differences from mockups:
+- Windows native chrome ("Audio Visualizer") with close top-right.
+- Dimensions: 420x640 (standard vertical tool card layout, matching reference 400x631 pt).
+- High performance Rust frame generation: generates video frames with waveform bars and muxes into MP4 with FFmpeg mpeg4/aac or mov/mp4 muxer.
 
 
 ### Reference notes
