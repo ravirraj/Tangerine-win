@@ -660,6 +660,25 @@ pub const OPERATIONS: &[Operation] = &[
         implemented: true,
         requires: Requirement::Processor("video"),
     },
+    // A snapshot takes exactly one video: its frames are numbered from
+    // where the video stands, and several videos shot at once would read
+    // as two words said over each other. The pictures are written in a
+    // folder of their own the handler makes, beside the original, the
+    // way a split's clips stand.
+    Operation {
+        id: "tools.snapshots",
+        label: "Snapshots",
+        detail: "Save frames as pictures",
+        icon: IconKind::Camera,
+        mode: RadialMode::Tools,
+        categories: &[FileKind::Video],
+        batch: Batch::One,
+        folders: false,
+        output: Output::BesideAsInput,
+        collision: Collision::Rename,
+        implemented: true,
+        requires: Requirement::Processor("video"),
+    },
     Operation {
         id: "tools.rotate",
         label: "Rotate",
@@ -1585,6 +1604,7 @@ mod tests {
             "tools.crop",
             "tools.trim",
             "tools.split",
+            "tools.snapshots",
             "tools.rotate",
             "tools.resize",
             "tools.redact_image",

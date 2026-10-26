@@ -13,6 +13,13 @@ import { Tokens } from "tokens.slint";
 import { Panel } from "tokens.slint";
 import { CardHeader, Hairline, IconButton, TimelineRange, CardFooter, PillButton, RoundCheckbox } from "shell.slint";
 
+// One frame the card has taken: the chip wears its picture and says the
+// moment it stands at.
+export struct ShotData {
+    picture: image,
+    time: string,
+}
+
 export component TrimCard inherits Window {
     // The size of the card, held here so the renderer reads what the
     // window really is: the system tells us the client size, and the
@@ -81,6 +88,10 @@ export component TrimCard inherits Window {
     in property <bool> split-mode: false;
     in property <string> points-text: "";
     in property <string> parts-text: "2";
+    // The snapshots mode: the frames the card has taken stand in a row
+    // of their own, each with its moment and its cross to take away.
+    in property <bool> shots-mode: false;
+    in property <[ShotData]> shots;
     in property <string> run-label: "Trim";
     // Where the cuts stand, shares of the whole, said to the strip.
     in property <[float]> markers;
@@ -91,6 +102,8 @@ export component TrimCard inherits Window {
     in property <Panel> step-up-box;
     in property <Panel> step-down-box;
     in property <Panel> set-box;
+    // Where the row of the frames taken stands.
+    in property <Panel> shots-box;
     // 0 nothing, 1 add-split, 2 set.
     in property <int> pill-focus: 0;
     // Whether there is anything to do when go is said: a split with no
@@ -108,6 +121,9 @@ export component TrimCard inherits Window {
     callback set-equal-chosen();
     callback stepper-up();
     callback stepper-down();
+    // The snapshots card's own row: the frame at the playhead is taken,
+    // and a chip of a frame taken is taken away again.
+    callback remove-shot-chosen(int);
 
     width: root.card-width;
     height: root.card-height;
@@ -154,9 +170,10 @@ export component TrimCard inherits Window {
     }
 
     // The line of small words above the strip: what to do, and what is
-    // held. A split card says its own points row instead.
+    // held. A split card says its own points row instead, and so does a
+    // snapshots card.
     Text {
-        visible: !root.split-mode;
+        visible: !root.split-mode && !root.shots-mode;
         x: root.caption-box.x; y: root.caption-box.y;
         width: root.caption-box.width / 2; height: root.caption-box.height;
         text: "Drag the ends to trim";
@@ -166,7 +183,7 @@ export component TrimCard inherits Window {
         vertical-alignment: center;
     }
     Text {
-        visible: !root.split-mode;
+        visible: !root.split-mode && !root.shots-mode;
         x: root.caption-box.x + root.caption-box.width / 2;
         y: root.caption-box.y;
         width: root.caption-box.width / 2; height: root.caption-box.height;
@@ -178,10 +195,10 @@ export component TrimCard inherits Window {
         horizontal-alignment: right;
     }
 
-    // The points row: how many cuts stand, and the pill that puts one
-    // where the playhead is.
+    // The points row: how many cuts or frames stand, and the pill that
+    // puts one where the playhead is.
     Text {
-        visible: root.split-mode;
+        visible: root.split-mode || root.shots-mode;
         x: root.points-box.x; y: root.points-box.y;
         width: root.points-box.width; height: root.points-box.height;
         text: root.points-text;
@@ -192,12 +209,12 @@ export component TrimCard inherits Window {
         overflow: elide;
     }
     PillButton {
-        visible: root.split-mode;
+        visible: root.split-mode || root.shots-mode;
         x: 0; y: 0;
         width: root.card-width;
         height: root.card-height;
         box: root.add-split-box;
-        label: "Add Split";
+        label: root.shots-mode ? "Add Frame" : "Add Split";
         focused: root.pill-focus == 1;
         ui-scale: root.ui-scale;
         clicked => { root.add-split-chosen(); }
@@ -205,7 +222,8 @@ export component TrimCard inherits Window {
 
     // The range: the video's own moments with the two orange caps and
     // the playhead standing on the moment. A split card wears the same
-    // strip without the range: the cuts stand on it as markers.
+    // strip without the range: the cuts stand on it as markers. A
+    // snapshots card wears it the same way, swapped for the scrub.
     TimelineRange {
         x: 0; y: 0;
         width: root.card-width;
@@ -216,13 +234,13 @@ export component TrimCard inherits Window {
         end-fraction: root.end-fraction;
         playhead-fraction: root.playhead-fraction;
         handle-focus: root.handle-focus;
-        has-range: !root.split-mode;
+        has-range: !root.split-mode && !root.shots-mode;
         markers: root.markers;
     }
     // Where the video begins and ends, said in the face where every
     // digit takes the same room.
     Text {
-        visible: !root.split-mode;
+        visible: !root.split-mode && !root.shots-mode;
         x: root.times-box.x; y: root.times-box.y;
         width: root.times-box.width / 2; height: root.times-box.height;
         text: "Start " + root.start-text;
@@ -232,7 +250,7 @@ export component TrimCard inherits Window {
         vertical-alignment: center;
     }
     Text {
-        visible: !root.split-mode;
+        visible: !root.split-mode && !root.shots-mode;
         x: root.times-box.x + root.times-box.width / 2;
         y: root.times-box.y;
         width: root.times-box.width / 2; height: root.times-box.height;
@@ -397,6 +415,65 @@ export component TrimCard inherits Window {
         focused: root.pill-focus == 2;
         ui-scale: root.ui-scale;
         clicked => { root.set-equal-chosen(); }
+    }
+
+    // The chips of the frames taken: what a snapshots card carries where
+    // an equal row stands. Each chip wears the little picture of its
+    // moment, says where it stands, and carries its own cross to take
+    // it away. Two chips stand in a row; the rows stand under each
+    // other.
+    for shot[index] in root.shots: Rectangle {
+        property <int> at-col: mod(index, 2);
+        property <int> at-row: floor(index / 2);
+        x: root.shots-box.x + at-col * root.ui-scale * 180px;
+        y: root.shots-box.y + at-row * root.ui-scale * 92px;
+        width: root.ui-scale * 172px;
+        height: root.ui-scale * 84px;
+        border-radius: Tokens.radius-control;
+        background: Tokens.content;
+        border-width: 1px;
+        border-color: Tokens.field-border;
+
+        Image {
+            x: root.ui-scale * 5px;
+            y: root.ui-scale * 5px;
+            width: parent.width - root.ui-scale * 10px;
+            height: root.ui-scale * 52px;
+            source: shot.picture;
+            image-fit: cover;
+        }
+        Text {
+            x: root.ui-scale * 9px;
+            y: root.ui-scale * 59px;
+            width: parent.width - root.ui-scale * 18px;
+            height: root.ui-scale * 18px;
+            text: shot.time;
+            color: Tokens.text;
+            font-size: root.ui-scale * 12px;
+            font-family: Tokens.font-mono;
+            vertical-alignment: center;
+        }
+        Path {
+            // The cross at the top right of the chip's picture.
+            x: parent.width - root.ui-scale * 17px;
+            y: root.ui-scale * 9px;
+            width: root.ui-scale * 12px;
+            height: root.ui-scale * 12px;
+            commands: "M 4 4 L 16 16 M 16 4 L 4 16";
+            viewbox-width: 20;
+            viewbox-height: 20;
+            fill: transparent;
+            stroke: Tokens.text-muted;
+            stroke-width: 1.8px;
+            stroke-line-cap: round;
+        }
+        TouchArea {
+            x: parent.width - root.ui-scale * 20px;
+            y: root.ui-scale * 6px;
+            width: root.ui-scale * 18px;
+            height: root.ui-scale * 18px;
+            clicked => { root.remove-shot-chosen(index); }
+        }
     }
 
     Hairline {

@@ -639,6 +639,128 @@ impl<P: Publisher> Tools<P> {
         Ok(outputs)
     }
 
+    /// Takes the moments the window asked for as pictures, in a folder
+    /// of its own beside the original, the way a split's clips stand.
+    ///
+    /// The shots are said in thousandths of a second and taken by the
+    /// same seeking the crop's stage uses: whatever a moment says is
+    /// what stands there. A moment past the video's end is not taken;
+    /// the run does not fail for one lost frame, but a video whose
+    /// frames all refuse to come out is refused.
+    fn run_snapshots(&self, request: &Request, _runner: &dyn ProcessRunner) -> Outcome {
+        if request.settings.snapshots_ms.is_empty() {
+            return Outcome::Failed {
+                reason: Failure::InvalidInput("there are no snapshots".to_string()),
+            };
+        }
+
+        let manifest = Manifest::get();
+        let mut outputs = Vec::new();
+        let mut failed = 0usize;
+        let mut first_reason: Option<String> = None;
+        for input in &request.inputs {
+            let result = self.snapshots_one(input, &manifest, &request.settings);
+            match result {
+                Ok(paths) => outputs.extend(paths),
+                Err(reason) => {
+                    failed += 1;
+                    let name = reason.name();
+                    diagnostics::log(Level::Warn, "action", &format!("a file was not processed: {name}"));
+                    if first_reason.is_none() {
+                        first_reason = Some(name.to_string());
+                    }
+                }
+            }
+        }
+
+        if failed == 0 {
+            Outcome::Succeeded { outputs }
+        } else {
+            let because = match first_reason {
+                Some(reason) => format!(": {reason}"),
+                None => String::new(),
+            };
+            Outcome::Failed {
+                reason: Failure::Error(format!(
+                    "{failed} of the files could not be processed{because}"
+                )),
+            }
+        }
+    }
+
+    /// Takes one video's snapshots, each a picture of its own.
+    fn snapshots_one(
+        &self,
+        input: &Path,
+        manifest: &Manifest,
+        settings: &crate::radial::execution::ToolSettings,
+    ) -> Result<Vec<PathBuf>, ToolError> {
+        let source_ext = input
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        let source = manifest
+            .format_of_extension(&source_ext)
+            .or_else(|| manifest.format(&source_ext))
+            .ok_or(ToolError::UnsupportedKind)?;
+        if crate::media::probe::kind_of(&source.format) != Some(crate::media::probe::Kind::Video) {
+            return Err(ToolError::UnsupportedKind);
+        }
+
+        // The video says how long it stands, so a moment asked past its
+        // end can be set down rather than sought for nothing.
+        let duration = crate::media::frames::duration_of(&self.ffmpeg_tools, input)
+            .ok_or(ToolError::ReadError)?;
+        let mut shots: Vec<u64> = settings
+            .snapshots_ms
+            .iter()
+            .copied()
+            .filter(|&ms| (ms as f64) <= duration * 1000.0)
+            .collect();
+        if shots.is_empty() {
+            return Err(ToolError::NothingToDo);
+        }
+        shots.sort_unstable();
+
+        let stem = input
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "clip".to_string());
+        let under = input
+            .parent()
+            .map(|parent| parent.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("."));
+        let folder = unique_folder(&under, &format!("{stem} frames"))?;
+
+        let mut outputs = Vec::new();
+        for (index, ms) in shots.iter().enumerate() {
+            // The picture at the moment, said by the name it stands
+            // under: the first frame taken is frame 1.
+            let Some(picture) =
+                crate::media::frames::frame_at(&self.ffmpeg_tools, input, *ms as f64 / 1000.0)
+            else {
+                // The video does not stand where it was asked to; the
+                // frame is set down, not the whole taking.
+                diagnostics::log(
+                    Level::Warn,
+                    "action",
+                    &format!("a frame was not taken at {} ms", ms),
+                );
+                continue;
+            };
+            let target = folder.join(format!("{stem} frame {}.png", index + 1));
+            picture
+                .save(&target)
+                .map_err(|_| ToolError::WriteError)?;
+            outputs.push(target);
+        }
+        if outputs.is_empty() {
+            return Err(ToolError::ReadError);
+        }
+        Ok(outputs)
+    }
+
     /// Makes files lighter, at the preset and the target size the window
     /// carried.
     ///
@@ -2192,6 +2314,13 @@ impl<P: Publisher> Handler for Tools<P> {
             return self.run_split(request, &SystemRunner);
         }
 
+        // A snapshot is run apart from the rest: what it writes is a
+        // folder of pictures beside the original, not one file under the
+        // Beside policy, the way a split writes a folder of clips.
+        if request.operation == "tools.snapshots" {
+            return self.run_snapshots(request, &SystemRunner);
+        }
+
         // A compress is run apart from the rest: every kind answers with
         // its own pair of hands — a picture is made lighter by the
         // program itself, a video and a sound at a bitrate the preset and
@@ -2838,6 +2967,130 @@ mod tests {
             .expect("a frame was taken from the middle of the video");
         assert!(frame.width() > 0, "the frame holds a picture");
         let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    #[ignore = "needs the conversion program"]
+    fn the_moments_asked_for_stand_as_pictures_of_the_own_size() {
+        let folder = Path::new("vendor").join("ffmpeg");
+        let ffmpeg = folder.join("ffmpeg.exe");
+        let ffprobe = folder.join("ffprobe.exe");
+        if !ffmpeg.is_file() || !ffprobe.is_file() {
+            eprintln!("the program is not there; this test needs it");
+            return;
+        }
+        let scratch = std::env::temp_dir().join("open-tangerine-snapshots-test");
+        std::fs::create_dir_all(&scratch).expect("the scratch folder was made");
+        let input = make_test_video(&scratch);
+
+        // The snapshots go the whole way through the handler, the way
+        // the wheel drives it: the moments are said however the window
+        // took them, out of order on purpose, and the pictures stand in
+        // the video's own order.
+        let tools = Tools {
+            ffmpeg_tools: crate::media::locator::Tools {
+                ffmpeg,
+                ffprobe: ffprobe.clone(),
+            },
+            publisher: CopyPublisher,
+        };
+        let request = Request {
+            operation: "tools.snapshots".to_string(),
+            inputs: vec![input.clone()],
+            settings: ToolSettings {
+                snapshots_ms: vec![2_500, 0, 1_000],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let outcome = tools.run(&request, &Selection::inspect(&[input.clone()]));
+        let outputs = match outcome {
+            Outcome::Succeeded { outputs } => outputs,
+            Outcome::Failed { reason } => panic!("the snapshots failed: {:?}", reason),
+            Outcome::Cancelled => panic!("the snapshots were not asked to stop"),
+        };
+        assert_eq!(outputs.len(), 3, "three moments asked, three pictures");
+        let shots = outputs[0].parent().expect("the pictures have a folder");
+        assert_eq!(
+            shots.file_name().unwrap().to_string_lossy(),
+            "clip frames",
+            "the folder is named for the original"
+        );
+        assert_eq!(outputs[0].file_name().unwrap().to_string_lossy(), "clip frame 1.png");
+        assert_eq!(outputs[1].file_name().unwrap().to_string_lossy(), "clip frame 2.png");
+        assert_eq!(outputs[2].file_name().unwrap().to_string_lossy(), "clip frame 3.png");
+        // Every picture is a picture: it carries the PNG's own opening
+        // words, and it is as wide and as high as the video itself.
+        for made in &outputs {
+            let bytes = std::fs::read(made).expect("the picture was written");
+            assert_eq!(
+                &bytes[..8],
+                &[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a],
+                "the picture is a PNG"
+            );
+            let opened = image::load_from_memory(&bytes).expect("the picture opened");
+            assert_eq!((opened.width(), opened.height()), (160, 120));
+        }
+
+        // A moment past the video's end is set down, and the taking of
+        // the rest still stands. The second taking's folder does not
+        // step on the first's.
+        let request = Request {
+            operation: "tools.snapshots".to_string(),
+            inputs: vec![input.clone()],
+            settings: ToolSettings {
+                snapshots_ms: vec![0, 6_000],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let outcome = tools.run(&request, &Selection::inspect(&[input.clone()]));
+        let outputs = match outcome {
+            Outcome::Succeeded { outputs } => outputs,
+            Outcome::Failed { reason } => panic!("the later snapshots failed: {:?}", reason),
+            Outcome::Cancelled => panic!("the snapshots were not asked to stop"),
+        };
+        assert_eq!(
+            outputs.len(),
+            1,
+            "one frame of the two asked for was inside the video"
+        );
+        assert_eq!(
+            outputs[0]
+                .parent()
+                .expect("the pictures have a folder")
+                .file_name()
+                .unwrap()
+                .to_string_lossy(),
+            "clip frames 2",
+            "the second taking stands beside the first"
+        );
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn a_snapshot_run_without_moments_refuses() {
+        let tools = Tools {
+            ffmpeg_tools: crate::media::locator::Tools {
+                ffmpeg: PathBuf::from("nowhere.exe"),
+                ffprobe: PathBuf::from("nowhere-probe.exe"),
+            },
+            publisher: CopyPublisher,
+        };
+        let request = Request {
+            operation: "tools.snapshots".to_string(),
+            settings: ToolSettings::default(),
+            ..Default::default()
+        };
+        let outcome = tools.run(&request, &Selection::inspect(&[]));
+        let Outcome::Failed { reason } = outcome else {
+            panic!("an empty asking should not succeed");
+        };
+        assert_eq!(
+            reason,
+            Failure::InvalidInput("there are no snapshots".to_string()),
+            "the refusal says what was not asked"
+        );
     }
 
     #[test]

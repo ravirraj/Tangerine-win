@@ -843,7 +843,10 @@ impl App {
         // the cuts stand on the same strip. The first picture of the
         // drag is shown in the plain card, so that what the tool will do
         // is done to something the person can see.
-        if segment.id == "tools.trim" || segment.id == "tools.split" {
+        if segment.id == "tools.trim"
+            || segment.id == "tools.split"
+            || segment.id == "tools.snapshots"
+        {
             self.timeline_window
                 .show_for(&segment.id, &segment.label, &segment.detail, files);
             return;

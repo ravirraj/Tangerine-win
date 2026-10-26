@@ -221,6 +221,10 @@ pub struct ToolSettings {
     ///
     /// Only `tools.bleep` reads this.
     pub bleep_frequency: Option<u32>,
+    /// The moments of a video to take as pictures, in milliseconds.
+    ///
+    /// Only `tools.snapshots` reads these.
+    pub snapshots_ms: Vec<u64>,
 }
 
 impl ToolSettings {

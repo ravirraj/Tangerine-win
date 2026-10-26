@@ -55,7 +55,7 @@ use crate::platform::windows::windowhost::{
     fixed_style, fraction, scale_factor, screen_scale, timecode, to_wide,
 };
 use crate::radial::execution::ToolSettings;
-use crate::ui::wheel::{window_for_next_component, Bgra8, Panel, TrimCard};
+use crate::ui::wheel::{window_for_next_component, Bgra8, Panel, ShotData, TrimCard};
 
 /// The timer the window comes in softly on.
 const FADE_TIMER_ID: usize = 52;
@@ -100,6 +100,13 @@ const PARTS_MIN: i32 = 2;
 const PARTS_MAX: i32 = 50;
 const DELETE_REACH: f64 = 0.5;
 
+/// What a chip of a taken frame is high and how far two stand apart, in
+/// the drawing's own units. The card draws its chips with the same
+/// measure — two in a row, and the rows under each other — so the two
+/// must agree.
+const SHOT_CHIP_TOP_UNITS: f32 = 84.0;
+const SHOT_CHIP_GAP_UNITS: f32 = 8.0;
+
 /// How far the playhead must move before a new frame is asked of the
 /// conversion program, in seconds. A seek costs a moment; the frame does
 /// not need to follow the playhead any closer than a person can see.
@@ -114,9 +121,19 @@ enum Drag {
     Playhead,
 }
 
+/// A frame the card has taken: the moment it stands at, and the chip's
+/// own little picture of it. The full picture is not kept; the run
+/// takes the moments to the handler, which asks for the frames again
+/// where they stand.
+struct Shot {
+    at: f64,
+    picture: slint::Image,
+}
+
 /// What the window is open for, and where the video stands in it. A trim
 /// holds the two ends of a stretch; a split holds the points the video is
-/// cut at and the count of its equal parts.
+/// cut at and the count of its equal parts; a snapshots card holds the
+/// frames that were taken.
 struct TrimState {
     duration: f64,
     start: f64,
@@ -135,6 +152,13 @@ struct TrimState {
     /// worn with markers instead of a dragged range, and the words of the
     /// rows say cuts, not ends.
     split: bool,
+    /// Whether this window is asked for snapshots, not a trim: the strip
+    /// is scrubbed for moments to take, and what was taken stands where
+    /// an equal row would stand.
+    shots: bool,
+    /// The frames taken, in the order they were taken. The chips row
+    /// wears them, and the run says their moments to the handler.
+    shots_taken: Vec<Shot>,
     /// Whether this is an audio trim: waveform strip without preview frame,
     /// silence toggle, and play selection button.
     audio: bool,
@@ -166,6 +190,8 @@ impl Default for TrimState {
             ffmpeg: None,
             input: PathBuf::new(),
             split: false,
+            shots: false,
+            shots_taken: Vec::new(),
             audio: false,
             trim_silence: false,
             silence: None,
@@ -366,6 +392,8 @@ fn outer_size(scale: f32) -> (i32, i32) {
         Layout::AUDIO_CONTENT_UNITS
     } else if is_split() {
         Layout::SPLIT_CONTENT_UNITS
+    } else if is_shots() {
+        Layout::SHOTS_BASE_CONTENT_UNITS + chips_units()
     } else {
         Layout::CONTENT_UNITS
     };
@@ -404,6 +432,26 @@ fn is_audio() -> bool {
 /// the hits and the words of the card all follow it.
 fn is_split() -> bool {
     STATE.with(|slot| slot.borrow().split)
+}
+
+/// Whether the window is asked for snapshots and not a trim: the strip
+/// is scrubbed and the frames taken stand in the chips row, where an
+/// equal row would stand.
+fn is_shots() -> bool {
+    STATE.with(|slot| slot.borrow().shots)
+}
+
+/// How much room the rows of taken frames ask for, in the drawing's own
+/// units: every row carries two chips and ends with the air between the
+/// rows, and nothing is asked when no frame has been taken.
+fn chips_units() -> f32 {
+    let taken = STATE.with(|slot| slot.borrow().shots_taken.len());
+    if taken == 0 {
+        0.0
+    } else {
+        let rows = ((taken + 1) / 2) as f32;
+        rows * (SHOT_CHIP_TOP_UNITS + SHOT_CHIP_GAP_UNITS) - SHOT_CHIP_GAP_UNITS
+    }
 }
 
 impl TimelineWindow {
@@ -499,7 +547,19 @@ impl TimelineWindow {
             card.on_add_split_chosen(move || {
                 let window = window_handle();
                 if !window.0.is_null() {
-                    unsafe { add_split(window) };
+                    unsafe {
+                        if is_shots() {
+                            add_shot(window);
+                        } else {
+                            add_split(window);
+                        }
+                    }
+                }
+            });
+            card.on_remove_shot_chosen(move |index| {
+                let window = window_handle();
+                if !window.0.is_null() {
+                    unsafe { remove_shot_at(window, index) };
                 }
             });
             card.on_set_equal_chosen(move || {
@@ -560,6 +620,7 @@ impl TimelineWindow {
             *slot.borrow_mut() = Some((operation.to_string(), inputs.to_vec()));
         });
         let split = operation == "tools.split";
+        let shots = operation == "tools.snapshots";
         let is_audio = inputs
             .first()
             .and_then(|p| p.extension())
@@ -617,12 +678,14 @@ impl TimelineWindow {
                 ffmpeg: ffmpeg.clone(),
                 input: input.clone(),
                 split,
+                shots,
                 audio: is_audio,
                 trim_silence: false,
                 silence: None,
                 points: Vec::new(),
                 parts: PARTS_MIN,
                 equal_saying: None,
+                shots_taken: Vec::new(),
             };
         });
         // The strip of the video's own moments is asked for apart: it is
@@ -652,9 +715,24 @@ impl TimelineWindow {
             host.card.set_file_name(said.into());
             host.card.set_detail(detail.into());
             host.card.set_split_mode(split);
+            host.card.set_shots_mode(shots);
             host.card.set_audio_mode(is_audio);
-            host.card
-                .set_run_label(if split { "Split Video" } else if is_audio { "Apply" } else { "Trim" }.into());
+            host.card.set_run_label(
+                if split {
+                    "Split Video"
+                } else if is_audio {
+                    "Apply"
+                } else if shots {
+                    "Save Frames"
+                } else {
+                    "Trim"
+                }
+                .into(),
+            );
+            host.card.set_points_text("0 taken".into());
+            host.card.set_shots(
+                std::rc::Rc::new(slint::VecModel::from(Vec::<ShotData>::new())).into(),
+            );
             host.card.set_trim_silence(false);
             host.lay_out();
             // The frame that was asked for before sizing is put on now,
@@ -800,9 +878,12 @@ impl Host {
         self.card.set_step_up_box(panel(layout.step_up));
         self.card.set_step_down_box(panel(layout.step_down));
         self.card.set_set_box(panel(layout.set));
+        self.card.set_shots_box(panel(layout.shots));
         self.card.set_silence_box(panel(layout.silence));
         self.card.set_play_selection_box(panel(layout.play_selection));
         self.card.set_audio_mode(is_audio());
+        self.card.set_split_mode(is_split());
+        self.card.set_shots_mode(is_shots());
         self.card.set_trim_silence(STATE.with(|s| s.borrow().trim_silence));
         layout
     }
@@ -894,6 +975,8 @@ struct Layout {
     step_up: RECT,
     step_down: RECT,
     set: RECT,
+    // The row of the frames taken, where an equal row would stand.
+    shots: RECT,
     // Audio trim options: silence checkbox and play selection button.
     silence: RECT,
     play_selection: RECT,
@@ -912,6 +995,11 @@ impl Layout {
     /// The same for an audio trim card: no video preview frame, waveform
     /// strip, moments row, and silence / play options row.
     const AUDIO_CONTENT_UNITS: f32 = 272.0;
+    /// The same for a snapshots card: its points row stands where a
+    /// split's does, and after the transport the chips row takes the
+    /// equal row's room — its own height when frames stand, nothing
+    /// when none are taken yet.
+    const SHOTS_BASE_CONTENT_UNITS: f32 = 260.0;
     /// The footer: the hairline's gap to the buttons, the buttons, and
     /// the air under them.
     const FOOTER_UNITS: f32 = 64.0;
@@ -928,12 +1016,19 @@ impl Layout {
         Self::SPLIT_CONTENT_UNITS + preview_units + Self::FOOTER_UNITS
     }
 
+    /// How tall a snapshots window of this preview and this much room
+    /// for chips wants to be.
+    fn height_for_shots(preview_units: f32, chips_units: f32) -> f32 {
+        Self::SHOTS_BASE_CONTENT_UNITS + chips_units + preview_units + Self::FOOTER_UNITS
+    }
+
     fn of(whole: i32, side: i32, scale: f32) -> Layout {
         let at = |value: f32| (value * scale) as i32;
         let margin = at(24.0);
         let preview_units = client_preview_units();
         let split = is_split();
         let audio = is_audio();
+        let shots = is_shots();
 
         // The stack, top to bottom, all worked out from the one number.
         let header_top = at(16.0);
@@ -951,12 +1046,12 @@ impl Layout {
         } else {
             preview_bottom + at(16.0)
         };
-        let timeline_top = if split {
+        let timeline_top = if split || shots {
             caption_top + at(30.0) + at(12.0)
         } else {
             caption_top + at(16.0) + at(12.0)
         };
-        let (times_top, transport_top) = if split || audio {
+        let (times_top, transport_top) = if split || shots || audio {
             let after_strip = timeline_top + at(STRIP_UNITS) + at(10.0);
             (after_strip, after_strip)
         } else {
@@ -970,6 +1065,10 @@ impl Layout {
             options_top + at(32.0) + at(18.0)
         } else if split {
             equal_top + at(30.0) + at(18.0)
+        } else if shots {
+            // The chips row stands where an equal row would: as tall as
+            // the frames taken ask for, and the air under it.
+            equal_top + at(chips_units()) + at(18.0)
         } else {
             transport_top + at(30.0) + at(18.0)
         };
@@ -1010,7 +1109,7 @@ impl Layout {
                 left: margin,
                 top: caption_top,
                 right: whole - margin,
-                bottom: caption_top + if split { at(30.0) } else { at(16.0) },
+                bottom: caption_top + if split || shots { at(30.0) } else { at(16.0) },
             },
             timeline: RECT {
                 left: margin,
@@ -1076,11 +1175,12 @@ impl Layout {
             step_up: RECT::default(),
             step_down: RECT::default(),
             set: RECT::default(),
+            shots: RECT::default(),
             silence: RECT::default(),
             play_selection: RECT::default(),
         };
 
-        if split {
+        if split || shots {
             // The points row: the count on the left, the pill at the
             // right hand of it, standing where the caption stands.
             let pill_left = whole - margin - at(110.0);
@@ -1096,6 +1196,9 @@ impl Layout {
                 right: whole - margin,
                 bottom: caption_top + at(30.0),
             };
+        }
+
+        if split {
             // And the equal row after the transport.
             layout.equal_label = RECT {
                 left: margin,
@@ -1128,6 +1231,17 @@ impl Layout {
                 top: equal_top,
                 right: set_right,
                 bottom: equal_top + at(30.0),
+            };
+        }
+
+        if shots {
+            // The chips row after the transport: the whole width, as
+            // tall as the frames taken ask for.
+            layout.shots = RECT {
+                left: margin,
+                top: equal_top,
+                right: whole - margin,
+                bottom: equal_top + at(chips_units()),
             };
         }
 
@@ -1171,6 +1285,7 @@ unsafe fn apply_focus(window: HWND, index: i32) {
     unsafe { let _ = SetFocus(Some(window)); }
     let split = is_split();
     let audio = is_audio();
+    let shots = is_shots();
     HOST.with(|slot| {
         let mut borrowed = slot.borrow_mut();
         if let Some(host) = borrowed.as_mut() {
@@ -1189,6 +1304,13 @@ unsafe fn apply_focus(window: HWND, index: i32) {
                     .set_button_focus(if index == 3 { 2 } else { 0 });
                 host.card
                     .set_pill_focus(if index == 1 { 1 } else { if index == 2 { 2 } else { 0 } });
+            } else if shots {
+                // 0 the playhead (no ring), 1 the taking pill, 2 run.
+                host.card.set_handle_focus(0);
+                host.card
+                    .set_button_focus(if index == 2 { 2 } else { 0 });
+                host.card
+                    .set_pill_focus(if index == 1 { 1 } else { 0 });
             } else {
                 host.card
                     .set_handle_focus(if index == 0 || index == 1 { index + 1 } else { 0 });
@@ -1202,7 +1324,8 @@ unsafe fn apply_focus(window: HWND, index: i32) {
 
 /// Walks the keyboard to the next stop of the card, or the one before:
 /// a trim walks the start cap, the end cap, and go; a split walks the
-/// playhead, the two pills, and go.
+/// playhead, the two pills, and go; a snapshots card walks the playhead,
+/// the taking pill, and go.
 unsafe fn cycle_focus(window: HWND, forward: bool) {
     let stops: &[i32] = if is_audio() {
         &[0, 1, 2, 3, 4]
@@ -1228,9 +1351,11 @@ unsafe fn cycle_focus(window: HWND, forward: bool) {
 
 /// Tells the card where the video begins and ends, and where the
 /// playhead stands, and what all of it says in words. A trim card says
-/// its stretch; a split card says how many cuts stand and wears them.
+/// its stretch; a split card says how many cuts stand and wears them; a
+/// snapshots card says how many frames stand and wears their chips.
 fn refresh_times() {
     let split = is_split();
+    let shots = is_shots();
     HOST.with(|slot| {
         let mut borrowed = slot.borrow_mut();
         if let Some(host) = borrowed.as_mut() {
@@ -1267,6 +1392,33 @@ fn refresh_times() {
                     host.card.set_markers(
                         std::rc::Rc::new(slint::VecModel::from(markers)).into(),
                     );
+                }
+                if shots {
+                    let said = match state.shots_taken.len() {
+                        0 => "0 taken".to_string(),
+                        1 => "1 taken".to_string(),
+                        n => format!("{n} taken"),
+                    };
+                    host.card.set_points_text(said.into());
+                    host.card.set_run_enabled(!state.shots_taken.is_empty());
+                    // The go pill says what the run does, and says it for
+                    // the count: one frame or many, the way the mockup's
+                    // footer carries it.
+                    host.card.set_run_label(match state.shots_taken.len() {
+                        0 => "Save Frames".to_string(),
+                        1 => "Save 1 Frame".to_string(),
+                        n => format!("Save {n} Frames"),
+                    }.into());
+                    let chips: Vec<ShotData> = state
+                        .shots_taken
+                        .iter()
+                        .map(|shot| ShotData {
+                            picture: shot.picture.clone(),
+                            time: timecode(shot.at).into(),
+                        })
+                        .collect();
+                    host.card
+                        .set_shots(std::rc::Rc::new(slint::VecModel::from(chips)).into());
                 }
             });
             host.software.request_redraw();
@@ -1366,10 +1518,11 @@ fn timeline_touched(window: HWND, x: i32, y: i32, pressed: bool) {
             if state.duration <= 0.0 {
                 return;
             }
-            if state.split {
+            if state.split || state.shots {
                 // A split takes no ends: a press on a marker stands the
                 // playhead on the cut it took, anywhere else takes the
-                // playhead itself.
+                // playhead itself. A snapshots card wears the same
+                // straightness: its strip is only scrubbed.
                 let on_marker = state
                     .points
                     .iter()
@@ -1465,7 +1618,7 @@ unsafe fn step(window: HWND, direction: f64) {
         }
         let step_unit = if state.audio { 0.1 } else { 1.0 };
         let by = direction * if shift { step_unit * 5.0 } else { step_unit };
-        if state.split {
+        if state.split || state.shots {
             state.playhead = (state.playhead + by).clamp(0.0, state.duration);
         } else {
             match focused {
@@ -1607,6 +1760,121 @@ unsafe fn take_point_near(window: HWND) {
     }
 }
 
+/// Takes a frame of the video where the playhead stands, to stand in the
+/// chips row. The chip wears a small picture of the frame; the running
+/// of the card later says only where the frame stands, and the handler
+/// asks for them again where they belong.
+unsafe fn add_shot(window: HWND) {
+    let made = STATE.with(|slot| {
+        let mut state = slot.borrow_mut();
+        if state.duration <= 0.0 {
+            return false;
+        }
+        let at = state.playhead;
+        // The frame is asked for at the moment it stands at. The card is
+        // not held here; the picture arrives whole or nothing says so.
+        let Some(took) = state
+            .ffmpeg
+            .as_ref()
+            .and_then(|tools| frame_at(tools, &state.input, at))
+        else {
+            return false;
+        };
+        let small = took.thumbnail(160, 60);
+        let rgba = small.to_rgba8();
+        let buffer =
+            SharedPixelBuffer::clone_from_slice(rgba.as_raw(), small.width(), small.height());
+        state.shots_taken.push(Shot {
+            at,
+            picture: slint::Image::from_rgba8(buffer),
+        });
+        true
+    });
+    if made {
+        unsafe { refit(window) };
+        refresh_times();
+        let _ = unsafe { InvalidateRect(Some(window), None, true) };
+    }
+}
+
+/// Takes away the taken frame nearest the playhead, when one stands
+/// near enough — the Delete key's way of undoing a taking.
+unsafe fn take_shot_near(window: HWND) {
+    let took = STATE.with(|slot| {
+        let mut state = slot.borrow_mut();
+        let stand = state.playhead;
+        let share = state
+            .shots_taken
+            .iter()
+            .enumerate()
+            .min_by(|(_, a), (_, b)| {
+                let da = (a.at - stand).abs();
+                let db = (b.at - stand).abs();
+                da.partial_cmp(&db).expect("the moments are not nothing")
+            });
+        match share {
+            Some((index, shot)) if (shot.at - stand).abs() <= DELETE_REACH => {
+                state.shots_taken.remove(index);
+                true
+            }
+            _ => false,
+        }
+    });
+    if took {
+        unsafe { refit(window) };
+        refresh_times();
+        let _ = unsafe { InvalidateRect(Some(window), None, true) };
+    }
+}
+
+/// Takes away the chip the person pressed its cross on.
+unsafe fn remove_shot_at(window: HWND, index: i32) {
+    let took = STATE.with(|slot| {
+        let index = index as usize;
+        let mut state = slot.borrow_mut();
+        if index < state.shots_taken.len() {
+            state.shots_taken.remove(index);
+            true
+        } else {
+            false
+        }
+    });
+    if took {
+        unsafe { refit(window) };
+        refresh_times();
+        let _ = unsafe { InvalidateRect(Some(window), None, true) };
+    }
+}
+
+/// Makes the window the size its card wants again: a frame taken makes
+/// the card taller, the same way a redact card grows with its rows. The
+/// window stands where it stood.
+unsafe fn refit(window: HWND) {
+    let scale = scale_factor(window);
+    let (outer_w, outer_h) = outer_size(scale);
+    let mut stands = RECT::default();
+    let _ = unsafe { GetWindowRect(window, &mut stands) };
+    let _ = unsafe {
+        SetWindowPos(
+            window,
+            None,
+            stands.left,
+            stands.top,
+            outer_w,
+            outer_h,
+            SWP_NOZORDER | SWP_NOACTIVATE,
+        )
+    };
+    HOST.with(|slot| {
+        let mut borrowed = slot.borrow_mut();
+        if let Some(host) = borrowed.as_mut() {
+            host.resize();
+            host.software.request_redraw();
+        }
+    });
+    let _ = unsafe { InvalidateRect(Some(window), None, true) };
+}
+
 unsafe extern "system" fn window_procedure(
     window: HWND,
     message: u32,
@@ -1729,6 +1997,12 @@ unsafe extern "system" fn window_procedure(
                         4 => unsafe { run(window) },
                         _ => {}
                     }
+                } else if is_shots() && key == VK_SPACE.0 {
+                    let stop = FOCUS_INDEX.with(|slot| slot.get());
+                    match stop {
+                        0 | 1 => unsafe { add_shot(window) },
+                        _ => unsafe { run(window) },
+                    }
                 } else if is_split() && key == VK_SPACE.0 {
                     let stop = FOCUS_INDEX.with(|slot| slot.get());
                     match stop {
@@ -1743,8 +2017,12 @@ unsafe extern "system" fn window_procedure(
             } else if key == VK_ESCAPE.0 {
                 unsafe { cancel(window) };
                 LRESULT(0)
-            } else if key == VK_DELETE.0 && is_split() {
-                unsafe { take_point_near(window) };
+            } else if key == VK_DELETE.0 && (is_split() || is_shots()) {
+                if is_shots() {
+                    unsafe { take_shot_near(window) };
+                } else {
+                    unsafe { take_point_near(window) };
+                }
                 LRESULT(0)
             } else {
                 unsafe { DefWindowProcW(window, message, wparam, lparam) }
@@ -1791,37 +2069,63 @@ unsafe extern "system" fn window_procedure(
 /// Runs what the window was open for, with the range the handles hold —
 /// or, when the window is asked for a split, with the cuts standing.
 unsafe fn run(window: HWND) {
-    let (split, empty_points) = STATE.with(|slot| {
+    let (split, shots, empty_points) = STATE.with(|slot| {
         let state = slot.borrow();
-        (
-            state.split,
-            state.split && state.points.is_empty(),
-        )
+        let empty = if state.shots {
+            state.shots_taken.is_empty()
+        } else {
+            state.points.is_empty()
+        };
+        (state.split, state.shots, empty)
     });
     // A split with no cut yet has nothing to say: the go button is
-    // already retired, and the key says nothing either.
-    if split && empty_points {
+    // already retired, and the key says nothing either. So does a run
+    // with no frame taken.
+    if (split || shots) && empty_points {
         return;
     }
     let settings = STATE.with(|slot| {
         let state = slot.borrow();
-        if state.points.is_empty() {
-            ToolSettings {
-                start_ms: Some((state.start * 1000.0).round() as u64),
-                end_ms: Some((state.end * 1000.0).round() as u64),
-                ..Default::default()
+        if split {
+            if state.points.is_empty() {
+                ToolSettings {
+                    start_ms: Some((state.start * 1000.0).round() as u64),
+                    end_ms: Some((state.end * 1000.0).round() as u64),
+                    ..Default::default()
+                }
+            } else {
+                ToolSettings {
+                    points_ms: state
+                        .points
+                        .iter()
+                        .map(|point| (point * 1000.0).round() as u64)
+                        .collect(),
+                    ..Default::default()
+                }
             }
         } else {
-            ToolSettings {
-                points_ms: state
-                    .points
-                    .iter()
-                    .map(|point| (point * 1000.0).round() as u64)
-                    .collect(),
-                ..Default::default()
-            }
+            ToolSettings::default()
         }
     });
+    // The run of a snapshots card carries the moments the frames stand
+    // at, from the first to the last; the handler numbers the pictures
+    // in the video's own order.
+    let settings = if shots {
+        let mut moments: Vec<u64> = STATE.with(|slot| {
+            slot.borrow()
+                .shots_taken
+                .iter()
+                .map(|shot| (shot.at * 1000.0).round() as u64)
+                .collect()
+        });
+        moments.sort_unstable();
+        ToolSettings {
+            snapshots_ms: moments,
+            ..Default::default()
+        }
+    } else {
+        settings
+    };
     OPEN_FOR.with(|slot| {
         let mut open_for = slot.borrow_mut();
         if let Some((operation, inputs)) = open_for.take() {
@@ -1956,6 +2260,59 @@ mod tests {
         assert!(layout.timeline.bottom < layout.hairline_bottom.top);
         assert!(layout.run.right <= whole && layout.run.bottom <= side);
         STATE.with(|slot| slot.borrow_mut().split = false);
+    }
+
+    /// A chip's picture of one pixel, for the tests of the chips row.
+    fn blank_shot_picture() -> slint::Image {
+        let buffer = SharedPixelBuffer::clone_from_slice(&[0u8, 0, 255, 255], 1, 1);
+        slint::Image::from_rgba8(buffer)
+    }
+
+    #[test]
+    fn the_height_of_a_shots_window_is_its_content_and_its_chips() {
+        // Nothing taken yet: the chips row takes no room.
+        assert_eq!(Layout::height_for_shots(236.0, 0.0), 560.0);
+        // One row of two chips: its own height, once.
+        assert_eq!(Layout::height_for_shots(236.0, 92.0), 652.0);
+    }
+
+    #[test]
+    fn a_shots_layout_stands_the_rows_the_card_says() {
+        STATE.with(|slot| {
+            let mut s = slot.borrow_mut();
+            s.preview_units = 236.0;
+            s.shots = true;
+            s.shots_taken = vec![
+                Shot { at: 0.5, picture: blank_shot_picture() },
+                Shot { at: 1.5, picture: blank_shot_picture() },
+                Shot { at: 2.5, picture: blank_shot_picture() },
+            ];
+        });
+        let whole = 420;
+        let side = 260.0 + 176.0 + 236.0 + 64.0;
+        let layout = Layout::of(whole, side as i32, 1.0);
+        // The points row is two stops, the same line the split's says.
+        assert_eq!(layout.points.top, layout.add_split.top);
+        assert!(layout.points.right + 10 <= layout.add_split.left);
+        assert_eq!(layout.add_split.right, whole - 24);
+        // The strip stands where the split card wears it, and the chips
+        // row stands where the equal row would: under the transport, the
+        // whole width, as tall as three taken frames ask (two rows).
+        assert_eq!(layout.step_forward.bottom + 10, layout.shots.top);
+        assert_eq!(layout.shots.left, 24);
+        assert_eq!(layout.shots.right, whole - 24);
+        assert_eq!(layout.shots.bottom - layout.shots.top, 176);
+        // The hairline under the chips, and the run in the window.
+        assert_eq!(layout.shots.bottom + 18, layout.hairline_bottom.top);
+        assert!(layout.run.right <= whole && layout.run.bottom <= side as i32);
+        // The equal row's own places stand empty: nothing is laid there.
+        assert_eq!(layout.equal_label, RECT::default());
+        assert_eq!(layout.set, RECT::default());
+        STATE.with(|slot| {
+            let mut s = slot.borrow_mut();
+            s.shots = false;
+            s.shots_taken.clear();
+        });
     }
 
     #[test]
@@ -2295,6 +2652,92 @@ mod show_tests {
             }
         });
         capture(window.window, &shots.join("trim-audio-window.png"));
+        window.hide();
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    /// Opens the snapshots window on a real video, takes two frames the
+    /// way the card takes them, says what the run would carry, and
+    /// captures target/shots/snapshots-window.png.
+    #[test]
+    #[ignore = "needs the conversion program; writes a screenshot"]
+    fn capture_the_snapshots_window() {
+        crate::ui::wheel::install_platform();
+        let folder = std::env::temp_dir().join("open-tangerine-capture-snapshots");
+        std::fs::create_dir_all(&folder).expect("the capture folder was made");
+        let video = make_test_video(&folder);
+        let expected = video.clone();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let mut window = TimelineWindow::new(sender).expect("the window was made");
+        window.show_for(
+            "tools.snapshots",
+            "Snapshots",
+            "Saves frames of the video as pictures.",
+            &[video],
+        );
+        // Wait for the strip to be built in the background, the way the
+        // trim waits for its own.
+        for round in 0..2400 {
+            unsafe {
+                let mut message = MSG::default();
+                while PeekMessageW(&mut message, None, 0, 0, PM_REMOVE).as_bool() {
+                    let _ = TranslateMessage(&message);
+                    DispatchMessageW(&message);
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            if get_strip_worn() && round > 400 {
+                break;
+            }
+        }
+        // The first frame is taken where the playhead stands: the video's
+        // own beginning. Then the playhead is stood at a second and a
+        // half, and the frame there is taken too.
+        unsafe { add_shot(window.window) };
+        STATE.with(|slot| slot.borrow_mut().playhead = 1.5);
+        refresh_frame(true);
+        refresh_times();
+        unsafe { add_shot(window.window) };
+        // The card wears two chips and says two taken.
+        let taken = STATE.with(|slot| slot.borrow().shots_taken.len());
+        assert_eq!(taken, 2, "two frames were taken");
+        let shots = std::path::Path::new("target").join("shots");
+        std::fs::create_dir_all(&shots).expect("the shots folder was made");
+        HOST.with(|slot| {
+            let borrowed = slot.borrow();
+            if let Some(host) = borrowed.as_ref() {
+                let mut rgba = Vec::with_capacity(host.buffer.len() * 4);
+                for pixel in &host.buffer {
+                    let (_, r, g, b) = pixel.parts();
+                    rgba.extend_from_slice(&[r, g, b, 255]);
+                }
+                let _ = image::save_buffer(
+                    shots.join("snapshots-buffer.png"),
+                    &rgba,
+                    host.width,
+                    host.height,
+                    image::ExtendedColorType::Rgba8,
+                );
+            }
+        });
+        capture(window.window, &shots.join("snapshots-window.png"));
+        // The run says the moments the frames stand at, from the first to
+        // the last, whatever order they were taken in.
+        unsafe { run(window.window) };
+        let event = receiver
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("the run was said");
+        let crate::platform::windows::toolwindow::ToolEvent::Run {
+            operation,
+            inputs,
+            settings,
+        } = event
+        else {
+            panic!("the run was not a run");
+        };
+        assert_eq!(operation, "tools.snapshots");
+        assert_eq!(inputs, vec![expected]);
+        assert_eq!(settings.snapshots_ms, vec![0, 1_500]);
         window.hide();
         let _ = std::fs::remove_dir_all(&folder);
     }

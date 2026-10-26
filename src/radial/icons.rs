@@ -98,6 +98,12 @@ const TERMINAL: &str = "M 4 4 H 20 V 20 H 4 Z M 8 8 H 16 V 8 M 8 10 H 16 V 10 M 
 /// An arrow pointing out of a box.
 const EXTRACT: &str = "M 4 4 H 20 V 20 H 4 Z M 8 12 L 12 8 L 16 12 M 12 8 L 12 4";
 
+/// A camera icon.
+///
+/// A camera seen from the front, its lens standing in the middle, the
+/// way a frame is taken.
+const CAMERA: &str = "M 4 7 H 8.6 L 10.2 4.6 H 13.8 L 15.4 7 H 20 V 19 H 4 Z M 8 13 A 4 4 0 1 0 16 13 A 4 4 0 1 0 8 13 M 12 10.8 A 2.2 2.2 0 1 0 12.01 10.81";
+
 /// The path of the picture for a kind of choice.
 pub fn path_for(kind: IconKind) -> &'static str {
     match kind {
@@ -111,6 +117,7 @@ pub fn path_for(kind: IconKind) -> &'static str {
         IconKind::Pencil => PENCIL,
         IconKind::Merge => MERGE,
         IconKind::Scissors => SCISSORS,
+        IconKind::Camera => CAMERA,
         IconKind::Compress => COMPRESS,
         IconKind::Crop => CROP,
         IconKind::Rotate => ROTATE,
@@ -139,6 +146,7 @@ mod tests {
             IconKind::Pencil,
             IconKind::Merge,
             IconKind::Scissors,
+            IconKind::Camera,
             IconKind::Compress,
             IconKind::Crop,
             IconKind::Rotate,
@@ -166,6 +174,7 @@ mod tests {
             IconKind::Pencil,
             IconKind::Merge,
             IconKind::Scissors,
+            IconKind::Camera,
             IconKind::Compress,
             IconKind::Crop,
             IconKind::Rotate,
