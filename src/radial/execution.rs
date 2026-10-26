@@ -23,6 +23,60 @@ use std::path::PathBuf;
 use crate::radial::registry::{Environment, Ineligible, eligibility, operation_by_id};
 use crate::radial::selection::Selection;
 
+/// The look a covered part wears.
+///
+/// The reference's picker lines them up blur, pixelate, box; the mockup
+/// stands with a solid box on a fresh page, so solid is what happens when
+/// nothing was said.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RedactStyle {
+    /// A box of one color.
+    #[default]
+    Solid,
+    /// The part is smeared so nothing in it can be read.
+    Blur,
+    /// The part is painted in big squares of itself.
+    Pixelate,
+}
+
+/// One rectangle to cover, in thousandths of the file's own size.
+///
+/// An area stands in fractions so one drawn rectangle can land on every
+/// file of a batch at the same relative place — the way the reference's
+/// editor remembers what was drawn. The time range says something only
+/// to the video tool; a photo has no time to be in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RedactArea {
+    /// Where it starts on the width, in thousandths of it.
+    pub x_mille: u32,
+    /// Where it starts on the height, in thousandths of it.
+    pub y_mille: u32,
+    /// How much of the width it covers, in thousandths of it.
+    pub w_mille: u32,
+    /// How much of the height it covers, in thousandths of it.
+    pub h_mille: u32,
+    /// Where in a video it starts to be covered, in milliseconds. A
+    /// photo's rectangle covers everything.
+    pub start_ms: Option<u64>,
+    /// Where in a video it is uncovered again, in milliseconds.
+    pub end_ms: Option<u64>,
+}
+
+impl RedactArea {
+    /// The rectangle in pixels, clamped inside a picture of this size.
+    ///
+    /// What hangs off an edge is cut away; a rectangle that starts at the
+    /// very edge, or was drawn with nothing in it, comes out empty.
+    pub fn rect_on(&self, width: u32, height: u32) -> (u32, u32, u32, u32) {
+        let at = |mille: u32, size: u32| (mille as u64 * size as u64 / 1000).min(size as u64) as u32;
+        let x = at(self.x_mille, width);
+        let y = at(self.y_mille, height);
+        let w = at(self.w_mille, width).min(width.saturating_sub(x));
+        let h = at(self.h_mille, height).min(height.saturating_sub(y));
+        (x, y, w, h)
+    }
+}
+
 /// The settings a tool was given in its window.
 ///
 /// A tool that is run with no window — from a drag that never opened one —
@@ -110,6 +164,24 @@ pub struct ToolSettings {
     ///
     /// Only `tools.channels` reads this.
     pub channel_right_gain: Option<u32>,
+    /// The rectangles to cover, in thousandths of the file's own width
+    /// and height each: where a rectangle starts, and how much of it
+    /// there is. The same fractions land on every file of a batch.
+    ///
+    /// Only `tools.redact_image` and `tools.redact_video` read these.
+    pub redact_areas: Vec<RedactArea>,
+    /// The look the covered parts wear: solid, blur, or pixelate.
+    ///
+    /// Only `tools.redact_image` and `tools.redact_video` read this.
+    pub redact_style: Option<RedactStyle>,
+    /// How hard the look bites, 0..100 (the reference's own strength is 0..1).
+    ///
+    /// Only `tools.redact_image` and `tools.redact_video` read this.
+    pub redact_strength: Option<u32>,
+    /// The color solid boxes wear, as hex "RRGGBB" without the `#`.
+    ///
+    /// Only `tools.redact_image` and `tools.redact_video` read this.
+    pub redact_color: Option<String>,
 }
 
 impl ToolSettings {
@@ -141,6 +213,39 @@ impl ToolSettings {
     /// Right channel gain multiplier (defaults to 1.0).
     pub fn right_gain_factor(&self) -> f64 {
         self.channel_right_gain.unwrap_or(100) as f64 / 100.0
+    }
+
+    /// The look the covered parts wear (a solid box when nothing was said —
+    /// the way the reference's mockup stands before it is touched).
+    pub fn redaction_style(&self) -> RedactStyle {
+        self.redact_style.unwrap_or_default()
+    }
+
+    /// The strength of the look, 0.0..1.0 (half when nothing was said —
+    /// the reference's own default).
+    pub fn redaction_strength_fraction(&self) -> f64 {
+        self.redact_strength.unwrap_or(50).clamp(0, 100) as f64 / 100.0
+    }
+
+    /// The color solid boxes wear, as three bytes (black when nothing was
+    /// said, the way the reference's color well stands). Anything that is
+    /// not six hex characters reads as the default.
+    pub fn redaction_color(&self) -> [u8; 3] {
+        match self.redact_color.as_deref() {
+            Some(hex) if hex.len() == 6 => {
+                let byte = |at: usize| u8::from_str_radix(&hex[at..at + 2], 16).unwrap_or(0);
+                [byte(0), byte(2), byte(4)]
+            }
+            _ => [0, 0, 0],
+        }
+    }
+
+    /// How strong the look is made, in pixels: between 2% and 30% of the
+    /// picture's smaller side, growing with the strength — the reference's
+    /// own rule for a blur smear and a pixel square alike.
+    pub fn redaction_effect(&self, min_side: u32) -> f64 {
+        let share = 0.02 + 0.28 * self.redaction_strength_fraction();
+        (share * min_side as f64).max(2.0)
     }
 }
 

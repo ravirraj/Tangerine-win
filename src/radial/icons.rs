@@ -83,6 +83,11 @@ const ROTATE: &str = "M 4 12 L 10 4 L 12 12 L 10 20 M 12 12 L 20 12 M 20 12 L 16
 /// Diagonal arrows pointing outward.
 const RESIZE: &str = "M 6 6 L 10 10 M 6 10 L 10 6 M 14 14 L 18 18 M 14 18 L 18 14";
 
+/// A redact icon.
+///
+/// A covered strip: a pill lying across a line, kept from being read.
+const REDACT: &str = "M 3 12 H 9 M 15 12 H 21 M 9 8 H 15 V 16 H 9 Z";
+
 /// A terminal icon.
 ///
 /// A command prompt symbol.
@@ -110,6 +115,7 @@ pub fn path_for(kind: IconKind) -> &'static str {
         IconKind::Crop => CROP,
         IconKind::Rotate => ROTATE,
         IconKind::Resize => RESIZE,
+        IconKind::Redact => REDACT,
         IconKind::Terminal => TERMINAL,
         IconKind::Extract => EXTRACT,
         IconKind::Path => PATH,

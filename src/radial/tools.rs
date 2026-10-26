@@ -17,7 +17,7 @@ use crate::media::locator::Tools as FfmpegTools;
 use crate::media::manifest::Manifest;
 use crate::media::publish::{PublishError, Publisher};
 use crate::media::runner::{ProcessRunner, SystemRunner};
-use crate::radial::execution::{Failure, Handler, Outcome, Request};
+use crate::radial::execution::{Failure, Handler, Outcome, RedactStyle, Request};
 use crate::radial::registry::{operation_by_id, Output};
 use crate::radial::selection::Selection;
 
@@ -211,6 +211,90 @@ impl<P: Publisher> Tools<P> {
             }
         }
         Err(ToolError::WriteError)
+    }
+
+    /// Covers the parts of pictures the window drew on.
+    ///
+    /// The look is laid on by the program's own hands: the picture is
+    /// read, every rectangle takes the style that was asked of it, and
+    /// the readied copy stands beside under its own name. Nothing of the
+    /// run needs the conversion program — so a picture the picture
+    /// library cannot read is refused politely, and nothing more.
+    ///
+    /// A redaction without areas is not a redaction: the handler says so
+    /// rather than covering nothing and calling the file changed.
+    fn run_redact_image(&self, request: &Request) -> Outcome {
+        if request.settings.redact_areas.is_empty() {
+            return Outcome::Failed {
+                reason: Failure::InvalidInput("there are no redaction areas".to_string()),
+            };
+        }
+
+        let manifest = Manifest::get();
+        let mut outputs = Vec::new();
+        let mut failed = 0usize;
+        let mut first_reason: Option<String> = None;
+        for input in &request.inputs {
+            let result = self.redact_image_one(input, &manifest, &request.settings);
+            match result {
+                Ok(path) => outputs.push(path),
+                Err(reason) => {
+                    failed += 1;
+                    let name = reason.name();
+                    diagnostics::log(Level::Warn, "action", &format!("a file was not processed: {name}"));
+                    if first_reason.is_none() {
+                        first_reason = Some(name.to_string());
+                    }
+                }
+            }
+        }
+
+        if failed == 0 {
+            Outcome::Succeeded { outputs }
+        } else {
+            let because = match first_reason {
+                Some(reason) => format!(": {reason}"),
+                None => String::new(),
+            };
+            Outcome::Failed {
+                reason: Failure::Error(format!(
+                    "{failed} of the files could not be processed{because}"
+                )),
+            }
+        }
+    }
+
+    /// Covers the drawn rectangles of one picture.
+    fn redact_image_one(
+        &self,
+        input: &Path,
+        manifest: &Manifest,
+        settings: &crate::radial::execution::ToolSettings,
+    ) -> Result<PathBuf, ToolError> {
+        let source_ext = input
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        let source = manifest
+            .format_of_extension(&source_ext)
+            .or_else(|| manifest.format(&source_ext))
+            .ok_or(ToolError::UnsupportedKind)?;
+        if crate::media::probe::kind_of(&source.format) != Some(crate::media::probe::Kind::Image) {
+            return Err(ToolError::UnsupportedKind);
+        }
+        let stem = input
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "file".to_string());
+        let temporary = input.with_file_name(format!("{stem}.redact-part.{source_ext}"));
+
+        let picture = image::open(input).map_err(|_| ToolError::ReadError)?;
+        let covered = redact_picture(picture, settings);
+        covered.save(&temporary).map_err(|_| ToolError::WriteError)?;
+
+        let finals = metadata_final_names(input, "redacted", &source_ext);
+        self.publish(&finals, &temporary)
     }
 
     /// Splits, at the points the window carried, into a folder of
@@ -882,6 +966,76 @@ fn metadata_final_names(original: &Path, suffix: &str, extension: &str) -> Vec<P
         names.push(candidate);
     }
     names
+}
+
+/// Lays every covered rectangle of the settings on a picture's own pixels.
+///
+/// The rectangles land through their fractions of the picture's size, and
+/// what hangs off an edge is cut away inside the picture. Areas paint in
+/// the order they stand in the settings, so an overlap shows the last one
+/// that was laid — the order the reference's list paints in, too.
+fn redact_picture(
+    picture: image::DynamicImage,
+    settings: &crate::radial::execution::ToolSettings,
+) -> image::DynamicImage {
+    if settings.redact_areas.is_empty() {
+        return picture;
+    }
+    let mut buf = picture.to_rgba8();
+    let (width, height) = (buf.width(), buf.height());
+    let effect = settings.redaction_effect(width.min(height));
+    let color = settings.redaction_color();
+    for area in &settings.redact_areas {
+        let (x, y, w, h) = area.rect_on(width, height);
+        if w == 0 || h == 0 {
+            continue;
+        }
+        match settings.redaction_style() {
+            RedactStyle::Solid => {
+                let box_ = image::ImageBuffer::from_pixel(
+                    w,
+                    h,
+                    image::Rgba([color[0], color[1], color[2], 255]),
+                );
+                paste(&mut buf, &box_, x, y);
+            }
+            RedactStyle::Blur => {
+                let part = image::imageops::crop(&mut buf, x, y, w, h).to_image();
+                let smeared = image::imageops::blur(&part, effect as f32);
+                paste(&mut buf, &smeared, x, y);
+            }
+            RedactStyle::Pixelate => {
+                let part = image::imageops::crop(&mut buf, x, y, w, h).to_image();
+                let block = effect.max(2.0) as u32;
+                let small_w = ((w as f64 / block as f64).ceil() as u32).max(1);
+                let small_h = ((h as f64 / block as f64).ceil() as u32).max(1);
+                let small = image::imageops::resize(
+                    &part,
+                    small_w,
+                    small_h,
+                    image::imageops::FilterType::Triangle,
+                );
+                let squares =
+                    image::imageops::resize(&small, w, h, image::imageops::FilterType::Nearest);
+                paste(&mut buf, &squares, x, y);
+            }
+        }
+    }
+    image::DynamicImage::ImageRgba8(buf)
+}
+
+/// Writes a patch over part of a buffer, pixels exactly as they are.
+fn paste(
+    buf: &mut image::ImageBuffer<image::Rgba<u8>, Vec<u8>>,
+    patch: &image::ImageBuffer<image::Rgba<u8>, Vec<u8>>,
+    at_x: u32,
+    at_y: u32,
+) {
+    for dy in 0..patch.height() {
+        for dx in 0..patch.width() {
+            buf.put_pixel(at_x + dx, at_y + dy, *patch.get_pixel(dx, dy));
+        }
+    }
 }
 
 /// The arguments that lift a stretch of a video out of its file.
@@ -1625,6 +1779,12 @@ impl<P: Publisher> Handler for Tools<P> {
             return self.run_channels(request, &SystemRunner);
         }
 
+        // A redaction covers the rectangles the window drew on with the
+        // program's own hands — no conversion program takes part.
+        if request.operation == "tools.redact_image" {
+            return self.run_redact_image(request);
+        }
+
         let manifest = Manifest::get();
         let runner = SystemRunner;
 
@@ -1720,7 +1880,7 @@ impl<P: Publisher> Handler for Tools<P> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::radial::execution::ToolSettings;
+    use crate::radial::execution::{RedactArea, RedactStyle, ToolSettings};
 
     #[test]
     fn the_resize_filter_takes_what_was_asked() {
@@ -2584,6 +2744,294 @@ mod tests {
         let made = outputs.first().expect("the crop is there");
         let picture = image::open(made).expect("the crop reads back");
         assert_eq!((picture.width(), picture.height()), (32, 24));
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn an_area_lands_on_the_pixels_of_its_rectangle() {
+        let area = RedactArea {
+            x_mille: 250,
+            y_mille: 500,
+            w_mille: 500,
+            h_mille: 500,
+            start_ms: None,
+            end_ms: None,
+        };
+        assert_eq!(area.rect_on(80, 60), (20, 30, 40, 30));
+        // what hangs off the right edge is cut away
+        let wide = RedactArea {
+            x_mille: 900,
+            y_mille: 500,
+            w_mille: 500,
+            h_mille: 500,
+            start_ms: None,
+            end_ms: None,
+        };
+        assert_eq!(wide.rect_on(80, 60), (72, 30, 8, 30));
+        // at the very edge there is nothing left of the rectangle
+        let edge = RedactArea { x_mille: 1000, ..wide };
+        assert_eq!(edge.rect_on(80, 60), (80, 30, 0, 30));
+    }
+
+    #[test]
+    fn the_redact_look_answers_the_reference_defaults() {
+        let settings = ToolSettings::default();
+        assert_eq!(settings.redaction_style(), RedactStyle::Solid);
+        assert_eq!(settings.redaction_strength_fraction(), 0.5);
+        assert_eq!(settings.redaction_color(), [0, 0, 0]);
+        // the reference's own rule: the strength takes the look between
+        // 2% and 30% of the smaller side
+        let quiet = ToolSettings {
+            redact_strength: Some(0),
+            ..ToolSettings::default()
+        };
+        let loud = ToolSettings {
+            redact_strength: Some(100),
+            ..ToolSettings::default()
+        };
+        assert!((quiet.redaction_effect(1_000) - 20.0).abs() < 1e-9);
+        assert!((loud.redaction_effect(1_000) - 300.0).abs() < 1e-9);
+        // the hex is read as three bytes
+        let colored = ToolSettings {
+            redact_color: Some("ff5a1f".to_string()),
+            ..ToolSettings::default()
+        };
+        assert_eq!(colored.redaction_color(), [255, 90, 31]);
+    }
+
+    #[test]
+    fn a_redaction_without_areas_is_refused_and_said_so() {
+        let tools = Tools {
+            ffmpeg_tools: crate::media::locator::Tools {
+                ffmpeg: PathBuf::from("ffmpeg"),
+                ffprobe: PathBuf::from("ffprobe"),
+            },
+            publisher: CopyPublisher,
+        };
+        let request = Request {
+            operation: "tools.redact_image".to_string(),
+            inputs: vec![PathBuf::from("photo.png")],
+            settings: ToolSettings::default(),
+            ..Default::default()
+        };
+        let outcome = tools.run(&request, &Selection::inspect(&[PathBuf::from("photo.png")]));
+        match outcome {
+            Outcome::Failed {
+                reason: Failure::InvalidInput(message),
+            } => {
+                assert_eq!(message, "there are no redaction areas");
+            }
+            other => panic!("the redaction was not refused for saying nothing: {other:?}"),
+        }
+    }
+
+    #[test]
+    #[ignore = "needs the picture library and nothing more"]
+    fn a_picture_is_redacted_with_the_programs_own_hands() {
+        let scratch = std::env::temp_dir().join("open-tangerine-redact-image-test");
+        std::fs::create_dir_all(&scratch).expect("the scratch folder was made");
+        let input = scratch.join("photo.png");
+        let mut picture = image::DynamicImage::new_rgb8(64, 48);
+        for (_, _, tone) in picture.as_mut_rgb8().expect("rgb8").enumerate_pixels_mut() {
+            *tone = image::Rgb([255, 255, 255]);
+        }
+        picture.save(&input).expect("the picture was made");
+
+        let tools = Tools {
+            ffmpeg_tools: crate::media::locator::Tools {
+                ffmpeg: PathBuf::from("ffmpeg"),
+                ffprobe: PathBuf::from("ffprobe"),
+            },
+            publisher: CopyPublisher,
+        };
+        let request = Request {
+            operation: "tools.redact_image".to_string(),
+            inputs: vec![input.clone()],
+            settings: ToolSettings {
+                redact_areas: vec![RedactArea {
+                    x_mille: 250,
+                    y_mille: 250,
+                    w_mille: 500,
+                    h_mille: 500,
+                    start_ms: None,
+                    end_ms: None,
+                }],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let outcome = tools.run(&request, &Selection::inspect(&[input.clone()]));
+        let outputs = match outcome {
+            Outcome::Succeeded { outputs } => outputs,
+            Outcome::Failed { reason } => panic!("the redaction failed: {reason:?}"),
+            Outcome::Cancelled => panic!("the redaction was not asked to stop"),
+        };
+        let made = outputs.first().expect("the redaction is there");
+        assert!(made.is_file(), "the covered copy exists");
+        assert_eq!(
+            made.file_name().and_then(|n| n.to_str()),
+            Some("photo redacted.png")
+        );
+        let read = image::open(made).expect("the copy reads back").to_rgba8();
+        assert_eq!(
+            read.get_pixel(32, 24),
+            &image::Rgba([0, 0, 0, 255]),
+            "the middle of the box wears the color it was asked"
+        );
+        assert_eq!(
+            read.get_pixel(2, 2),
+            &image::Rgba([255, 255, 255, 255]),
+            "what was not covered is as it was"
+        );
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    #[ignore = "needs the picture library and nothing more"]
+    fn a_blurred_redaction_smears_what_it_covers_and_nothing_else() {
+        let scratch = std::env::temp_dir().join("open-tangerine-redact-blur-test");
+        std::fs::create_dir_all(&scratch).expect("the scratch folder was made");
+        let input = scratch.join("photo.png");
+        let mut picture = image::DynamicImage::new_rgb8(64, 48);
+        for (_, _, tone) in picture.as_mut_rgb8().expect("rgb8").enumerate_pixels_mut() {
+            *tone = image::Rgb([255, 255, 255]);
+        }
+        // a black square of the picture's own middle: the thing to smear
+        for y in 18..30 {
+            for x in 24..40 {
+                picture.as_mut_rgb8().expect("rgb8").put_pixel(
+                    x,
+                    y,
+                    image::Rgb([0, 0, 0]),
+                );
+            }
+        }
+        picture.save(&input).expect("the picture was made");
+
+        let tools = Tools {
+            ffmpeg_tools: crate::media::locator::Tools {
+                ffmpeg: PathBuf::from("ffmpeg"),
+                ffprobe: PathBuf::from("ffprobe"),
+            },
+            publisher: CopyPublisher,
+        };
+        let request = Request {
+            operation: "tools.redact_image".to_string(),
+            inputs: vec![input.clone()],
+            settings: ToolSettings {
+                redact_style: Some(RedactStyle::Blur),
+                redact_areas: vec![RedactArea {
+                    x_mille: 250,
+                    y_mille: 250,
+                    w_mille: 500,
+                    h_mille: 500,
+                    start_ms: None,
+                    end_ms: None,
+                }],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let outcome = tools.run(&request, &Selection::inspect(&[input.clone()]));
+        let outputs = match outcome {
+            Outcome::Succeeded { outputs } => outputs,
+            Outcome::Failed { reason } => panic!("the redaction failed: {reason:?}"),
+            Outcome::Cancelled => panic!("the redaction was not asked to stop"),
+        };
+        let made = outputs.first().expect("the redaction is there");
+        let read = image::open(made).expect("the copy reads back").to_rgba8();
+        let middle = read.get_pixel(32, 24).0;
+        assert_ne!(middle[0], 0, "the smeared middle is not the black it was");
+        assert_ne!(middle[0], 255, "the smeared middle is not white either");
+        assert_eq!(
+            read.get_pixel(2, 2),
+            &image::Rgba([255, 255, 255, 255]),
+            "far outside the area nothing changed"
+        );
+        assert_eq!(
+            read.get_pixel(10, 40),
+            &image::Rgba([255, 255, 255, 255]),
+            "just outside the area nothing changed"
+        );
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    #[ignore = "needs the picture library and nothing more"]
+    fn a_pixelated_redaction_blocks_what_it_covers_and_nothing_else() {
+        let scratch = std::env::temp_dir().join("open-tangerine-redact-block-test");
+        std::fs::create_dir_all(&scratch).expect("the scratch folder was made");
+        let input = scratch.join("photo.png");
+        let mut picture = image::DynamicImage::new_rgb8(64, 48);
+        for (_, _, tone) in picture.as_mut_rgb8().expect("rgb8").enumerate_pixels_mut() {
+            *tone = image::Rgb([255, 255, 255]);
+        }
+        // a black square inside the area, its edge crossing a block: the
+        // block that straddles it comes out mixed, the middle keeps the
+        // secret's dark
+        for y in 18..30 {
+            for x in 24..40 {
+                picture.as_mut_rgb8().expect("rgb8").put_pixel(
+                    x,
+                    y,
+                    image::Rgb([0, 0, 0]),
+                );
+            }
+        }
+        picture.save(&input).expect("the picture was made");
+
+        let tools = Tools {
+            ffmpeg_tools: crate::media::locator::Tools {
+                ffmpeg: PathBuf::from("ffmpeg"),
+                ffprobe: PathBuf::from("ffprobe"),
+            },
+            publisher: CopyPublisher,
+        };
+        let request = Request {
+            operation: "tools.redact_image".to_string(),
+            inputs: vec![input.clone()],
+            settings: ToolSettings {
+                redact_style: Some(RedactStyle::Pixelate),
+                redact_areas: vec![RedactArea {
+                    x_mille: 250,
+                    y_mille: 250,
+                    w_mille: 500,
+                    h_mille: 500,
+                    start_ms: None,
+                    end_ms: None,
+                }],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let outcome = tools.run(&request, &Selection::inspect(&[input.clone()]));
+        let outputs = match outcome {
+            Outcome::Succeeded { outputs } => outputs,
+            Outcome::Failed { reason } => panic!("the redaction failed: {reason:?}"),
+            Outcome::Cancelled => panic!("the redaction was not asked to stop"),
+        };
+        let made = outputs.first().expect("the redaction is there");
+        let read = image::open(made).expect("the copy reads back").to_rgba8();
+        // the middle sits inside a block that is still the secret's
+        // black: the downsampling lets a little of the page's white
+        // bleed in, but it stays far from the page
+        let middle = read.get_pixel(32, 24).0;
+        assert!(
+            middle[0] < 128,
+            "the middle of the secret stays dark, saw {}", middle[0]
+        );
+        // the straddling block mixes the secret with its page
+        let straddling = read.get_pixel(27, 18).0;
+        assert_ne!(straddling[0], 0, "the straddling block is not all black");
+        assert_ne!(
+            straddling[0], 255,
+            "the straddling block is not all page"
+        );
+        assert_eq!(
+            read.get_pixel(2, 2),
+            &image::Rgba([255, 255, 255, 255]),
+            "outside the area nothing changed"
+        );
         let _ = std::fs::remove_dir_all(&scratch);
     }
 
