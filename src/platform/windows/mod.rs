@@ -12,6 +12,7 @@ pub mod mergewindow;
 pub mod metadatawindow;
 pub mod monitors;
 pub mod normalizewindow;
+pub mod organizepdfwindow;
 pub mod overlay;
 pub mod publish;
 pub mod redactimagewindow;

@@ -291,6 +291,8 @@ struct App {
     redact_audio_window: crate::platform::windows::redactaudiowindow::RedactAudioWindow,
     /// The window videos or PDFs are reordered and merged in, hidden until merge is picked.
     merge_window: crate::platform::windows::mergewindow::MergeWindow,
+    /// The window PDF pages are inspected, reordered, rotated and removed in, hidden until organize is picked.
+    organize_pdf_window: crate::platform::windows::organizepdfwindow::OrganizePdfWindow,
 }
 
 /// The end of a drag that has not been acted on yet.
@@ -561,6 +563,21 @@ impl App {
         let merge_window = crate::platform::windows::mergewindow::MergeWindow::new(merge_sender)
             .map_err(|reason| reason)?;
 
+        let (organize_sender, organize_receiver) = std::sync::mpsc::channel();
+        {
+            let sender = sender.clone();
+            std::thread::spawn(move || {
+                while let Ok(event) = organize_receiver.recv() {
+                    if sender.send(Message::ToolWindow(event)).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+        let organize_pdf_window =
+            crate::platform::windows::organizepdfwindow::OrganizePdfWindow::new(organize_sender)
+                .map_err(|reason| reason)?;
+
         Ok(Self {
             controller,
             animation: WheelAnimation::new(),
@@ -616,6 +633,7 @@ impl App {
             redact_video_window,
             redact_audio_window,
             merge_window,
+            organize_pdf_window,
         })
     }
 
@@ -849,6 +867,12 @@ impl App {
         // A merge asks for its own card: file list reorder for videos or PDFs.
         if segment.id == "tools.merge" {
             self.merge_window
+                .show_for(&segment.id, &segment.label, &segment.detail, files);
+            return;
+        }
+        // An organize asks for its own card: PDF page grid reordering, rotation and removal.
+        if segment.id == "tools.organize_pdf" {
+            self.organize_pdf_window
                 .show_for(&segment.id, &segment.label, &segment.detail, files);
             return;
         }

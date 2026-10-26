@@ -1,0 +1,480 @@
+// The card PDF pages are inspected, reordered, rotated, duplicated and removed on.
+//
+// Shared layout for Organize PDF Pages.
+// - Left pane: interactive scrollable grid of page cards, each showing
+//   page thumbnail (rotated to current angle), 1-based index, optional source label,
+//   and selection highlight (3px accent border).
+// - Right pane: three sidebar cards:
+//   1. Selection: count readout, All / None buttons.
+//   2. Pages: Rotate left (-90°), Rotate right (+90°), Duplicate, Remove, Reverse order.
+//   3. Summary: total pages, multi-document combination readout.
+// - Footer: helper shortcuts on the left, Cancel and Save copy on the right.
+
+import { Tokens, Panel } from "tokens.slint";
+import { CardHeader, Hairline, CardFooter } from "shell.slint";
+
+export struct PageCardData {
+    index: int,
+    source-doc: int,
+    source-page: int,
+    display-index: string,
+    source-label: string,
+    has-source-label: bool,
+    thumb: image,
+    has-thumb: bool,
+    rotation: int,
+    selected: bool,
+    x: float,
+    y: float,
+    width: float,
+    height: float,
+}
+
+component ActionButton {
+    in property <Panel> box;
+    in property <string> label;
+    in property <bool> enabled: true;
+    in property <bool> danger: false;
+    in property <bool> focused: false;
+    in property <float> ui-scale: 1.0;
+
+    callback clicked();
+
+    x: root.box.x;
+    y: root.box.y;
+    width: root.box.width;
+    height: root.box.height;
+
+    Rectangle {
+        x: -3px; y: -3px;
+        width: parent.width + 6px; height: parent.height + 6px;
+        border-radius: Tokens.radius-control + 3px;
+        border-width: 2px;
+        border-color: Tokens.accent;
+        visible: root.focused && root.enabled;
+    }
+    Rectangle {
+        x: 0; y: 0;
+        width: parent.width; height: parent.height;
+        border-radius: Tokens.radius-small;
+        background: !root.enabled ? Tokens.quiet
+                   : (btn-touch.pressed ? Tokens.quiet-pressed
+                   : (btn-touch.has-hover ? Tokens.quiet-hover : Tokens.quiet));
+        border-width: 1px;
+        border-color: Tokens.hairline;
+        opacity: root.enabled ? 1.0 : 0.4;
+
+        btn-touch := TouchArea {
+            enabled: root.enabled;
+            clicked => { root.clicked(); }
+        }
+
+        Text {
+            x: 4px; width: parent.width - 8px;
+            height: parent.height;
+            text: root.label;
+            color: !root.enabled ? Tokens.text-muted
+                 : (root.danger ? Tokens.danger : Tokens.text);
+            font-size: root.ui-scale * 12px;
+            font-weight: 500;
+            font-family: "Segoe UI";
+            vertical-alignment: center;
+            horizontal-alignment: center;
+            overflow: elide;
+        }
+    }
+}
+
+export component OrganizePdfCard inherits Window {
+    in property <float> ui-scale: 1.0;
+    in property <length> card-width: 820px;
+    in property <length> card-height: 560px;
+
+    // Header
+    in property <Panel> header-box;
+    in property <Panel> detail-box;
+    in property <Panel> hairline-top;
+    in property <string> file-name: "Organize Pages";
+    in property <string> detail: "4 pages";
+
+    // Split hairline between left grid & right sidebar
+    in property <Panel> hairline-split;
+
+    // Pages container box
+    in property <Panel> pages-box;
+
+    // Page items
+    in property <[PageCardData]> pages;
+
+    // Sidebar Section 1: Selection
+    in property <Panel> sidebar-selection-box;
+    in property <Panel> sidebar-selection-title-box;
+    in property <Panel> selection-status-box;
+    in property <string> selection-status-text: "Click pages to select. Drag to reorder.";
+    in property <Panel> btn-all-box;
+    in property <Panel> btn-none-box;
+    in property <bool> btn-all-focused: false;
+    in property <bool> btn-none-focused: false;
+
+    // Sidebar Section 2: Pages
+    in property <Panel> sidebar-pages-box;
+    in property <Panel> sidebar-pages-title-box;
+    in property <Panel> btn-rot-left-box;
+    in property <Panel> btn-rot-right-box;
+    in property <Panel> btn-duplicate-box;
+    in property <Panel> btn-remove-box;
+    in property <Panel> btn-reverse-box;
+    in property <bool> btn-rot-left-focused: false;
+    in property <bool> btn-rot-right-focused: false;
+    in property <bool> btn-duplicate-focused: false;
+    in property <bool> btn-remove-focused: false;
+    in property <bool> btn-reverse-focused: false;
+    in property <bool> can-duplicate: false;
+    in property <bool> can-remove: false;
+
+    // Sidebar Section 3: Summary
+    in property <Panel> sidebar-summary-box;
+    in property <Panel> sidebar-summary-title-box;
+    in property <Panel> summary-count-box;
+    in property <string> summary-count-text: "4 pages";
+    in property <Panel> summary-desc-box;
+    in property <string> summary-desc-text: "";
+    in property <bool> has-summary-desc: false;
+
+    // Footer
+    in property <Panel> hairline-bottom;
+    in property <Panel> helper-box;
+    in property <Panel> cancel-box;
+    in property <Panel> run-box;
+    in property <string> helper-text: "Enter to save copy \u{b7} Esc to close";
+    in property <string> save-title: "Save copy";
+    in property <bool> save-enabled: true;
+    in property <int> button-focus: 0;
+
+    // Callbacks
+    callback page-clicked(int);
+    callback select-all-chosen();
+    callback select-none-chosen();
+    callback rotate-left-chosen();
+    callback rotate-right-chosen();
+    callback duplicate-chosen();
+    callback remove-chosen();
+    callback reverse-order-chosen();
+    callback run-chosen();
+    callback cancel-chosen();
+
+    width: root.card-width;
+    height: root.card-height;
+    background: Tokens.window-bg;
+
+    CardHeader {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        file-name: root.file-name;
+        detail: root.detail;
+        ui-scale: root.ui-scale;
+        header-box: root.header-box;
+        detail-box: root.detail-box;
+    }
+
+    Hairline {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.hairline-top;
+    }
+
+    // Vertical divider between left grid and right sidebar
+    Rectangle {
+        x: root.hairline-split.x;
+        y: root.hairline-split.y;
+        width: 1px;
+        height: root.hairline-split.height;
+        background: Tokens.hairline;
+    }
+
+    // Left pane recessed card container
+    Rectangle {
+        x: root.pages-box.x;
+        y: root.pages-box.y;
+        width: root.pages-box.width;
+        height: root.pages-box.height;
+        background: Tokens.surface;
+        border-radius: Tokens.radius-card;
+        border-width: 1px;
+        border-color: Tokens.hairline;
+    }
+
+    // --- Left Pane: Page Cards Grid ---
+    for p in root.pages: Rectangle {
+        x: p.x * 1px;
+        y: p.y * 1px;
+        width: p.width * 1px;
+        height: p.height * 1px;
+
+        // The card thumbnail canvas
+        Rectangle {
+            x: 0;
+            y: 0;
+            width: parent.width;
+            height: parent.height - (p.has-source-label ? 30px : 20px);
+            border-radius: Tokens.radius-small;
+            background: Tokens.content;
+            border-width: p.selected ? 3px : 1px;
+            border-color: p.selected ? Tokens.accent : Tokens.hairline;
+            clip: true;
+
+            TouchArea {
+                clicked => { root.page-clicked(p.index); }
+            }
+
+            if p.has-thumb: Image {
+                x: 6px;
+                y: 6px;
+                width: parent.width - 12px;
+                height: parent.height - 12px;
+                source: p.thumb;
+                image-fit: ImageFit.contain;
+            }
+
+            if !p.has-thumb: Text {
+                width: parent.width;
+                height: parent.height;
+                text: p.display-index;
+                color: Tokens.text-muted;
+                font-size: root.ui-scale * 20px;
+                font-family: "Segoe UI";
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+
+        // Caption: 1-based page number
+        Text {
+            x: 0;
+            y: parent.height - (p.has-source-label ? 30px : 18px);
+            width: parent.width;
+            height: 16px;
+            text: p.display-index;
+            color: p.selected ? Tokens.accent : Tokens.text-muted;
+            font-size: root.ui-scale * 12px;
+            font-weight: p.selected ? 600 : 400;
+            font-family: Tokens.font-mono;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+
+        // Optional source label (multi-document mode)
+        if p.has-source-label: Text {
+            x: 0;
+            y: parent.height - 14px;
+            width: parent.width;
+            height: 14px;
+            text: p.source-label;
+            color: Tokens.text-muted;
+            font-size: root.ui-scale * 10px;
+            font-family: "Segoe UI";
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
+
+    // --- Right Pane: Sidebar ---
+
+    // Section 1: Selection
+    Rectangle {
+        x: root.sidebar-selection-box.x;
+        y: root.sidebar-selection-box.y;
+        width: root.sidebar-selection-box.width;
+        height: root.sidebar-selection-box.height;
+        background: Tokens.surface;
+        border-radius: Tokens.radius-card;
+        border-width: 1px;
+        border-color: Tokens.hairline;
+    }
+
+    Text {
+        x: root.sidebar-selection-title-box.x;
+        y: root.sidebar-selection-title-box.y;
+        width: root.sidebar-selection-title-box.width;
+        height: root.sidebar-selection-title-box.height;
+        text: "Selection";
+        color: Tokens.text-muted;
+        font-size: root.ui-scale * 12px;
+        font-weight: 600;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+    }
+
+    Text {
+        x: root.selection-status-box.x;
+        y: root.selection-status-box.y;
+        width: root.selection-status-box.width;
+        height: root.selection-status-box.height;
+        text: root.selection-status-text;
+        color: Tokens.text;
+        font-size: root.ui-scale * 13px;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    ActionButton {
+        box: root.btn-all-box;
+        label: "All";
+        focused: root.btn-all-focused;
+        ui-scale: root.ui-scale;
+        clicked => { root.select-all-chosen(); }
+    }
+
+    ActionButton {
+        box: root.btn-none-box;
+        label: "None";
+        focused: root.btn-none-focused;
+        ui-scale: root.ui-scale;
+        clicked => { root.select-none-chosen(); }
+    }
+
+    // Section 2: Pages
+    Rectangle {
+        x: root.sidebar-pages-box.x;
+        y: root.sidebar-pages-box.y;
+        width: root.sidebar-pages-box.width;
+        height: root.sidebar-pages-box.height;
+        background: Tokens.surface;
+        border-radius: Tokens.radius-card;
+        border-width: 1px;
+        border-color: Tokens.hairline;
+    }
+
+    Text {
+        x: root.sidebar-pages-title-box.x;
+        y: root.sidebar-pages-title-box.y;
+        width: root.sidebar-pages-title-box.width;
+        height: root.sidebar-pages-title-box.height;
+        text: "Pages";
+        color: Tokens.text-muted;
+        font-size: root.ui-scale * 12px;
+        font-weight: 600;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+    }
+
+    ActionButton {
+        box: root.btn-rot-left-box;
+        label: "Left";
+        focused: root.btn-rot-left-focused;
+        ui-scale: root.ui-scale;
+        clicked => { root.rotate-left-chosen(); }
+    }
+
+    ActionButton {
+        box: root.btn-rot-right-box;
+        label: "Right";
+        focused: root.btn-rot-right-focused;
+        ui-scale: root.ui-scale;
+        clicked => { root.rotate-right-chosen(); }
+    }
+
+    ActionButton {
+        box: root.btn-duplicate-box;
+        label: "Duplicate";
+        enabled: root.can-duplicate;
+        focused: root.btn-duplicate-focused;
+        ui-scale: root.ui-scale;
+        clicked => { root.duplicate-chosen(); }
+    }
+
+    ActionButton {
+        box: root.btn-remove-box;
+        label: "Remove";
+        danger: true;
+        enabled: root.can-remove;
+        focused: root.btn-remove-focused;
+        ui-scale: root.ui-scale;
+        clicked => { root.remove-chosen(); }
+    }
+
+    ActionButton {
+        box: root.btn-reverse-box;
+        label: "Reverse order";
+        focused: root.btn-reverse-focused;
+        ui-scale: root.ui-scale;
+        clicked => { root.reverse-order-chosen(); }
+    }
+
+    // Section 3: Summary
+    Rectangle {
+        x: root.sidebar-summary-box.x;
+        y: root.sidebar-summary-box.y;
+        width: root.sidebar-summary-box.width;
+        height: root.sidebar-summary-box.height;
+        background: Tokens.surface;
+        border-radius: Tokens.radius-card;
+        border-width: 1px;
+        border-color: Tokens.hairline;
+    }
+
+    Text {
+        x: root.sidebar-summary-title-box.x;
+        y: root.sidebar-summary-title-box.y;
+        width: root.sidebar-summary-title-box.width;
+        height: root.sidebar-summary-title-box.height;
+        text: "Summary";
+        color: Tokens.text-muted;
+        font-size: root.ui-scale * 12px;
+        font-weight: 600;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+    }
+
+    Text {
+        x: root.summary-count-box.x;
+        y: root.summary-count-box.y;
+        width: root.summary-count-box.width;
+        height: root.summary-count-box.height;
+        text: root.summary-count-text;
+        color: Tokens.text;
+        font-size: root.ui-scale * 13px;
+        font-family: Tokens.font-mono;
+        vertical-alignment: center;
+    }
+
+    if root.has-summary-desc: Text {
+        x: root.summary-desc-box.x;
+        y: root.summary-desc-box.y;
+        width: root.summary-desc-box.width;
+        height: root.summary-desc-box.height;
+        text: root.summary-desc-text;
+        color: Tokens.text-muted;
+        font-size: root.ui-scale * 11px;
+        font-family: "Segoe UI";
+        wrap: word-wrap;
+    }
+
+    // --- Footer ---
+    Hairline {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.hairline-bottom;
+    }
+
+    CardFooter {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        helper-box: root.helper-box;
+        cancel-box: root.cancel-box;
+        run-box: root.run-box;
+        helper: root.helper-text;
+        run-label: root.save-title;
+        run-enabled: root.save-enabled;
+        button-focus: root.button-focus;
+        ui-scale: root.ui-scale;
+        run-chosen => { root.run-chosen(); }
+        cancel-chosen => { root.cancel-chosen(); }
+    }
+}
