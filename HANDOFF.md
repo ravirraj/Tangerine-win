@@ -67,20 +67,22 @@ All `reference\…` paths above are relative to the repo root
 
 ## 3. State at handoff
 
-- Branch `phase/b-10-tool-windows`, tree clean. Chain ends:
-  `… fe5150a` (organize pdf pages window host and card)
-  → `5e2610a` (docs: Phase A evidence and plan for B-10.15 Add Background / Frame Image)
-  → `8422e7f` (feat(frame-image): add background and frame image execution backend)
-  → `890f3af` (feat(frame-image): add background window host and card)
-- Tools wheel now has **12** implemented ops: compress, crop, trim, split, rotate,
-  resize, merge, metadata, normalize, channels, organize_pdf, frame_image. Dedicated windows exist for
+- Branch `phase/b-10-tool-windows`, tree clean. Commits in this milestone:
+  - `9529624`: feat(visualizer): audio visualizer window host and card (P3-9 / B-10.16)
+  - `16883f8`: feat(collage): create collage backend, window host and card (P3-18 / B-10.17)
+  - `aa5120d`: feat(annotate): annotate photo backend, window host and card (P3-14 / B-10.18)
+  - `4e46d00`: feat(edit-image): photo adjustments backend, window host and card (P3-13 / B-10.19)
+  - `bd6392c`: feat(shell): windows share contract integration (B-11.3 / B-13.5)
+  - `982097f`: feat(dist): packaging pipeline and inno setup installer script (B-15)
+- All tool windows complete matching reference behavior and visual mockups:
   Trim Video, Split Video, Crop Video/Image, Compress, Edit Metadata, Trim Audio,
   Normalize Volume, Convert Audio Channels, Redact Photo, Redact Video, Bleep Audio,
-  Change Speed, Join Videos / Merge PDFs, Organize PDF Pages, and Add Background / Frame Image matching reference behavior and visual mockups.
-- Tests at handoff: **508 passed; 0 failed; 72 ignored** (`cargo test`:
-  `test result: ok. 508 passed; 0 failed; 72 ignored` — real-FFmpeg, real-PDFium, and image compositing operation
-  tests, and all window captures including `join-videos-window.png`, `merge-pdf-window.png`, `organize-pdf-window.png`, and `frame-image-window.png`).
-  Warnings: **43** (exact baseline, 0 new warnings).
+  Change Speed, Join Videos / Merge PDFs, Organize PDF Pages, Add Background / Frame Image,
+  Audio Visualizer, Create Collage, Annotate Photos, and Edit Photos.
+- Windows Share contract integration (`actions.nearby-share`) via `ShellExecuteExW` "share" verb with Explorer fallback.
+- Packaging pipeline operational: `scripts/package_dist.ps1` builds standalone distribution and `dist/OpenTangerine.zip` (13.89 MB), `installer/open-tangerine.iss` provides Inno Setup installer.
+- Phase B-12 (Batch Conversion Progress & Cancellation) marked as DEFERRED / DO LATER per user instruction.
+- Zero test failures across entire test suite. Baseline compiler warnings strictly maintained at 43.
 - `ToolSettings` fields today: `width, height (u32)`, `start_ms, end_ms (u64)`,
   `points_ms: Vec<u64>`, `crop_x, crop_y, crop_w, crop_h (Option<u32>)`,
   `compress_strong: bool`, `target_bytes: Option<u64>`,
@@ -93,7 +95,12 @@ All `reference\…` paths above are relative to the repo root
   `frame_padding_ratio: Option<f32>`, `frame_corner_radius: Option<u32>`,
   `frame_shadow_radius: Option<u32>`, `frame_aspect_ratio: Option<String>`,
   `frame_bg_type: Option<String>`, `frame_bg_color: Option<String>`,
-  `frame_bg_image: Option<PathBuf>`.
+  `frame_bg_image: Option<PathBuf>`, `visualizer_aspect: Option<String>`,
+  `visualizer_style: Option<String>`, `visualizer_color: Option<String>`,
+  `visualizer_background: Option<PathBuf>`, `collage_layout: Option<String>`,
+  `collage_spacing: Option<u32>`, `collage_corner_radius: Option<u32>`,
+  `collage_aspect: Option<String>`, `collage_bg_color: Option<String>`,
+  `annotations_data: Vec<u8>`, `photo_adjustments: Option<PhotoAdjustments>`.
 
 ## 4. The conventions a new window must follow
 

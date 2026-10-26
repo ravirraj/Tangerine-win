@@ -32,9 +32,15 @@
 | B-10.13 | ✅ Done | Join Videos + Merge PDFs backend & window host at parity (ordered list chevron reordering, video frame & PDF page 1 thumbs, todo.md B-10.13) |
 | B-10.14 | ✅ Done | Organize PDF Pages backend & window host at parity (3-column page grid, selection border, rotation, duplicate, remove, reverse order, todo.md B-10.14) |
 | B-10.15 | ✅ Done | Add Background / Frame Image backend & window host at parity (live stage canvas, gradient/solid/blur presets, padding, corner radius, drop shadow, aspect ratio, todo.md B-10.15) |
-| B-10.16 Backend | ✅ Done | Audio Visualizer execution backend (waveform bucketing, frame rendering, MP4 muxing, registered in registry.rs; window UI marked TODO) |
+| B-10.16 | ✅ Done | Audio Visualizer backend & window host at parity (live waveform/oscilloscope preview, orientation chips, style chips, neon color palette swatches) |
+| B-10.17 | ✅ Done | Create Collage backend & window host at parity (Grid/Columns/Rows/Featured layouts, aspect-fill fitting, spacing & corner sliders, color swatches) |
+| B-10.18 | ✅ Done | Annotate Photos backend & window host at parity (arrows, rectangles, callout text, blur redaction, thickness chips, marker color palette) |
+| B-10.19 | ✅ Done | Edit Photos backend & window host at parity (exposure, brightness, contrast, saturation, warmth, vignette sliders, hold-to-compare badge) |
+| B-11.3/B-13.5 | ✅ Done | Windows Share Contract Integration (`actions.nearby-share` via `ShellExecuteExW` "share" verb with Explorer fallback) |
+| B-12 | ⏳ Deferred | Batch Conversion Progress & Cancellation (marked DO LATER per user instruction) |
 | B-13 | ✅ Done | Windows System Integration (System tray icon & context menu, Explorer "Open with Tangerine" shell integration, audio completion chime) |
 | B-14 | ✅ Done | Persistent Settings & Settings Window Host (JSON engine, Slint host, theme chips, accent swatches, output options, system toggles, capture test) |
+| B-15 | ✅ Done | Packaging Pipeline & Installer (scripts/package_dist.ps1, dist/OpenTangerine.zip, installer/open-tangerine.iss) |
 | P4 Polish | ✅ Done | Radial Wheel Polish (Light-glass theme matching conversion hero, contrast-adaptive mode dots, file thumbnail hub mode, capture tests) |
 
 **Current branch:** `phase/b-10-tool-windows` (all local, no push; merge only when the user says)

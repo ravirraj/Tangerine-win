@@ -314,6 +314,9 @@ mod tests {
                     "tools.organize_pdf | Organize | Organize PDF pages | Document",
                     "tools.frame_image | Add BG | Add background or frame to photo | Picture",
                     "tools.audio_to_video | Visualize | Audio visualizer | Music",
+                    "tools.collage | Collage | Create photo collage | Picture",
+                    "tools.annotate | Annotate | Annotate photo with arrows and text | Picture",
+                    "tools.edit_image | Adjust | Adjust photo brightness, contrast, and color | Picture",
                 ],
             ),
             (
@@ -326,6 +329,7 @@ mod tests {
                     "actions.reveal | Show | Reveal in Explorer | Folder",
                     "actions.terminal | Terminal | Open in Terminal | Terminal",
                     "actions.extract | Extract | Extract archive contents | Extract",
+                    "actions.nearby-share | Share | Share with Windows | Folder",
                 ],
             ),
         ];
