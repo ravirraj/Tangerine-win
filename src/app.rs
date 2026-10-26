@@ -280,6 +280,8 @@ struct App {
     normalize_window: crate::platform::windows::normalizewindow::NormalizeWindow,
     /// The window audio channels are converted in, hidden until channels is picked.
     channels_window: crate::platform::windows::channelswindow::ChannelsWindow,
+    /// The window a video speed is chosen in, hidden until speed is picked.
+    speed_window: crate::platform::windows::speedwindow::SpeedWindow,
     /// The window a picture is covered in, hidden until a redact is picked.
     redact_image_window: crate::platform::windows::redactimagewindow::RedactImageWindow,
     /// The window a video is covered in, with a row for every cover's
@@ -529,6 +531,20 @@ impl App {
         let channels_window = crate::platform::windows::channelswindow::ChannelsWindow::new(channels_sender)
             .map_err(|reason| reason)?;
 
+        let (speed_sender, speed_receiver) = std::sync::mpsc::channel();
+        {
+            let sender = sender.clone();
+            std::thread::spawn(move || {
+                while let Ok(event) = speed_receiver.recv() {
+                    if sender.send(Message::ToolWindow(event)).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+        let speed_window = crate::platform::windows::speedwindow::SpeedWindow::new(speed_sender)
+            .map_err(|reason| reason)?;
+
         Ok(Self {
             controller,
             animation: WheelAnimation::new(),
@@ -579,6 +595,7 @@ impl App {
             metadata_window,
             normalize_window,
             channels_window,
+            speed_window,
             redact_image_window,
             redact_video_window,
             redact_audio_window,
@@ -802,6 +819,13 @@ impl App {
         // A channels operation asks for its own card: waveform, mode pills, and volume sliders.
         if segment.id == "tools.channels" {
             self.channels_window
+                .show_for(&segment.id, &segment.label, &segment.detail, files);
+            return;
+        }
+        // A speed asks for its own card the video stands on: the video's
+        // own beginning, and the six stops the pace is chosen of.
+        if segment.id == "tools.speed" {
+            self.speed_window
                 .show_for(&segment.id, &segment.label, &segment.detail, files);
             return;
         }

@@ -1,0 +1,194 @@
+// The card a video speed is asked on.
+//
+// The skeleton — header, hairlines, footer — is the shell's, shared by
+// every tool window (shell.slint); this body is this card's whole: the
+// video's own frame, the speed said on a slider that stops where the
+// reference's stops stand, and the row that says how long the copy
+// runs. The geometry is worked out in Rust; the card only draws what it
+// is told, where it is told.
+
+import { Tokens } from "tokens.slint";
+import { Panel } from "tokens.slint";
+import { CardHeader, Hairline, LabeledSlider, CardFooter } from "shell.slint";
+
+export component SpeedCard inherits Window {
+    in property <float> ui-scale: 1.0;
+    in property <length> card-width: 400px;
+    in property <length> card-height: 560px;
+
+    in property <Panel> header-box;
+    in property <Panel> detail-box;
+    in property <Panel> hairline-top;
+    in property <string> file-name: "Video.mp4";
+    in property <string> detail: "Change video speed";
+
+    // The frame at the video's own beginning, and whether there is one.
+    in property <Panel> preview-box;
+    in property <image> frame;
+    in property <bool> has-frame;
+
+    // The speed: one of the six stops, said by where it stands.
+    in property <Panel> speed-box;
+    in property <int> speed-index: 2; // 0=0.25×, 1=0.5×, 2=1×, 3=1.5×, 4=2×, 5=4×
+    in property <int> slider-focus: 0; // 1 = the speed slider
+
+    // What the copy runs in, said in the face where every digit takes
+    // the same room.
+    in property <Panel> runs-box;
+    in property <string> runs-text: "";
+
+    in property <Panel> footnote-box;
+    in property <string> footnote-text: "The copy is drawn again frame by frame and the sound is re-timed with it. A faster copy sings a step higher, tape-style: this build keeps no pitch.";
+
+    in property <Panel> hairline-bottom;
+    in property <Panel> helper-box;
+    in property <Panel> cancel-box;
+    in property <Panel> run-box;
+    in property <string> run-label: "Apply";
+    in property <bool> run-enabled: true;
+    in property <int> button-focus: 0; // 0=none, 1=cancel, 2=run
+
+    callback speed-chosen(int);
+    callback run-chosen();
+    callback cancel-chosen();
+
+    width: root.card-width;
+    height: root.card-height;
+    background: Tokens.window-bg;
+
+    CardHeader {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        file-name: root.file-name;
+        detail: root.detail;
+        ui-scale: root.ui-scale;
+        header-box: root.header-box;
+        detail-box: root.detail-box;
+    }
+
+    Hairline {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.hairline-top;
+    }
+
+    // The video's own beginning, put on the card whole and letterboxed
+    // the way every picture of a video is worn.
+    Rectangle {
+        x: root.preview-box.x;
+        y: root.preview-box.y;
+        width: root.preview-box.width;
+        height: root.preview-box.height;
+        background: Tokens.preview-black;
+        clip: true;
+
+        if root.has-frame: Image {
+            x: 0; y: 0;
+            width: parent.width;
+            height: parent.height;
+            source: root.frame;
+            image-fit: contain;
+        }
+    }
+
+    // The speed: where the thumb stands says which stop the card runs
+    // at, and the ticks stand where the stops stand.
+    LabeledSlider {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.speed-box;
+        label: "Playback speed";
+        value-text: ["0.25×", "0.5×", "1×", "1.5×", "2×", "4×"][root.speed-index];
+        min: 0.0;
+        max: 5.0;
+        value: root.speed-index * 1.0;
+        ticks: [0.0, 0.2, 0.4, 0.6, 0.8, 1.0];
+        focused: root.slider-focus == 1;
+        ui-scale: root.ui-scale;
+        value-changed(v) => { root.speed-chosen(Math.round(v)); }
+    }
+
+    // The stops, said by their names, the one the card runs at wearing
+    // its own weight. The same six points the ticks stand on, so the
+    // names sit under their own dots.
+    for stop[index] in [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]: Text {
+        x: root.speed-box.x + stop * (root.speed-box.width - root.ui-scale * 2px)
+            - root.ui-scale * 22px;
+        y: root.speed-box.y + root.speed-box.height + root.ui-scale * 6px;
+        width: root.ui-scale * 44px;
+        height: root.ui-scale * 16px;
+        text: ["0.25×", "0.5×", "1×", "1.5×", "2×", "4×"][index];
+        color: index == root.speed-index ? Tokens.text : Tokens.text-muted;
+        font-size: root.ui-scale * 12px;
+        font-family: "Segoe UI";
+        font-weight: index == root.speed-index ? 700 : 400;
+        vertical-alignment: center;
+        horizontal-alignment: center;
+
+        TouchArea {
+            clicked => { root.speed-chosen(index); }
+        }
+    }
+
+    // What the copy runs in: the video's own length brought to what the
+    // speed says it will be.
+    Text {
+        x: root.runs-box.x; y: root.runs-box.y;
+        width: root.runs-box.width / 2; height: root.runs-box.height;
+        text: "The copy runs";
+        color: Tokens.text-muted;
+        font-size: root.ui-scale * 13px;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+    }
+    Text {
+        x: root.runs-box.x + root.runs-box.width / 2;
+        y: root.runs-box.y;
+        width: root.runs-box.width / 2; height: root.runs-box.height;
+        text: root.runs-text;
+        color: Tokens.text;
+        font-size: root.ui-scale * 13px;
+        font-family: Tokens.font-mono;
+        vertical-alignment: center;
+        horizontal-alignment: right;
+    }
+
+    // How the card changes the video, said plainly.
+    Text {
+        x: root.footnote-box.x; y: root.footnote-box.y;
+        width: root.footnote-box.width; height: root.footnote-box.height;
+        text: root.footnote-text;
+        color: Tokens.text-muted;
+        font-size: root.ui-scale * 11px;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+        wrap: word-wrap;
+    }
+
+    Hairline {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.hairline-bottom;
+    }
+
+    CardFooter {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        ui-scale: root.ui-scale;
+        helper: "Enter to apply \u{b7} Esc to close";
+        run-label: root.run-label;
+        has-cancel: true;
+        run-enabled: root.run-enabled;
+        helper-box: root.helper-box;
+        cancel-box: root.cancel-box;
+        run-box: root.run-box;
+        button-focus: root.button-focus;
+        run-chosen => { root.run-chosen(); }
+        cancel-chosen => { root.cancel-chosen(); }
+    }
+}

@@ -225,6 +225,12 @@ pub struct ToolSettings {
     ///
     /// Only `tools.snapshots` reads these.
     pub snapshots_ms: Vec<u64>,
+    /// The speed a video runs at, in hundredths: 100 is the video's own
+    /// pace, 200 is twice as fast, 50 is half. Never a heartbeat is
+    /// kept: a faster copy sings higher, the way a tape runs.
+    ///
+    /// Only `tools.speed` reads this.
+    pub speed_percent: Option<u32>,
 }
 
 impl ToolSettings {

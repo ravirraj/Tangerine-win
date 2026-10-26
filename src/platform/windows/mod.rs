@@ -18,6 +18,7 @@ pub mod redactaudiowindow;
 pub mod redactvideowindow;
 pub mod shell;
 pub mod shellselection;
+pub mod speedwindow;
 pub mod timelinewindow;
 pub mod toolwindow;
 pub mod windowhost;

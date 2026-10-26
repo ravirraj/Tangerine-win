@@ -761,6 +761,242 @@ impl<P: Publisher> Tools<P> {
         Ok(outputs)
     }
 
+    /// Lays the speed the window asked on the files in the request.
+    ///
+    /// The video's own moments are counted by the frame, re-timed, and
+    /// said again into one copy the video's own container wears — the
+    /// picture keeps its size, and the sound runs with it. The sound's
+    /// pitch is not kept: a faster copy sings higher, the way a tape
+    /// runs. Each result is published beside the original under the
+    /// shared naming, and nothing is written over.
+    fn run_speed(&self, request: &Request, _runner: &dyn ProcessRunner) -> Outcome {
+        let Some(percent) = request.settings.speed_percent else {
+            return Outcome::Failed {
+                reason: Failure::InvalidInput("there is no speed to run at".to_string()),
+            };
+        };
+
+        let manifest = Manifest::get();
+        let mut outputs = Vec::new();
+        let mut failed = 0usize;
+        let mut first_reason: Option<String> = None;
+        for input in &request.inputs {
+            let result = self.speed_one(input, &manifest, percent);
+            match result {
+                Ok(path) => outputs.push(path),
+                Err(reason) => {
+                    failed += 1;
+                    let name = reason.name();
+                    diagnostics::log(Level::Warn, "action", &format!("a file was not processed: {name}"));
+                    if first_reason.is_none() {
+                        first_reason = Some(name.to_string());
+                    }
+                }
+            }
+        }
+
+        if failed == 0 {
+            Outcome::Succeeded { outputs }
+        } else {
+            let because = match first_reason {
+                Some(reason) => format!(": {reason}"),
+                None => String::new(),
+            };
+            Outcome::Failed {
+                reason: Failure::Error(format!(
+                    "{failed} of the files could not be processed{because}"
+                )),
+            }
+        }
+    }
+
+    /// Retimes one video, whole frames taken and said again.
+    fn speed_one(
+        &self,
+        input: &Path,
+        manifest: &Manifest,
+        percent: u32,
+    ) -> Result<PathBuf, ToolError> {
+        let source_ext = input
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        let source = manifest
+            .format_of_extension(&source_ext)
+            .or_else(|| manifest.format(&source_ext))
+            .ok_or(ToolError::UnsupportedKind)?;
+        if crate::media::probe::kind_of(&source.format) != Some(crate::media::probe::Kind::Video) {
+            return Err(ToolError::UnsupportedKind);
+        }
+
+        // The video says what it is: its sides and the frames a second it
+        // stands at. The seconds say nothing here; the frames themselves
+        // are what is counted, and the rate says how long the copy runs.
+        let (width, height, rate) = crate::media::frames::shape_of(&self.ffmpeg_tools, input)
+            .ok_or(ToolError::ReadError)?;
+        if width == 0 || height == 0 || rate <= 0.0 {
+            return Err(ToolError::ReadError);
+        }
+
+        let stem = input
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "video".to_string());
+        let temporary = input.with_file_name(format!("{stem}.speed-part.{source_ext}"));
+        let raw = input.with_file_name(format!("{stem}.speed-raw.bin"));
+        let retime = input.with_file_name(format!("{stem}.speed-frames.bin"));
+        let sound = input.with_file_name(format!("{stem}.speed-sound.wav"));
+
+        // The frames are decoded to the picture's own numbers, all of
+        // them, and gathered in a scratch beside the original.
+        let frame_bytes = (width as usize) * (height as usize) * 4;
+        let decode_args: Vec<OsString> = [
+            "-hide_banner",
+            "-nostdin",
+            "-y",
+            "-i",
+        ]
+        .iter()
+        .map(|word| OsString::from(*word))
+        .chain([input.as_os_str().to_os_string()])
+        .chain(
+            [
+                "-pix_fmt",
+                "rgba",
+                "-f",
+                "rawvideo",
+                "pipe:1",
+            ]
+            .iter()
+            .map(|word| OsString::from(*word)),
+        )
+        .collect();
+        let raw_file = std::fs::File::create(&raw).map_err(|_| ToolError::WriteError)?;
+        let decode = SystemRunner
+            .run(&self.ffmpeg_tools.ffmpeg, &decode_args, Some(&raw_file))
+            .map_err(|_| ToolError::ToolFailed)?;
+        if !decode.succeeded() {
+            let _ = std::fs::remove_file(&raw);
+            return Err(ToolError::ToolFailed);
+        }
+        let gathered = std::fs::read(&raw).map_err(|_| ToolError::ReadError)?;
+        let _ = std::fs::remove_file(&raw);
+        let held = gathered.len() / frame_bytes;
+        if held == 0 {
+            return Err(ToolError::ReadError);
+        }
+
+        // The moments are said again: the copy's own rate stays, so a
+        // faster run is fewer frames said at the same rate, and a slower
+        // one repeats what stands. Whatever a moment asks for is what
+        // stands there, the last frame never going past its edge.
+        let pace = percent as f64 / 100.0;
+        let said = ((held as f64) / pace).round().max(1.0) as usize;
+        let mut retimed = vec![0u8; said * frame_bytes];
+        for moment in 0..said {
+            let stand = (((moment as f64) * pace).floor() as usize).min(held - 1);
+            retimed[moment * frame_bytes..(moment + 1) * frame_bytes]
+                .copy_from_slice(&gathered[stand * frame_bytes..(stand + 1) * frame_bytes]);
+        }
+        let _ = std::fs::remove_file(&retime);
+        std::fs::write(&retime, &retimed).map_err(|_| ToolError::WriteError)?;
+
+        // The sound runs with the copy, said sample for sample the same
+        // way the pictures are: whatever moment it stands at is what is
+        // heard. Its pitch is not kept, deliberately: the tape runs.
+        let mut audio_args: Vec<OsString> = Vec::new();
+        if let Some(voice) = crate::media::audio::decode_full_pcm(&self.ffmpeg_tools, input) {
+            let channels = (voice.channels as usize).max(1);
+            let held_notes = voice.samples.len() / channels;
+            if held_notes > 0 {
+                let said_notes = ((held_notes as f64) / pace).round().max(1.0) as usize;
+                let mut heard = Vec::with_capacity(said_notes * channels);
+                for moment in 0..said_notes {
+                    let stand = (((moment as f64) * pace).floor() as usize).min(held_notes - 1);
+                    heard.extend_from_within(stand * channels..(stand + 1) * channels);
+                }
+                let sung = crate::media::audio::encode_wav_bytes(
+                    &heard,
+                    voice.sample_rate,
+                    voice.channels,
+                );
+                let _ = std::fs::remove_file(&sound);
+                std::fs::write(&sound, &sung).map_err(|_| ToolError::WriteError)?;
+                audio_args = [
+                    "-i",
+                ]
+                .iter()
+                .map(|word| OsString::from(*word))
+                .chain([sound.as_os_str().to_os_string()])
+                .chain(
+                    [
+                        "-c:a",
+                        "aac",
+                    ]
+                    .iter()
+                    .map(|word| OsString::from(*word)),
+                )
+                .collect();
+            }
+        }
+
+        let mut arguments: Vec<OsString> = [
+            "-hide_banner",
+            "-nostdin",
+            "-y",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgba",
+            "-s",
+        ]
+        .iter()
+        .map(|word| OsString::from(*word))
+        .chain([OsString::from(format!("{width}x{height}"))])
+        .chain(
+            [
+                "-framerate",
+            ]
+            .iter()
+            .map(|word| OsString::from(*word))
+            .chain([OsString::from(format!("{rate:.6}"))]),
+        )
+        .chain(["-i"].iter().map(|word| OsString::from(*word)))
+        .chain([retime.as_os_str().to_os_string()])
+        .collect();
+        let silent = audio_args.is_empty();
+        arguments.extend(audio_args);
+        if silent {
+            arguments.push(OsString::from("-an"));
+        }
+        arguments.extend(
+            [
+                "-c:v",
+                "mpeg4",
+                "-pix_fmt",
+                "yuv420p",
+                "-f",
+            ]
+            .iter()
+            .map(|word| OsString::from(*word)),
+        );
+        arguments.push(OsString::from(source.write.muxer.clone()));
+        arguments.push(temporary.as_os_str().to_os_string());
+        let made = SystemRunner
+            .run(&self.ffmpeg_tools.ffmpeg, &arguments, None)
+            .map_err(|_| ToolError::ToolFailed)?;
+        let _ = std::fs::remove_file(&retime);
+        let _ = std::fs::remove_file(&sound);
+        if !made.succeeded() {
+            let _ = std::fs::remove_file(&temporary);
+            return Err(ToolError::ToolFailed);
+        }
+
+        let finals = speed_final_names(input, &speed_saying(percent), &source_ext);
+        self.publish(&finals, &temporary)
+    }
+
     /// Makes files lighter, at the preset and the target size the window
     /// carried.
     ///
@@ -1303,6 +1539,43 @@ pub(crate) fn metadata_args(
 
 /// The candidate file names for metadata output: `{stem} {suffix}.{ext}`,
 /// `{stem} {suffix} (2).{ext}`, etc.
+/// The names a result that wears the speed's own saying may take.
+///
+/// The name carries the speed it runs at: "clip at 2x.mp4" — and the
+/// same one with a number after it when the name is taken, the way the
+/// metadata's own names do.
+fn speed_final_names(original: &Path, saying: &str, extension: &str) -> Vec<PathBuf> {
+    let stem = original
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "file".to_string());
+    let parent = original.parent().map(|p| p.to_path_buf());
+    let first = match &parent {
+        Some(p) => p.join(format!("{stem} at {saying}.{extension}")),
+        None => PathBuf::from(format!("{stem} at {saying}.{extension}")),
+    };
+    let mut names = vec![first];
+    for number in 2..1000 {
+        let candidate = match &parent {
+            Some(p) => p.join(format!("{stem} at {saying} ({number}).{extension}")),
+            None => PathBuf::from(format!("{stem} at {saying} ({number}).{extension}")),
+        };
+        names.push(candidate);
+    }
+    names
+}
+
+/// The speed said the way a name says it: "2x" for twice as fast, and
+/// the fractions said with a point, never a spare nothing after it.
+fn speed_saying(percent: u32) -> String {
+    let said = percent as f64 / 100.0;
+    if (said - said.round()).abs() < 0.001 {
+        format!("{}x", said.round() as u32)
+    } else {
+        format!("{said}x")
+    }
+}
+
 fn metadata_final_names(original: &Path, suffix: &str, extension: &str) -> Vec<PathBuf> {
     let stem = original
         .file_stem()
@@ -2321,6 +2594,12 @@ impl<P: Publisher> Handler for Tools<P> {
             return self.run_snapshots(request, &SystemRunner);
         }
 
+        // A speed is run apart from the rest: the video's own moments are
+        // counted, retimed, and said again under the video's own name.
+        if request.operation == "tools.speed" {
+            return self.run_speed(request, &SystemRunner);
+        }
+
         // A compress is run apart from the rest: every kind answers with
         // its own pair of hands — a picture is made lighter by the
         // program itself, a video and a sound at a bitrate the preset and
@@ -3090,6 +3369,121 @@ mod tests {
             reason,
             Failure::InvalidInput("there are no snapshots".to_string()),
             "the refusal says what was not asked"
+        );
+    }
+
+    #[test]
+    #[ignore = "needs the conversion program"]
+    fn a_video_runs_at_the_speed_it_was_asked_for() {
+        let folder = Path::new("vendor").join("ffmpeg");
+        let ffmpeg = folder.join("ffmpeg.exe");
+        let ffprobe = folder.join("ffprobe.exe");
+        if !ffmpeg.is_file() || !ffprobe.is_file() {
+            eprintln!("the program is not there; this test needs it");
+            return;
+        }
+        let scratch = std::env::temp_dir().join("open-tangerine-speed-test");
+        std::fs::create_dir_all(&scratch).expect("the scratch folder was made");
+        let input = make_test_video(&scratch);
+
+        // The copy goes the whole way through the handler, the way the
+        // wheel drives it: twice as fast runs half as long, at the same
+        // rate of frames, and the sides are what they were.
+        let tools = Tools {
+            ffmpeg_tools: crate::media::locator::Tools {
+                ffmpeg,
+                ffprobe: ffprobe.clone(),
+            },
+            publisher: CopyPublisher,
+        };
+        let request = Request {
+            operation: "tools.speed".to_string(),
+            inputs: vec![input.clone()],
+            settings: ToolSettings {
+                speed_percent: Some(200),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let outcome = tools.run(&request, &Selection::inspect(&[input.clone()]));
+        let outputs = match outcome {
+            Outcome::Succeeded { outputs } => outputs,
+            Outcome::Failed { reason } => panic!("the fast copy failed: {:?}", reason),
+            Outcome::Cancelled => panic!("the run was not asked to stop"),
+        };
+        assert_eq!(outputs.len(), 1, "one video in, one copy out");
+        assert_eq!(
+            outputs[0].file_name().unwrap().to_string_lossy(),
+            "clip at 2x.mp4",
+            "the copy carries the speed it runs at"
+        );
+        let runs = crate::media::frames::duration_of(&tools.ffmpeg_tools, &outputs[0])
+            .expect("the fast copy said its own length");
+        assert!(
+            (runs - 1.5).abs() < 0.15,
+            "the fast copy runs half the time: {runs}"
+        );
+        let (width, height, rate) =
+            crate::media::frames::shape_of(&tools.ffmpeg_tools, &outputs[0])
+                .expect("the fast copy said its own shape");
+        assert_eq!((width, height), (160, 120), "the sides stand as they were");
+        assert!(
+            (rate - 10.0).abs() < 0.5,
+            "the frames stand at the video's own rate"
+        );
+
+        // Half speed stands the other way: the copy runs twice as long.
+        let request = Request {
+            operation: "tools.speed".to_string(),
+            inputs: vec![input.clone()],
+            settings: ToolSettings {
+                speed_percent: Some(50),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let outcome = tools.run(&request, &Selection::inspect(&[input.clone()]));
+        let outputs = match outcome {
+            Outcome::Succeeded { outputs } => outputs,
+            Outcome::Failed { reason } => panic!("the slow copy failed: {:?}", reason),
+            Outcome::Cancelled => panic!("the run was not asked to stop"),
+        };
+        assert_eq!(
+            outputs[0].file_name().unwrap().to_string_lossy(),
+            "clip at 0.5x.mp4",
+            "the fraction is said with a point"
+        );
+        let runs = crate::media::frames::duration_of(&tools.ffmpeg_tools, &outputs[0])
+            .expect("the slow copy said its own length");
+        assert!(
+            (runs - 6.0).abs() < 0.15,
+            "the slow copy runs twice the time: {runs}"
+        );
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn a_speed_without_a_speed_refuses() {
+        let tools = Tools {
+            ffmpeg_tools: crate::media::locator::Tools {
+                ffmpeg: PathBuf::from("nowhere.exe"),
+                ffprobe: PathBuf::from("nowhere-probe.exe"),
+            },
+            publisher: CopyPublisher,
+        };
+        let request = Request {
+            operation: "tools.speed".to_string(),
+            settings: ToolSettings::default(),
+            ..Default::default()
+        };
+        let outcome = tools.run(&request, &Selection::inspect(&[]));
+        let Outcome::Failed { reason } = outcome else {
+            panic!("an asking without a speed should not succeed");
+        };
+        assert_eq!(
+            reason,
+            Failure::InvalidInput("there is no speed to run at".to_string()),
+            "the refusal says what was not said"
         );
     }
 

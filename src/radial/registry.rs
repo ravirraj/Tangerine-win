@@ -679,6 +679,24 @@ pub const OPERATIONS: &[Operation] = &[
         implemented: true,
         requires: Requirement::Processor("video"),
     },
+    // A speed is changed on exactly one video: its moments are re-timed
+    // and said again as one copy, and two videos said at once would read
+    // as one run and another riding it. The copy stands beside the
+    // original under the shared naming.
+    Operation {
+        id: "tools.speed",
+        label: "Speed",
+        detail: "Change video speed",
+        icon: IconKind::Speed,
+        mode: RadialMode::Tools,
+        categories: &[FileKind::Video],
+        batch: Batch::One,
+        folders: false,
+        output: Output::BesideAsInput,
+        collision: Collision::Rename,
+        implemented: true,
+        requires: Requirement::Processor("video"),
+    },
     Operation {
         id: "tools.rotate",
         label: "Rotate",
@@ -1605,6 +1623,7 @@ mod tests {
             "tools.trim",
             "tools.split",
             "tools.snapshots",
+            "tools.speed",
             "tools.rotate",
             "tools.resize",
             "tools.redact_image",
