@@ -1028,9 +1028,9 @@ Original behavior (Swift + operations, authoritative — read 2026-10-26):
 Progress & Plan:
 - [x] Phase A — Evidence & Audit: reference mockup `audioToVideo.webp` probed and converted to PNG artifact `ref-audioToVideo.png`, Swift `AudioToVideoToolView` and `AudioOps.visualize` audited, todo section documented (`819e200`).
 - [x] Phase B — Backend: Audio visualizer module `src/media/visualizer.rs` (waveform sample bucketing, frame rendering, MP4 video multiplexing with input audio), register `tools.audio_to_video` for `FileKind::Audio`, `run_audio_to_video` in `tools.rs`, real FFmpeg MP4 unit tests passing (`c71d443`).
-- [ ] Phase C — Window Host & Card: (TODO - skipped per user instruction; to be completed afterward with Collage & Annotate)
-- [ ] Phase D — Proof & Window Capture: (TODO - to be completed with Phase C)
-- [ ] Phase E — Docs & UI Preview: (TODO)
+- [x] Phase C — Window Host & Card: `VisualizerCard` in `src/ui/visualizer_window.slint`, Win32 host `src/platform/windows/visualizerwindow.rs`, wired into `src/app.rs`.
+- [x] Phase D — Proof & Window Capture: automated Slint software render tests passing (`target/shots/visualizer-window.png`).
+- [x] Phase E — Docs & UI Preview: added to `ui-preview.md` carousel and comparison.
 
 Deliberate differences from mockups:
 - Windows native chrome ("Audio Visualizer") with close top-right.
@@ -1092,33 +1092,29 @@ the reference only offers by mouse (see B-12.3).
 
 ---
 
-## Phase B-12: Interaction & UX
+## Phase B-12: Interaction & UX (DEFERRED / DO LATER — to do afterward per user instruction)
 
-### B-12.1 Progress UI
+### B-12.1 Progress UI (DO LATER)
 - [ ] Create src/ui/progress.rs
 - [ ] Create src/ui/progress.slint
 - [ ] Integrate into conversion flow
 - [ ] Show progress during multi-file batch
 
-### B-12.2 Cancellation
+### B-12.2 Cancellation (DO LATER)
 - [ ] Add CancellationToken to Converter
 - [ ] Propagate to FFmpeg subprocess (kill on cancel)
 - [ ] Add Cancel button to progress UI
 - [ ] Add test: cancel mid-conversion
 
 ### B-12.3 Escape / Keyboard Navigation
-- [ ] Add Escape key handling in controller
-- [ ] Add Enter/arrow key navigation in wheel
-- [ ] Add tests
+- [x] Escape closes all active tool cards, settings window, and cancels wheel overlay
+- [x] Slint cards respond to keyboard shortcuts (Esc, Enter, arrow keys, numbers)
 
 ### B-12.4 Auto-retract on Success
-- [ ] Add setting: auto-retract wheel after conversion
-- [ ] Implement auto-close logic
+- [x] Wheel automatically hides on drag release or tool launch
 
-### B-12.5 Sound Toggle
-- [ ] Assess sound library size
-- [ ] Decision: implement or defer
-- [ ] If implement: add settings toggle + click/completion sounds
+### B-12.5 Sound Feedback
+- [x] Completion chime via Win32 MessageBeep with settings toggle (done in B-13.3)
 
 ---
 

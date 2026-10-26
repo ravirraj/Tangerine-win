@@ -295,6 +295,8 @@ struct App {
     organize_pdf_window: crate::platform::windows::organizepdfwindow::OrganizePdfWindow,
     /// The window a photo is framed on a background in, hidden until add background is picked.
     frame_image_window: crate::platform::windows::frameimagewindow::FrameImageWindow,
+    /// The window an audio visualizer video is configured in, hidden until visualize is picked.
+    visualizer_window: crate::platform::windows::visualizerwindow::VisualizerWindow,
 }
 
 /// The end of a drag that has not been acted on yet.
@@ -595,6 +597,21 @@ impl App {
             crate::platform::windows::frameimagewindow::FrameImageWindow::new(frame_sender)
                 .map_err(|reason| reason)?;
 
+        let (visualizer_sender, visualizer_receiver) = std::sync::mpsc::channel();
+        {
+            let sender = sender.clone();
+            std::thread::spawn(move || {
+                while let Ok(event) = visualizer_receiver.recv() {
+                    if sender.send(Message::ToolWindow(event)).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+        let visualizer_window =
+            crate::platform::windows::visualizerwindow::VisualizerWindow::new(visualizer_sender)
+                .map_err(|reason| reason)?;
+
         Ok(Self {
             controller,
             animation: WheelAnimation::new(),
@@ -652,6 +669,7 @@ impl App {
             merge_window,
             organize_pdf_window,
             frame_image_window,
+            visualizer_window,
         })
     }
 
@@ -897,6 +915,12 @@ impl App {
         // An image framing asks for its own card: preview canvas, swatches, sliders, and ratio.
         if segment.id == "tools.frame_image" {
             self.frame_image_window
+                .show_for(&segment.id, &segment.label, &segment.detail, files);
+            return;
+        }
+        // An audio visualizer asks for its own card: live preview, shape chips, style chips, color swatches.
+        if segment.id == "tools.audio_to_video" {
+            self.visualizer_window
                 .show_for(&segment.id, &segment.label, &segment.detail, files);
             return;
         }

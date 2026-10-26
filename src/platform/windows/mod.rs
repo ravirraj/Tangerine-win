@@ -28,4 +28,5 @@ pub mod speedwindow;
 pub mod timelinewindow;
 pub mod toolwindow;
 pub mod tray;
+pub mod visualizerwindow;
 pub mod windowhost;

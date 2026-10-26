@@ -1,0 +1,290 @@
+import { Tokens, Panel } from "tokens.slint";
+import { CardHeader, Hairline, CardFooter } from "shell.slint";
+
+export component VisualizerCard inherits Window {
+    in property <float> ui-scale: 1.0;
+    in property <length> card-width: 420px;
+    in property <length> card-height: 640px;
+
+    in property <Panel> header-box;
+    in property <Panel> detail-box;
+    in property <Panel> hairline-top;
+    in property <string> file-name: "Audio track.wav";
+    in property <string> detail: "Audio visualizer";
+
+    // Stage preview
+    in property <Panel> stage-box;
+    in property <image> preview-image;
+    in property <bool> has-preview: false;
+
+    // Controls
+    in property <Panel> shape-label-box;
+    in property <[Panel]> shape-chips;
+    in property <int> selected-shape: 0; // 0=Landscape 16:9, 1=Portrait 9:16, 2=Square 1:1
+
+    in property <Panel> style-label-box;
+    in property <[Panel]> style-chips;
+    in property <int> selected-style: 0; // 0=Waveform, 1=Frequency bars, 2=Still image
+
+    in property <Panel> color-label-box;
+    in property <[Panel]> color-swatches;
+    in property <int> selected-color: 0; // 0..5
+
+    in property <Panel> hairline-bottom;
+    in property <Panel> reset-box;
+    in property <Panel> helper-box;
+    in property <Panel> cancel-box;
+    in property <Panel> run-box;
+    in property <string> run-label: "Create Visualizer";
+    in property <bool> run-enabled: true;
+
+    callback dismiss-chosen();
+    callback shape-chosen(int);
+    callback style-chosen(int);
+    callback color-chosen(int);
+    callback reset-defaults-chosen();
+    callback run-chosen();
+    callback cancel-chosen();
+
+    width: root.card-width;
+    height: root.card-height;
+    background: Tokens.window-bg;
+
+    // 1. Header
+    CardHeader {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        file-name: root.file-name;
+        detail: root.detail;
+        ui-scale: root.ui-scale;
+        header-box: root.header-box;
+        detail-box: root.detail-box;
+    }
+
+    Hairline {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.hairline-top;
+    }
+
+    // 2. Stage Preview (contained stage with letterbox)
+    Rectangle {
+        x: root.stage-box.x;
+        y: root.stage-box.y;
+        width: root.stage-box.width;
+        height: root.stage-box.height;
+        border-radius: Tokens.radius-preview;
+        background: Tokens.preview-black;
+        clip: true;
+
+        if root.has-preview : Image {
+            width: 100%;
+            height: 100%;
+            image-fit: contain;
+            source: root.preview-image;
+        }
+
+        if !root.has-preview : Text {
+            text: "Loading waveform…";
+            color: Tokens.text-muted;
+            font-size: 12px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    // 3. Shape Section
+    Text {
+        x: root.shape-label-box.x;
+        y: root.shape-label-box.y;
+        width: root.shape-label-box.width;
+        height: root.shape-label-box.height;
+        text: "Shape";
+        font-size: 11px;
+        font-weight: 600;
+        color: Tokens.text-muted;
+        vertical-alignment: center;
+    }
+
+    for chip[i] in root.shape-chips : Rectangle {
+        x: chip.x;
+        y: chip.y;
+        width: chip.width;
+        height: chip.height;
+        border-radius: Tokens.radius-small;
+        background: root.selected-shape == i ? Tokens.accent-tint : Tokens.surface;
+        border-width: 1px;
+        border-color: root.selected-shape == i ? Tokens.accent : Tokens.hairline;
+
+        Text {
+            text: i == 0 ? "16:9 Landscape" : (i == 1 ? "9:16 Portrait" : "1:1 Square");
+            font-size: 11px;
+            font-weight: root.selected-shape == i ? 600 : 400;
+            color: root.selected-shape == i ? Tokens.accent : Tokens.text;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+
+        TouchArea {
+            clicked => { root.shape-chosen(i); }
+        }
+    }
+
+    // 4. Style Section
+    Text {
+        x: root.style-label-box.x;
+        y: root.style-label-box.y;
+        width: root.style-label-box.width;
+        height: root.style-label-box.height;
+        text: "Style";
+        font-size: 11px;
+        font-weight: 600;
+        color: Tokens.text-muted;
+        vertical-alignment: center;
+    }
+
+    for chip[i] in root.style-chips : Rectangle {
+        x: chip.x;
+        y: chip.y;
+        width: chip.width;
+        height: chip.height;
+        border-radius: Tokens.radius-small;
+        background: root.selected-style == i ? Tokens.accent-tint : Tokens.surface;
+        border-width: 1px;
+        border-color: root.selected-style == i ? Tokens.accent : Tokens.hairline;
+
+        Text {
+            text: i == 0 ? "Waveform" : (i == 1 ? "Frequency bars" : "Still image");
+            font-size: 11px;
+            font-weight: root.selected-style == i ? 600 : 400;
+            color: root.selected-style == i ? Tokens.accent : Tokens.text;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+
+        TouchArea {
+            clicked => { root.style-chosen(i); }
+        }
+    }
+
+    // 5. Color Section
+    Text {
+        x: root.color-label-box.x;
+        y: root.color-label-box.y;
+        width: root.color-label-box.width;
+        height: root.color-label-box.height;
+        text: "Waveform Accent";
+        font-size: 11px;
+        font-weight: 600;
+        color: Tokens.text-muted;
+        vertical-alignment: center;
+    }
+
+    for swatch[i] in root.color-swatches : Rectangle {
+        x: swatch.x;
+        y: swatch.y;
+        width: swatch.width;
+        height: swatch.height;
+        border-radius: swatch.height / 2;
+        background: i == 0 ? #FF5C00 : (i == 1 ? #0A84FF : (i == 2 ? #30D158 : (i == 3 ? #BF5AF2 : (i == 4 ? #FFD60A : #FFFFFF))));
+        border-width: root.selected-color == i ? 2px : 1px;
+        border-color: root.selected-color == i ? Tokens.text : Tokens.field-border;
+
+        TouchArea {
+            clicked => { root.color-chosen(i); }
+        }
+    }
+
+    // 6. Hairline & Footer
+    Hairline {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.hairline-bottom;
+    }
+
+    // Reset button
+    Rectangle {
+        x: root.reset-box.x;
+        y: root.reset-box.y;
+        width: root.reset-box.width;
+        height: root.reset-box.height;
+        border-radius: Tokens.radius-small;
+        background: Tokens.quiet;
+
+        Text {
+            text: "Reset";
+            font-size: 11px;
+            color: Tokens.text-muted;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+
+        TouchArea {
+            clicked => { root.reset-defaults-chosen(); }
+        }
+    }
+
+    // Helper text
+    Text {
+        x: root.helper-box.x;
+        y: root.helper-box.y;
+        width: root.helper-box.width;
+        height: root.helper-box.height;
+        text: "Enter to create · Esc to close";
+        font-size: 11px;
+        color: Tokens.text-muted;
+        vertical-alignment: center;
+    }
+
+    // Cancel button
+    Rectangle {
+        x: root.cancel-box.x;
+        y: root.cancel-box.y;
+        width: root.cancel-box.width;
+        height: root.cancel-box.height;
+        border-radius: Tokens.radius-control;
+        background: Tokens.quiet;
+
+        Text {
+            text: "Cancel";
+            font-size: 12px;
+            color: Tokens.text;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+
+        TouchArea {
+            clicked => { root.cancel-chosen(); }
+        }
+    }
+
+    // Run button
+    Rectangle {
+        x: root.run-box.x;
+        y: root.run-box.y;
+        width: root.run-box.width;
+        height: root.run-box.height;
+        border-radius: Tokens.radius-control;
+        background: root.run-enabled ? Tokens.accent : Tokens.quiet;
+
+        Text {
+            text: root.run-label;
+            font-size: 12px;
+            font-weight: 600;
+            color: root.run-enabled ? #FFFFFF : Tokens.text-muted;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+
+        TouchArea {
+            clicked => {
+                if root.run-enabled {
+                    root.run-chosen();
+                }
+            }
+        }
+    }
+}
