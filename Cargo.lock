@@ -2997,6 +2997,8 @@ dependencies = [
  "png",
  "quick-xml",
  "resvg",
+ "serde",
+ "serde_json",
  "slint",
  "slint-build",
  "tar",

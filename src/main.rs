@@ -11,6 +11,7 @@ mod media;
 mod platform;
 mod radial;
 mod session;
+pub mod settings;
 mod ui;
 
 fn main() {
