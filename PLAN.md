@@ -31,9 +31,10 @@
 | B-10.8–B-10.12 | ✅ Done | Compress, Edit Metadata, Normalize Audio, Audio Channels, Redact (Photo/Video/Audio), Speed Windows |
 | B-10.13 | ✅ Done | Join Videos + Merge PDFs backend & window host at parity (ordered list chevron reordering, video frame & PDF page 1 thumbs, todo.md B-10.13) |
 | B-10.14 | ✅ Done | Organize PDF Pages backend & window host at parity (3-column page grid, selection border, rotation, duplicate, remove, reverse order, todo.md B-10.14) |
+| B-10.15 | ✅ Done | Add Background / Frame Image backend & window host at parity (live stage canvas, gradient/solid/blur presets, padding, corner radius, drop shadow, aspect ratio, todo.md B-10.15) |
 
 **Current branch:** `phase/b-10-tool-windows` (all local, no push; merge only when the user says)
-**Tests:** 498 unit + 72 ignored (real-FFmpeg and real-PDFium operations and window captures), 0 failures
+**Tests:** 508 unit + 72 ignored (real-FFmpeg, real-PDFium, and image compositing operations and window captures), 0 failures
 
 ---
 

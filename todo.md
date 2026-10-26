@@ -941,7 +941,7 @@ Deliberate differences from mockups:
 ### B-10.3 Heavy/custom windows (assess each before committing)
 - [ ] Edit photos (live preview: dehaze, clarity, grain, denoise, light/
       color/detail — FFmpeg eq curves get partway; assess fidelity)
-- [ ] Add background (canvas, blur, rounded corners, shadow — pad+gblur)
+- [x] Add background (canvas, blur, rounded corners, shadow — pad+gblur) - done in B-10.15 below (`8422e7f`, `890f3af`)
 - [ ] Create collage (grid/row/column/featured layouts - Rust compositing)
 - [ ] Audio visualizer (animated waveform -> MP4, orientation options)
 - [x] Bleep audio (movable time ranges, original-vs-bleep comparison) - done in B-10.10 above (preview heard through the system's own player; the headmoving time-range asking is the window's own drag; done `0bdf17e`)
@@ -996,11 +996,11 @@ Original behavior (Swift + operations, authoritative — read 2026-10-26):
 - Output: `{stem} framed.png` beside original image, preserving format or PNG for transparency/gradients.
 
 Progress & Plan:
-- [x] Phase A — Evidence & Audit: mockups read (`frameImage.webp`, `add-background.png`), Swift sources read (`FrameImageToolView.swift`, `ImageOps.swift`), todo section created.
-- [ ] Phase B — Backend: Rust image compositing module `src/media/frame.rs` (padding, aspect ratio fitting, rounded corner clipping, drop shadow generation, blur/gradient/solid/image backgrounds), register `tools.frame_image` for `FileKind::Image`, `run_frame_image` in `tools.rs`, unit tests.
-- [ ] Phase C — Window: twin layout host `frameimagewindow.rs` + Slint card `frame_image_window.slint`, stage canvas preview, swatch grids, sliders, ratio segmented picker, footer actions, dispatch in `app.rs`.
-- [ ] Phase D — Proof: pump test, capture test (`target/shots/frame-image-window.png`), visual check against `ref-frameImage.png`.
-- [ ] Phase E — Docs: update `todo.md`, `HANDOFF.md`, `PLAN.md`, `ui-preview.md`.
+- [x] Phase A — Evidence & Audit: mockups read (`frameImage.webp`, `add-background.png`), Swift sources read (`FrameImageToolView.swift`, `ImageOps.swift`), todo section created (`5e2610a`).
+- [x] Phase B — Backend: Rust image compositing module `src/media/frame.rs` (padding, aspect ratio fitting, rounded corner clipping, drop shadow generation, blur/gradient/solid/image backgrounds), register `tools.frame_image` for `FileKind::Image`, `run_frame_image` in `tools.rs`, unit tests (`8422e7f`).
+- [x] Phase C — Window: twin layout host `frameimagewindow.rs` + Slint card `frame_image_window.slint`, stage canvas preview, swatch grids, sliders, ratio segmented picker, footer actions, dispatch in `app.rs` (`890f3af`).
+- [x] Phase D — Proof: pump test, capture test (`target/shots/frame-image-window.png`), visual check against `ref-frameImage.png` (`890f3af`).
+- [x] Phase E — Docs: update `todo.md`, `HANDOFF.md`, `PLAN.md`, `ui-preview.md`.
 
 Deliberate differences from mockups:
 - Windows native chrome ("Add Background") with close top-right.

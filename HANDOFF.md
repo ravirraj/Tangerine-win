@@ -68,18 +68,18 @@ All `reference\…` paths above are relative to the repo root
 ## 3. State at handoff
 
 - Branch `phase/b-10-tool-windows`, tree clean. Chain ends:
-  `… 3f42bb9` (Phase A merge) -> `93d60a3` (merge execution backend) -> `6da91cc` (merge window host and card) -> `d59bc3b` (docs: complete B-10.13)
-  → `12a00d9` (docs: B-10.14 Organize PDF Pages Phase A evidence and audit)
-  → `9ff1973` (feat(organize-pdf): organize pdf pages execution backend)
-  → `fe5150a` (feat(organize-pdf): organize pdf pages window host and card)
-- Tools wheel now has **11** implemented ops: compress, crop, trim, split, rotate,
-  resize, merge, metadata, normalize, channels, organize_pdf. Dedicated windows exist for
+  `… fe5150a` (organize pdf pages window host and card)
+  → `5e2610a` (docs: Phase A evidence and plan for B-10.15 Add Background / Frame Image)
+  → `8422e7f` (feat(frame-image): add background and frame image execution backend)
+  → `890f3af` (feat(frame-image): add background window host and card)
+- Tools wheel now has **12** implemented ops: compress, crop, trim, split, rotate,
+  resize, merge, metadata, normalize, channels, organize_pdf, frame_image. Dedicated windows exist for
   Trim Video, Split Video, Crop Video/Image, Compress, Edit Metadata, Trim Audio,
   Normalize Volume, Convert Audio Channels, Redact Photo, Redact Video, Bleep Audio,
-  Change Speed, Join Videos / Merge PDFs, and Organize PDF Pages matching reference behavior and visual mockups.
-- Tests at handoff: **498 passed; 0 failed; 72 ignored** (`cargo test`:
-  `test result: ok. 498 passed; 0 failed; 72 ignored` — real-FFmpeg and real-PDFium operation
-  tests, and all window captures including `join-videos-window.png`, `merge-pdf-window.png`, and `organize-pdf-window.png`).
+  Change Speed, Join Videos / Merge PDFs, Organize PDF Pages, and Add Background / Frame Image matching reference behavior and visual mockups.
+- Tests at handoff: **508 passed; 0 failed; 72 ignored** (`cargo test`:
+  `test result: ok. 508 passed; 0 failed; 72 ignored` — real-FFmpeg, real-PDFium, and image compositing operation
+  tests, and all window captures including `join-videos-window.png`, `merge-pdf-window.png`, `organize-pdf-window.png`, and `frame-image-window.png`).
   Warnings: **43** (exact baseline, 0 new warnings).
 - `ToolSettings` fields today: `width, height (u32)`, `start_ms, end_ms (u64)`,
   `points_ms: Vec<u64>`, `crop_x, crop_y, crop_w, crop_h (Option<u32>)`,
@@ -89,7 +89,11 @@ All `reference\…` paths above are relative to the repo root
   `metadata_remove_sensitive: bool`, `normalize_lufs_x10: Option<i32>`,
   `normalize_range_x10: Option<i32>`, `normalize_true_peak_x10: Option<i32>`,
   `channel_mode: Option<String>`, `channel_left_gain: Option<u32>`,
-  `channel_right_gain: Option<u32>`, `pdf_pages: Vec<(usize, usize, i32)>`.
+  `channel_right_gain: Option<u32>`, `pdf_pages: Vec<(usize, usize, i32)>`,
+  `frame_padding_ratio: Option<f32>`, `frame_corner_radius: Option<u32>`,
+  `frame_shadow_radius: Option<u32>`, `frame_aspect_ratio: Option<String>`,
+  `frame_bg_type: Option<String>`, `frame_bg_color: Option<String>`,
+  `frame_bg_image: Option<PathBuf>`.
 
 ## 4. The conventions a new window must follow
 
