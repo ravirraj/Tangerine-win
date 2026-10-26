@@ -867,8 +867,15 @@ impl Host {
     /// Draws the card if it changed, and puts what was drawn on the
     /// window.
     fn draw(&mut self) {
-        let stride = self.width as usize;
+        if self.width == 0 || self.height == 0 {
+            return;
+        }
+        let needed = (self.width * self.height) as usize;
         let mut buffer = std::mem::take(&mut self.buffer);
+        if buffer.len() != needed {
+            buffer = vec![Bgra8::default(); needed];
+        }
+        let stride = self.width as usize;
         self.software
             .draw_if_needed(|renderer| {
                 renderer.render(&mut buffer, stride);

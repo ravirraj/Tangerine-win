@@ -48,8 +48,16 @@ if (Test-Path $PdfiumVendor) {
     Copy-Item $PdfiumVendor -Destination (Join-Path $DistDir "pdfium.dll") -Force
 }
 
-# Verify FFmpeg binaries
+# Copy FFmpeg binaries from vendor/
+$FfmpegVendor = Join-Path $RootDir "vendor\ffmpeg"
 $FfmpegDir = Join-Path $DistDir "ffmpeg"
+if (Test-Path $FfmpegVendor) {
+    Write-Host "Bundling FFmpeg binaries from vendor/ffmpeg..." -ForegroundColor Yellow
+    if (-not (Test-Path $FfmpegDir)) {
+        New-Item -ItemType Directory -Path $FfmpegDir -Force | Out-Null
+    }
+    Copy-Item (Join-Path $FfmpegVendor "*") -Destination $FfmpegDir -Force
+}
 if (Test-Path (Join-Path $FfmpegDir "ffmpeg.exe")) {
     Write-Host "FFmpeg binaries present in $FfmpegDir" -ForegroundColor Green
 } else {
