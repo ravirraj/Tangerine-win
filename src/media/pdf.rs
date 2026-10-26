@@ -165,6 +165,29 @@ pub fn extract_text(input: &Path) -> Result<String, PdfError> {
     Ok(text)
 }
 
+/// Merges multiple PDF files into one document, in the order given.
+pub fn merge(inputs: &[PathBuf], output: &Path) -> Result<(), PdfError> {
+    if inputs.is_empty() {
+        return Err(PdfError::NotAPdf);
+    }
+    let pdfium = pdfium()?;
+    let mut merged = pdfium.create_new_pdf().map_err(|_| PdfError::NotAPdf)?;
+    for input in inputs {
+        let doc = pdfium
+            .load_pdf_from_file(input, None)
+            .map_err(|_| PdfError::NotAPdf)?;
+        merged
+            .pages_mut()
+            .append(&doc)
+            .map_err(|_| PdfError::NotAPdf)?;
+    }
+    if merged.pages().is_empty() {
+        return Err(PdfError::NotAPdf);
+    }
+    merged.save_to_file(output).map_err(|_| PdfError::NotAPdf)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -306,5 +329,26 @@ mod tests {
             std::fs::read(folder.path.join("made.png")).expect("the old picture is there"),
             b"the old one"
         );
+    }
+
+    #[test]
+    #[ignore = "needs pdfium.dll"]
+    fn multiple_pdfs_are_merged_into_one() {
+        let Some(_) = library() else {
+            eprintln!("the library is not there; this test needs it");
+            return;
+        };
+        let folder1 = TempFolder::new("merge1");
+        let folder2 = TempFolder::new("merge2");
+        let first = two_page_pdf(&folder1.path);
+        let second = two_page_pdf(&folder2.path);
+        let merged_folder = TempFolder::new("merged_out");
+        let merged_path = merged_folder.path.join("combined.pdf");
+
+        merge(&[first, second], &merged_path).expect("the documents were merged");
+        assert!(merged_path.is_file(), "merged pdf exists");
+
+        let pages = render_pages(&merged_path, 72, Encoding::Png).expect("rendered merged pages");
+        assert_eq!(pages.len(), 4, "combined document has all 4 pages");
     }
 }

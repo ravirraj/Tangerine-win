@@ -773,7 +773,7 @@ pub const OPERATIONS: &[Operation] = &[
         detail: "Join several files together",
         icon: IconKind::Merge,
         mode: RadialMode::Tools,
-        categories: &[FileKind::Image, FileKind::Video, FileKind::Audio],
+        categories: &[FileKind::Video, FileKind::Pdf],
         // Files that are put together have to be alike: a picture and a sound
         // are not one thing to merge.
         batch: Batch::SeveralAlike,
@@ -781,7 +781,7 @@ pub const OPERATIONS: &[Operation] = &[
         output: Output::BesideAsInput,
         collision: Collision::Rename,
         implemented: true,
-        requires: Requirement::Processor("merge"),
+        requires: Requirement::AnyProcessor(&["video", "pdf"]),
     },
     Operation {
         id: "tools.metadata",

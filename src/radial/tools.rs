@@ -997,6 +997,279 @@ impl<P: Publisher> Tools<P> {
         self.publish(&finals, &temporary)
     }
 
+    /// Joins several alike files into one: videos or PDFs.
+    fn run_merge(&self, request: &Request, _runner: &dyn ProcessRunner) -> Outcome {
+        if request.inputs.len() < 2 {
+            return Outcome::Failed {
+                reason: Failure::InvalidInput("at least two files are needed to merge".to_string()),
+            };
+        }
+        let first = &request.inputs[0];
+        let ext = first
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+
+        let result = if ext == "pdf" {
+            self.merge_pdfs(&request.inputs)
+        } else {
+            self.merge_videos(&request.inputs)
+        };
+
+        match result {
+            Ok(output) => Outcome::Succeeded {
+                outputs: vec![output],
+            },
+            Err(reason) => {
+                let name = reason.name();
+                Outcome::Failed {
+                    reason: Failure::Error(format!("the files could not be merged: {name}")),
+                }
+            }
+        }
+    }
+
+    /// Merges multiple PDF files into one, all pages copied in sequence.
+    fn merge_pdfs(&self, inputs: &[PathBuf]) -> Result<PathBuf, ToolError> {
+        let first = &inputs[0];
+        let stem = first
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "document".to_string());
+        let temporary = first.with_file_name(format!("{stem}.merge-part.pdf"));
+
+        crate::media::pdf::merge(inputs, &temporary).map_err(|err| match err {
+            crate::media::pdf::PdfError::LibraryMissing => ToolError::ToolFailed,
+            crate::media::pdf::PdfError::NotAPdf => ToolError::ReadError,
+            crate::media::pdf::PdfError::RenderFailed => ToolError::ReadError,
+            crate::media::pdf::PdfError::TextFailed => ToolError::ReadError,
+        })?;
+
+        let dest_names = metadata_final_names(first, "merged", "pdf");
+        self.publish(&dest_names, &temporary)
+    }
+
+    /// Joins multiple videos into one MP4 movie, clips scaled to fit the first clip.
+    fn merge_videos(&self, inputs: &[PathBuf]) -> Result<PathBuf, ToolError> {
+        let first = &inputs[0];
+        let stem = first
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "video".to_string());
+
+        let (raw_w, raw_h, raw_rate) = crate::media::frames::shape_of(&self.ffmpeg_tools, first)
+            .ok_or(ToolError::ReadError)?;
+        if raw_w == 0 || raw_h == 0 {
+            return Err(ToolError::ReadError);
+        }
+        let target_w = (raw_w / 2) * 2;
+        let target_h = (raw_h / 2) * 2;
+        let target_fps = if raw_rate >= 10.0 && raw_rate <= 60.0 {
+            raw_rate
+        } else {
+            30.0
+        };
+
+        let temp_video_raw = first.with_file_name(format!("{stem}.merge-video.bin"));
+        let temp_audio_wav = first.with_file_name(format!("{stem}.merge-sound.wav"));
+        let temp_output = first.with_file_name(format!("{stem}.merge-part.mp4"));
+
+        let _ = std::fs::remove_file(&temp_video_raw);
+        let _ = std::fs::remove_file(&temp_audio_wav);
+        let _ = std::fs::remove_file(&temp_output);
+
+        let mut raw_video_out = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&temp_video_raw)
+            .map_err(|_| ToolError::WriteError)?;
+
+        let mut all_audio_samples: Vec<i16> = Vec::new();
+
+        for input in inputs {
+            let (clip_w, clip_h, _) = crate::media::frames::shape_of(&self.ffmpeg_tools, input)
+                .ok_or(ToolError::ReadError)?;
+            if clip_w == 0 || clip_h == 0 {
+                let _ = std::fs::remove_file(&temp_video_raw);
+                return Err(ToolError::ReadError);
+            }
+            let clip_frame_bytes = (clip_w as usize) * (clip_h as usize) * 4;
+
+            let clip_raw_path = input.with_file_name(format!("{stem}.clip-decode.bin"));
+            let _ = std::fs::remove_file(&clip_raw_path);
+            let clip_file = std::fs::File::create(&clip_raw_path).map_err(|_| ToolError::WriteError)?;
+
+            let decode_args: Vec<OsString> = [
+                "-hide_banner",
+                "-nostdin",
+                "-y",
+                "-i",
+            ]
+            .iter()
+            .map(|word| OsString::from(*word))
+            .chain([input.as_os_str().to_os_string()])
+            .chain(
+                [
+                    "-pix_fmt",
+                    "rgba",
+                    "-f",
+                    "rawvideo",
+                    "pipe:1",
+                ]
+                .iter()
+                .map(|word| OsString::from(*word)),
+            )
+            .collect();
+
+            let decode = SystemRunner
+                .run(&self.ffmpeg_tools.ffmpeg, &decode_args, Some(&clip_file))
+                .map_err(|_| ToolError::ToolFailed)?;
+            if !decode.succeeded() {
+                let _ = std::fs::remove_file(&clip_raw_path);
+                let _ = std::fs::remove_file(&temp_video_raw);
+                return Err(ToolError::ToolFailed);
+            }
+
+            let gathered = std::fs::read(&clip_raw_path).map_err(|_| ToolError::ReadError)?;
+            let _ = std::fs::remove_file(&clip_raw_path);
+            let clip_frames = gathered.len() / clip_frame_bytes;
+            if clip_frames == 0 {
+                let _ = std::fs::remove_file(&temp_video_raw);
+                return Err(ToolError::ReadError);
+            }
+
+            if clip_w == target_w && clip_h == target_h {
+                use std::io::Write;
+                raw_video_out.write_all(&gathered).map_err(|_| ToolError::WriteError)?;
+            } else {
+                use std::io::Write;
+                let scale_x = target_w as f64 / clip_w as f64;
+                let scale_y = target_h as f64 / clip_h as f64;
+                let scale = scale_x.min(scale_y);
+                let fit_w = ((clip_w as f64 * scale).round() as u32).max(1).min(target_w);
+                let fit_h = ((clip_h as f64 * scale).round() as u32).max(1).min(target_h);
+                let offset_x = (target_w - fit_w) / 2;
+                let offset_y = (target_h - fit_h) / 2;
+
+                for f in 0..clip_frames {
+                    let frame_slice = &gathered[f * clip_frame_bytes..(f + 1) * clip_frame_bytes];
+                    let src_img = image::RgbaImage::from_raw(clip_w, clip_h, frame_slice.to_vec())
+                        .ok_or(ToolError::ReadError)?;
+                    let resized = image::imageops::resize(&src_img, fit_w, fit_h, image::imageops::FilterType::Nearest);
+                    let mut canvas = image::RgbaImage::from_pixel(target_w, target_h, image::Rgba([0, 0, 0, 255]));
+                    image::imageops::overlay(&mut canvas, &resized, offset_x as i64, offset_y as i64);
+                    raw_video_out.write_all(canvas.as_raw()).map_err(|_| ToolError::WriteError)?;
+                }
+            }
+
+            let clip_duration = crate::media::frames::duration_of(&self.ffmpeg_tools, input)
+                .unwrap_or(clip_frames as f64 / target_fps);
+            let target_audio_frames = (clip_duration * 48000.0).round() as usize;
+
+            if let Some(voice) = crate::media::audio::decode_full_pcm(&self.ffmpeg_tools, input) {
+                let channels = (voice.channels as usize).max(1);
+                let src_audio_frames = voice.samples.len() / channels;
+                if src_audio_frames > 0 {
+                    let mut resampled_stereo = Vec::with_capacity(target_audio_frames * 2);
+                    for i in 0..target_audio_frames {
+                        let src_idx = (((i as f64) * (src_audio_frames as f64) / (target_audio_frames as f64)).floor() as usize).min(src_audio_frames - 1);
+                        if channels == 1 {
+                            let s = voice.samples[src_idx];
+                            resampled_stereo.push(s);
+                            resampled_stereo.push(s);
+                        } else {
+                            let l = voice.samples[src_idx * channels];
+                            let r = voice.samples[src_idx * channels + 1];
+                            resampled_stereo.push(l);
+                            resampled_stereo.push(r);
+                        }
+                    }
+                    all_audio_samples.extend(resampled_stereo);
+                } else {
+                    all_audio_samples.extend(vec![0i16; target_audio_frames * 2]);
+                }
+            } else {
+                all_audio_samples.extend(vec![0i16; target_audio_frames * 2]);
+            }
+        }
+        drop(raw_video_out);
+
+        let mut encode_args: Vec<OsString> = [
+            "-hide_banner",
+            "-nostdin",
+            "-y",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgba",
+            "-s",
+        ]
+        .iter()
+        .map(|w| OsString::from(*w))
+        .collect();
+
+        encode_args.push(OsString::from(format!("{target_w}x{target_h}")));
+        encode_args.push(OsString::from("-r"));
+        encode_args.push(OsString::from(format!("{target_fps}")));
+        encode_args.push(OsString::from("-i"));
+        encode_args.push(temp_video_raw.as_os_str().to_os_string());
+
+        let has_audio = !all_audio_samples.is_empty();
+        if has_audio {
+            let wav_bytes = crate::media::audio::encode_wav_bytes(&all_audio_samples, 48000, 2);
+            std::fs::write(&temp_audio_wav, &wav_bytes).map_err(|_| ToolError::WriteError)?;
+            encode_args.push(OsString::from("-i"));
+            encode_args.push(temp_audio_wav.as_os_str().to_os_string());
+        }
+
+        encode_args.extend(
+            [
+                "-c:v",
+                "mpeg4",
+                "-q:v",
+                "5",
+            ]
+            .iter()
+            .map(|w| OsString::from(*w)),
+        );
+
+        if has_audio {
+            encode_args.extend(
+                [
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    "192k",
+                ]
+                .iter()
+                .map(|w| OsString::from(*w)),
+            );
+        }
+
+        encode_args.push(OsString::from("-pix_fmt"));
+        encode_args.push(OsString::from("yuv420p"));
+        encode_args.push(OsString::from("-f"));
+        encode_args.push(OsString::from("mov"));
+        encode_args.push(temp_output.as_os_str().to_os_string());
+
+        let encode = SystemRunner
+            .run(&self.ffmpeg_tools.ffmpeg, &encode_args, None)
+            .map_err(|_| ToolError::ToolFailed)?;
+
+        let _ = std::fs::remove_file(&temp_video_raw);
+        let _ = std::fs::remove_file(&temp_audio_wav);
+
+        if !encode.succeeded() || !temp_output.is_file() {
+            let _ = std::fs::remove_file(&temp_output);
+            return Err(ToolError::ToolFailed);
+        }
+
+        let dest_names = metadata_final_names(first, "joined", "mp4");
+        self.publish(&dest_names, &temp_output)
+    }
+
     /// Makes files lighter, at the preset and the target size the window
     /// carried.
     ///
@@ -2643,6 +2916,12 @@ impl<P: Publisher> Handler for Tools<P> {
         // own to mix in.
         if request.operation == "tools.bleep" {
             return self.run_bleep(request, &SystemRunner);
+        }
+
+        // A merge joins several alike files together into one: videos
+        // concatenated into a single movie, or PDFs merged page by page.
+        if request.operation == "tools.merge" {
+            return self.run_merge(request, &SystemRunner);
         }
 
         let manifest = Manifest::get();
@@ -5209,6 +5488,162 @@ mod tests {
         assert_eq!(parsed.channels, 2);
         assert_eq!(parsed.samples[0], 16000);
         assert_eq!(parsed.samples[1], 8000);
+
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn merge_requires_at_least_two_inputs() {
+        let tools = Tools {
+            ffmpeg_tools: crate::media::locator::Tools {
+                ffmpeg: PathBuf::from("ffmpeg"),
+                ffprobe: PathBuf::from("ffprobe"),
+            },
+            publisher: CopyPublisher,
+        };
+        let request = Request {
+            operation: "tools.merge".to_string(),
+            inputs: vec![PathBuf::from("one.mp4")],
+            ..Default::default()
+        };
+        let outcome = tools.run(&request, &Selection::inspect(&[PathBuf::from("one.mp4")]));
+        assert!(matches!(outcome, Outcome::Failed { .. }));
+    }
+
+    #[test]
+    #[ignore = "needs pdfium.dll"]
+    fn merge_two_pdfs_produces_merged_pdf() {
+        if crate::media::pdf::library().is_none() {
+            eprintln!("pdfium.dll is not there; this test needs it");
+            return;
+        }
+        let scratch1 = std::env::temp_dir().join(format!("ot-pdf-m1-{}", std::process::id()));
+        let scratch2 = std::env::temp_dir().join(format!("ot-pdf-m2-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&scratch1);
+        let _ = std::fs::create_dir_all(&scratch2);
+        let pdf1 = scratch1.join("doc_a.pdf");
+        let pdf2 = scratch2.join("doc_b.pdf");
+
+        // Make two valid PDFs
+        let doc_bytes = {
+            let content = b"BT /F1 12 Tf 20 50 Td (Page) Tj ET";
+            format!(
+                "%PDF-1.4\n\
+                 1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n\
+                 2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n\
+                 3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] \
+                 /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >> endobj\n\
+                 4 0 obj << /Length {} >> stream\n{}\nendstream endobj\n\
+                 5 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj\n\
+                 trailer << /Root 1 0 R /Size 6 >>",
+                content.len(),
+                String::from_utf8_lossy(content)
+            )
+        };
+        std::fs::write(&pdf1, &doc_bytes).expect("pdf1 written");
+        std::fs::write(&pdf2, &doc_bytes).expect("pdf2 written");
+
+        let tools = Tools {
+            ffmpeg_tools: crate::media::locator::Tools {
+                ffmpeg: PathBuf::from("ffmpeg"),
+                ffprobe: PathBuf::from("ffprobe"),
+            },
+            publisher: CopyPublisher,
+        };
+        let request = Request {
+            operation: "tools.merge".to_string(),
+            inputs: vec![pdf1.clone(), pdf2.clone()],
+            ..Default::default()
+        };
+        let outcome = tools.run(&request, &Selection::inspect(&[pdf1.clone(), pdf2.clone()]));
+        let outputs = match outcome {
+            Outcome::Succeeded { outputs } => outputs,
+            Outcome::Failed { reason } => panic!("pdf merge failed: {:?}", reason),
+            Outcome::Cancelled => panic!("cancelled"),
+        };
+        let made = outputs.first().expect("output exists");
+        assert!(made.is_file(), "merged file exists: {:?}", made);
+        assert!(made.to_string_lossy().contains("doc_a merged.pdf"));
+
+        let pages = crate::media::pdf::render_pages(made, 72, crate::media::pdf::Encoding::Png)
+            .expect("rendered pages");
+        assert_eq!(pages.len(), 2, "merged document has 2 pages");
+
+        let _ = std::fs::remove_dir_all(&scratch1);
+        let _ = std::fs::remove_dir_all(&scratch2);
+    }
+
+    #[test]
+    #[ignore = "needs the conversion program to re-time the video"]
+    fn merge_two_videos_produces_joined_video() {
+        let folder = Path::new("vendor").join("ffmpeg");
+        let ffmpeg = folder.join("ffmpeg.exe");
+        let ffprobe = folder.join("ffprobe.exe");
+        if !ffmpeg.is_file() {
+            eprintln!("the program is not there; this test needs it");
+            return;
+        }
+
+        let scratch = std::env::temp_dir().join(format!("ot-vid-merge-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&scratch);
+
+        let vid1 = scratch.join("clip_a.mp4");
+        let vid2 = scratch.join("clip_b.mp4");
+
+        // Make two 160x120 15-frame videos: one red, one blue
+        for (vid, color) in [(&vid1, [255u8, 0, 0, 255]), (&vid2, [0u8, 0, 255, 255])] {
+            let raw = scratch.join(format!("{}.raw", vid.file_stem().unwrap().to_str().unwrap()));
+            std::fs::write(&raw, color.repeat(160 * 120 * 15)).expect("raw video written");
+            let args: Vec<OsString> = [
+                "-hide_banner",
+                "-nostdin",
+                "-y",
+                "-f", "rawvideo",
+                "-pix_fmt", "rgba",
+                "-s", "160x120",
+                "-r", "15",
+                "-i", raw.as_os_str().to_str().unwrap(),
+                "-c:v", "mpeg4",
+                "-pix_fmt", "yuv420p",
+                "-f", "mov",
+                "-q:v", "5",
+                vid.as_os_str().to_str().unwrap(),
+            ]
+            .iter()
+            .map(|w| OsString::from(*w))
+            .collect();
+            let made = SystemRunner.run(&ffmpeg, &args, None).expect("video created");
+            assert!(made.succeeded(), "FFmpeg failed: status={:?}, stderr={}", made.status, made.stderr);
+            let _ = std::fs::remove_file(&raw);
+        }
+
+        let tools = Tools {
+            ffmpeg_tools: crate::media::locator::Tools {
+                ffmpeg: ffmpeg.clone(),
+                ffprobe: ffprobe.clone(),
+            },
+            publisher: CopyPublisher,
+        };
+        let request = Request {
+            operation: "tools.merge".to_string(),
+            inputs: vec![vid1.clone(), vid2.clone()],
+            ..Default::default()
+        };
+        let outcome = tools.run(&request, &Selection::inspect(&[vid1.clone(), vid2.clone()]));
+        let outputs = match outcome {
+            Outcome::Succeeded { outputs } => outputs,
+            Outcome::Failed { reason } => panic!("video merge failed: {:?}", reason),
+            Outcome::Cancelled => panic!("cancelled"),
+        };
+        let made = outputs.first().expect("output exists");
+        assert!(made.is_file(), "joined file exists: {:?}", made);
+        assert!(made.to_string_lossy().contains("clip_a joined.mp4"));
+
+        let (w, h, _) = crate::media::frames::shape_of(&tools.ffmpeg_tools, made).expect("shape");
+        assert_eq!((w, h), (160, 120));
+        let duration = crate::media::frames::duration_of(&tools.ffmpeg_tools, made).expect("duration");
+        // Two 1-second clips should make a ~2-second joined video
+        assert!(duration >= 1.5, "duration should be ~2s: {duration}");
 
         let _ = std::fs::remove_dir_all(&scratch);
     }
