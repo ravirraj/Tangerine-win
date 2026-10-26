@@ -1,0 +1,537 @@
+// The card a video is covered in.
+//
+// The skeleton is the shell's (shell.slint); the body is what the
+// reference lays out for a covered video: the frame of the video on
+// the dark stage with the numbered rectangles of cover standing over
+// it, the style row with its two ways of covering, the colour well,
+// and then the Redactions — one row for every cover, showing the
+// stretch of the video that cover stands over, dragged onto a track
+// the way a trim's range is dragged. Under the rows runs the strip of
+// the video's own moments with the playhead over it, and under that
+// the transport: to the start, play and stop, to the end, and the
+// time the playhead stands at.
+//
+// The card only draws. The pressing, the dragging of the covers and
+// of the rows' own windows, the seeking on the strip — all read by
+// the window itself, which holds the same geometry the card was
+// given — the way the crop and the trim do.
+
+import { Tokens } from "tokens.slint";
+import { Panel } from "tokens.slint";
+import { CardHeader, Hairline, IconButton } from "shell.slint";
+import { Chip, RectData } from "redact_image_window.slint";
+
+// One row of the Redactions, said in the card's own pixels: the
+// track stands at x, y, width, height, and the stretch of the video
+// that cover stands over as shares of the track — or no stretch at
+// all, when the cover is asked for the whole video and the row says
+// so in its own words.
+export struct LaneData {
+    index: int,
+    number: int,
+    x: float,
+    y: float,
+    width: float,
+    height: float,
+    start: float,
+    end: float,
+    filled: bool,
+}
+
+export component RedactVideoCard inherits Window {
+    // The size of the card, held here so the renderer reads what the
+    // window really is: the system tells us the client size, and the
+    // renderer draws exactly what these two say.
+    in property <length> card-width: 420px;
+    in property <length> card-height: 612px;
+
+    // What the card says.
+    in property <string> file-name;
+    in property <string> detail;
+    in property <float> ui-scale: 1.0;
+
+    // Where everything stands, in the card's own pixels, absolute.
+    in property <Panel> header-box;
+    in property <Panel> detail-box;
+    in property <Panel> stage-box;
+    in property <Panel> media-box;
+    in property <Panel> style-label-box;
+    in property <Panel> solid-box;
+    in property <Panel> blur-box;
+    in property <Panel> color-label-box;
+    in property <Panel> well-box;
+    in property <Panel> hairline-mid-box;
+    in property <Panel> redactions-label-box;
+    in property <Panel> lanes-box;
+    in property <Panel> strip-box;
+    in property <Panel> skip-back-box;
+    in property <Panel> play-box;
+    in property <Panel> skip-forward-box;
+    in property <Panel> time-text-box;
+    in property <Panel> hairline-top-box;
+    in property <Panel> hairline-bottom-box;
+    in property <Panel> run-box;
+
+    // The frame of the video the playhead stands on, and whether
+    // there is one.
+    in property <image> frame;
+    in property <bool> has-frame: false;
+
+    // The covers, in the card's own pixels, absolute — the same shape
+    // the picture card carries; which one stands chosen.
+    in property <[RectData]> rects;
+    in property <int> selected-rect: -1;
+
+    // The rows of the Redactions, one for every cover.
+    in property <[LaneData]> lanes;
+
+    // The strip of the video's own moments, and whether some of it
+    // has been worn yet.
+    in property <image> strip-image;
+    in property <bool> has-strip: false;
+
+    // Where the playhead stands, as a share of the video, and what
+    // the time say is.
+    in property <float> playhead-fraction: 0.0;
+    in property <string> time-text;
+    in property <bool> playing: false;
+
+    // The look the covers will be given.
+    in property <bool> solid-style: true;
+    in property <color> well-color: #000000;
+
+    // The keyboard's stops: 1 and 2 a style chip, 3 the colour well,
+    // 4 play, 5 save.
+    in property <int> focus-stop: 0;
+
+    callback run-chosen();
+    callback style-chosen(int);
+    callback color-chosen();
+    callback play-chosen();
+    callback skip-back-chosen();
+    callback skip-forward-chosen();
+
+    width: root.card-width;
+    height: root.card-height;
+
+    Rectangle {
+        background: Tokens.window-bg;
+    }
+
+    CardHeader {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        file-name: root.file-name;
+        detail: root.detail;
+        ui-scale: root.ui-scale;
+        header-box: root.header-box;
+        detail-box: root.detail-box;
+    }
+    Hairline {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.hairline-top-box;
+    }
+
+    // The stage of a cover-up is dark, the way the reference stages a
+    // cover: what stands on it is the video's own frame, fitted.
+    Rectangle {
+        x: root.stage-box.x; y: root.stage-box.y;
+        width: root.stage-box.width; height: root.stage-box.height;
+        border-radius: Tokens.radius-preview;
+        background: Tokens.preview-black;
+
+        if root.has-frame: Rectangle {
+            x: root.media-box.x - root.stage-box.x;
+            y: root.media-box.y - root.stage-box.y;
+            width: root.media-box.width;
+            height: root.media-box.height;
+            clip: true;
+
+            Image {
+                x: 0; y: 0;
+                width: parent.width;
+                height: parent.height;
+                source: root.frame;
+                image-fit: fill;
+            }
+        }
+
+        // The covers, the newest standing last. Each carries the look
+        // it will be given, and the chosen one carries hands: a
+        // square at each corner, a pill on each edge — the same hands
+        // the picture card wears.
+        for rect[rect-index] in root.rects: Rectangle {
+            x: rect.x * 1px - root.stage-box.x;
+            y: rect.y * 1px - root.stage-box.y;
+            width: rect.width * 1px;
+            height: rect.height * 1px;
+            background: root.solid-style ? root.well-color
+                       : Tokens.accent-tint;
+            border-width: 2px;
+            border-color: Tokens.accent;
+
+            Rectangle {
+                x: -6px; y: -6px;
+                width: 11px; height: 11px;
+                border-width: 2px;
+                border-color: Tokens.accent;
+                background: Tokens.content;
+                border-radius: 3px;
+                visible: rect-index == root.selected-rect
+                    && rect.width * 1px > 0px && rect.height * 1px > 0px;
+            }
+            Rectangle {
+                x: parent.width - 5px; y: -6px;
+                width: 11px; height: 11px;
+                border-width: 2px;
+                border-color: Tokens.accent;
+                background: Tokens.content;
+                border-radius: 3px;
+                visible: rect-index == root.selected-rect
+                    && rect.width * 1px > 0px && rect.height * 1px > 0px;
+            }
+            Rectangle {
+                x: -6px; y: parent.height - 5px;
+                width: 11px; height: 11px;
+                border-width: 2px;
+                border-color: Tokens.accent;
+                background: Tokens.content;
+                border-radius: 3px;
+                visible: rect-index == root.selected-rect
+                    && rect.width * 1px > 0px && rect.height * 1px > 0px;
+            }
+            Rectangle {
+                x: parent.width - 5px; y: parent.height - 5px;
+                width: 11px; height: 11px;
+                border-width: 2px;
+                border-color: Tokens.accent;
+                background: Tokens.content;
+                border-radius: 3px;
+                visible: rect-index == root.selected-rect
+                    && rect.width * 1px > 0px && rect.height * 1px > 0px;
+            }
+            Rectangle {
+                x: parent.width / 2 - 11px; y: -5px;
+                width: 22px; height: 11px;
+                border-width: 2px;
+                border-color: Tokens.accent;
+                background: Tokens.content;
+                border-radius: 5px;
+                visible: rect-index == root.selected-rect
+                    && rect.width * 1px > 44px && rect.height * 1px > 22px;
+            }
+            Rectangle {
+                x: parent.width - 6px; y: parent.height / 2 - 11px;
+                width: 11px; height: 22px;
+                border-width: 2px;
+                border-color: Tokens.accent;
+                background: Tokens.content;
+                border-radius: 5px;
+                visible: rect-index == root.selected-rect
+                    && rect.width * 1px > 44px && rect.height * 1px > 22px;
+            }
+            Rectangle {
+                x: parent.width / 2 - 11px; y: parent.height - 6px;
+                width: 22px; height: 11px;
+                border-width: 2px;
+                border-color: Tokens.accent;
+                background: Tokens.content;
+                border-radius: 5px;
+                visible: rect-index == root.selected-rect
+                    && rect.width * 1px > 44px && rect.height * 1px > 22px;
+            }
+            Rectangle {
+                x: -5px; y: parent.height / 2 - 11px;
+                width: 11px; height: 22px;
+                border-width: 2px;
+                border-color: Tokens.accent;
+                background: Tokens.content;
+                border-radius: 5px;
+                visible: rect-index == root.selected-rect
+                    && rect.width * 1px > 44px && rect.height * 1px > 22px;
+            }
+        }
+    }
+
+    // The rows the look is said in, label at the left, the control at
+    // the right, one line each — the same words the picture card
+    // carries, without the detectors a video is never looked up for.
+    Text {
+        x: root.style-label-box.x; y: root.style-label-box.y;
+        width: root.style-label-box.width; height: root.style-label-box.height;
+        text: "Style";
+        color: Tokens.text;
+        font-size: root.ui-scale * 13px;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+    }
+    Chip {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.solid-box; label: "Solid";
+        ui-scale: root.ui-scale;
+        selected: root.solid-style; focused: root.focus-stop == 1;
+        chosen => { root.style-chosen(1); }
+    }
+    Chip {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.blur-box; label: "Blur";
+        ui-scale: root.ui-scale;
+        selected: !root.solid-style; focused: root.focus-stop == 2;
+        chosen => { root.style-chosen(2); }
+    }
+
+    Text {
+        x: root.color-label-box.x; y: root.color-label-box.y;
+        width: root.color-label-box.width; height: root.color-label-box.height;
+        text: "Color";
+        color: Tokens.text;
+        font-size: root.ui-scale * 13px;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+    }
+    // The colour well: the pill of the colour a solid box wears, in a
+    // quiet well. A press turns the wheel to the next colour.
+    Rectangle {
+        x: root.well-box.x - 3px; y: root.well-box.y - 3px;
+        width: root.well-box.width + 6px; height: root.well-box.height + 6px;
+        border-radius: Tokens.radius-control + 3px;
+        border-width: 2px;
+        border-color: Tokens.accent;
+        visible: root.focus-stop == 3;
+    }
+    Rectangle {
+        x: root.well-box.x; y: root.well-box.y;
+        width: root.well-box.width; height: root.well-box.height;
+        border-radius: Tokens.radius-control;
+        background: Tokens.quiet;
+
+        well-touch := TouchArea {
+            clicked => { root.color-chosen(); }
+        }
+
+        Rectangle {
+            x: 3px; y: 3px;
+            width: parent.width - 6px; height: parent.height - 6px;
+            border-radius: 3px;
+            background: root.well-color;
+        }
+    }
+
+    // The section the stretches are said in: a hairline to open it,
+    // the words of it, and a row for every cover.
+    Hairline {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.hairline-mid-box;
+    }
+    Text {
+        x: root.redactions-label-box.x; y: root.redactions-label-box.y;
+        width: root.redactions-label-box.width;
+        height: root.redactions-label-box.height;
+        text: "Redactions";
+        color: Tokens.text;
+        font-size: root.ui-scale * 13px;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+    }
+
+    // The rows: the number of the cover at the left, a track at the
+    // right, and on the track the stretch that cover stands over,
+    // dragged between the two ends with a cap at each. A track
+    // without a stretch says it in its own words.
+    for lane[lane-index] in root.lanes: Rectangle {
+        x: lane.x * 1px - 24px;
+        y: lane.y * 1px;
+        width: 20px;
+        height: lane.height * 1px;
+
+        Text {
+            x: 0; y: 0;
+            width: parent.width; height: parent.height;
+            text: lane.number;
+            color: Tokens.text-muted;
+            font-size: root.ui-scale * 12px;
+            font-family: "Segoe UI";
+            vertical-alignment: center;
+            horizontal-alignment: center;
+        }
+    }
+    for lane[lane-index] in root.lanes: Rectangle {
+        x: lane.x * 1px;
+        y: lane.y * 1px;
+        width: lane.width * 1px;
+        height: lane.height * 1px;
+        border-radius: Tokens.radius-control;
+        background: Tokens.quiet;
+        border-width: lane-index == root.selected-rect ? 2px : 0px;
+        border-color: Tokens.accent;
+
+        if lane.filled: Rectangle {
+            x: lane.start * lane.width * 1px;
+            y: 0px;
+            width: (lane.end - lane.start) * lane.width * 1px;
+            height: lane.height * 1px;
+            border-radius: Tokens.radius-control;
+            background: Tokens.accent-tint;
+
+            // The caps at the two ends: what a pointer takes to pull
+            // one side or the other.
+            Rectangle {
+                x: 1px; y: 5px;
+                width: 3px;
+                height: parent.height - 10px;
+                border-radius: 2px;
+                background: Tokens.accent;
+            }
+            Rectangle {
+                x: parent.width - 4px; y: 5px;
+                width: 3px;
+                height: parent.height - 10px;
+                border-radius: 2px;
+                background: Tokens.accent;
+            }
+
+            Text {
+                x: 2px; y: 0;
+                width: parent.width - 4px; height: parent.height;
+                text: "Box " + lane.number;
+                color: Tokens.accent;
+                font-size: root.ui-scale * 12px;
+                font-weight: 600;
+                font-family: "Segoe UI";
+                vertical-alignment: center;
+                horizontal-alignment: center;
+            }
+        }
+        if !lane.filled: Text {
+            x: 0; y: 0;
+            width: parent.width; height: parent.height;
+            text: "Drag to add";
+            color: Tokens.text-muted;
+            font-size: root.ui-scale * 12px;
+            font-family: "Segoe UI";
+            vertical-alignment: center;
+            horizontal-alignment: center;
+        }
+    }
+
+    // The strip of the video's own moments, and the playhead running
+    // down through the rows and across the strip to where the video
+    // stands now.
+    Rectangle {
+        x: root.strip-box.x; y: root.strip-box.y;
+        width: root.strip-box.width; height: root.strip-box.height;
+        border-radius: Tokens.radius-control;
+        background: Tokens.quiet;
+        clip: true;
+
+        Image {
+            x: 0; y: 0;
+            width: parent.width;
+            height: parent.height;
+            source: root.strip-image;
+            image-fit: fill;
+            visible: root.has-strip;
+        }
+    }
+    Rectangle {
+        x: root.strip-box.x + root.playhead-fraction * root.strip-box.width
+           - 1px;
+        y: root.lanes-box.y;
+        width: 2px;
+        height: root.strip-box.y + root.strip-box.height - root.lanes-box.y;
+        background: Tokens.text;
+        visible: root.playhead-fraction >= 0;
+    }
+
+    // The transport: to the start, play and stop, to the end, and the
+    // time the playhead stands at out of the whole.
+    IconButton {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.skip-back-box;
+        glyph: "M 7 5 L 7 21 M 19 5 L 7 13 L 19 21";
+        ui-scale: root.ui-scale;
+        clicked => { root.skip-back-chosen(); }
+    }
+    IconButton {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.play-box;
+        glyph: root.playing ? "M 8 5 L 8 21 M 16 5 L 16 21"
+                            : "M 7 5 L 19 13 L 7 21";
+        focused: root.focus-stop == 4;
+        ui-scale: root.ui-scale;
+        clicked => { root.play-chosen(); }
+    }
+    IconButton {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.skip-forward-box;
+        glyph: "M 7 5 L 17 13 L 7 21 M 17 5 L 17 21";
+        ui-scale: root.ui-scale;
+        clicked => { root.skip-forward-chosen(); }
+    }
+    Text {
+        x: root.time-text-box.x; y: root.time-text-box.y;
+        width: root.time-text-box.width; height: root.time-text-box.height;
+        text: root.time-text;
+        color: Tokens.text;
+        font-size: root.ui-scale * 13px;
+        font-family: "Consolas";
+        vertical-alignment: center;
+        horizontal-alignment: right;
+    }
+
+    Hairline {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.hairline-bottom-box;
+    }
+
+    // The footer: only the making of the copy stands here, the way
+    // the reference leaves a covered video. Escape says no.
+    Rectangle {
+        x: root.run-box.x - 3px; y: root.run-box.y - 3px;
+        width: root.run-box.width + 6px; height: root.run-box.height + 6px;
+        border-radius: Tokens.radius-control + 3px;
+        border-width: 2px;
+        border-color: Tokens.accent;
+        visible: root.focus-stop == 5;
+    }
+    Rectangle {
+        x: root.run-box.x; y: root.run-box.y;
+        width: root.run-box.width; height: root.run-box.height;
+        border-radius: Tokens.radius-control;
+        background: root.rects.length == 0 ? Tokens.quiet
+                   : (run-touch.pressed ? Tokens.quiet-pressed
+                   : (run-touch.has-hover ? Tokens.quiet-hover : Tokens.quiet));
+
+        run-touch := TouchArea {
+            enabled: root.rects.length > 0;
+            clicked => { root.run-chosen(); }
+        }
+
+        Text {
+            text: "Save Redacted Copy";
+            color: root.rects.length == 0 ? Tokens.text-muted : Tokens.text;
+            font-size: root.ui-scale * 13px;
+            font-weight: 500;
+            font-family: "Segoe UI";
+            vertical-alignment: center;
+            horizontal-alignment: center;
+        }
+    }
+}

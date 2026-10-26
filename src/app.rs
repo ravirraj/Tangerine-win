@@ -282,6 +282,9 @@ struct App {
     channels_window: crate::platform::windows::channelswindow::ChannelsWindow,
     /// The window a picture is covered in, hidden until a redact is picked.
     redact_image_window: crate::platform::windows::redactimagewindow::RedactImageWindow,
+    /// The window a video is covered in, with a row for every cover's
+    /// stretch, hidden until a redact is picked.
+    redact_video_window: crate::platform::windows::redactvideowindow::RedactVideoWindow,
 }
 
 /// The end of a drag that has not been acted on yet.
@@ -425,6 +428,26 @@ impl App {
             crate::platform::windows::redactimagewindow::RedactImageWindow::new(redact_sender)
                 .map_err(|reason| reason)?;
 
+        // The window a video is covered in, with the rectangles of
+        // cover standing over it and a row for every cover's stretch.
+        // What its buttons say comes back the same way, into the same
+        // message.
+        let (redact_video_sender, redact_video_messages) =
+            std::sync::mpsc::channel::<crate::platform::windows::toolwindow::ToolEvent>();
+        {
+            let sender = sender.clone();
+            std::thread::spawn(move || {
+                while let Ok(event) = redact_video_messages.recv() {
+                    if sender.send(Message::ToolWindow(event)).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+        let redact_video_window =
+            crate::platform::windows::redactvideowindow::RedactVideoWindow::new(redact_video_sender)
+                .map_err(|reason| reason)?;
+
         // The window a compress is asked in.
         let (compress_sender, compress_messages) =
             std::sync::mpsc::channel::<crate::platform::windows::toolwindow::ToolEvent>();
@@ -534,6 +557,7 @@ impl App {
             normalize_window,
             channels_window,
             redact_image_window,
+            redact_video_window,
         })
     }
 
@@ -770,6 +794,14 @@ impl App {
         // is not the plain window's form of typed fields.
         if segment.id == "tools.redact_image" {
             self.redact_image_window
+                .show_for(&segment.id, &segment.label, &segment.detail, files);
+            return;
+        }
+        // A redact of a video asks for the same card's video skin: the
+        // rectangles of cover over the frame, and a row for every one of
+        // them with the stretch it stands over.
+        if segment.id == "tools.redact_video" {
+            self.redact_video_window
                 .show_for(&segment.id, &segment.label, &segment.detail, files);
             return;
         }
