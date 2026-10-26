@@ -285,6 +285,8 @@ struct App {
     /// The window a video is covered in, with a row for every cover's
     /// stretch, hidden until a redact is picked.
     redact_video_window: crate::platform::windows::redactvideowindow::RedactVideoWindow,
+    /// The window a sound is covered in, hidden until a bleep is picked.
+    redact_audio_window: crate::platform::windows::redactaudiowindow::RedactAudioWindow,
 }
 
 /// The end of a drag that has not been acted on yet.
@@ -448,6 +450,27 @@ impl App {
             crate::platform::windows::redactvideowindow::RedactVideoWindow::new(redact_video_sender)
                 .map_err(|reason| reason)?;
 
+        // The window a sound is covered in, with a stretch for every
+        // part of it the tone takes over. What its buttons say comes
+        // back the same way, into the same message.
+        let (redact_audio_sender, redact_audio_messages) =
+            std::sync::mpsc::channel::<crate::platform::windows::toolwindow::ToolEvent>();
+        {
+            let sender = sender.clone();
+            std::thread::spawn(move || {
+                while let Ok(event) = redact_audio_messages.recv() {
+                    if sender.send(Message::ToolWindow(event)).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+        let redact_audio_window =
+            crate::platform::windows::redactaudiowindow::RedactAudioWindow::new(
+                redact_audio_sender,
+            )
+            .map_err(|reason| reason)?;
+
         // The window a compress is asked in.
         let (compress_sender, compress_messages) =
             std::sync::mpsc::channel::<crate::platform::windows::toolwindow::ToolEvent>();
@@ -558,6 +581,7 @@ impl App {
             channels_window,
             redact_image_window,
             redact_video_window,
+            redact_audio_window,
         })
     }
 
@@ -802,6 +826,14 @@ impl App {
         // them with the stretch it stands over.
         if segment.id == "tools.redact_video" {
             self.redact_video_window
+                .show_for(&segment.id, &segment.label, &segment.detail, files);
+            return;
+        }
+        // A bleep asks for the sound's own card: the stretches the tone
+        // takes over, the peaks they stand over, and the hearing of
+        // both. It is not the plain window's form of typed fields.
+        if segment.id == "tools.bleep" {
+            self.redact_audio_window
                 .show_for(&segment.id, &segment.label, &segment.detail, files);
             return;
         }

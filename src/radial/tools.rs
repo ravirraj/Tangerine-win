@@ -1286,7 +1286,7 @@ const BLEEP_TONE_AMPLITUDE: f64 = 0.5;
 /// is written in its place, the same tone in every channel the sound
 /// carries. The stretch is said in frames: a frame is one instant of
 /// the sound, whatever number of channels it arrives in.
-fn bleep_over(
+pub(crate) fn bleep_over(
     samples: &mut [i16],
     channels: u16,
     start_frame: usize,

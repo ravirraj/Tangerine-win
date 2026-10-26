@@ -1,0 +1,340 @@
+// The card a sound is covered in.
+//
+// The skeleton is the shell's (shell.slint); the body is what the
+// reference lays out for a bleep: the count of the bleeps, a Bleep row
+// where every covered stretch of the sound stands — pulled on the
+// track the way a trim's range is dragged, a white cap at each end —
+// the Audio row with the sound's own peaks worn over it and the
+// playhead standing in it, the time the playhead is at and how long
+// the sound runs, the words that tell how a bleep is made, a Preview
+// row that hears the sound with and without the tone, and a footer
+// holding only the making of the bleeped copy.
+//
+// The card only draws. The pressing, the dragging of the stretches and
+// of their caps, the seeking on the peaks — all read by the window
+// itself, which holds the same geometry the card was given — the way
+// the crop, the trim and the video's own cover do.
+
+import { Tokens } from "tokens.slint";
+import { Panel } from "tokens.slint";
+import { CardHeader, Hairline, PillButton } from "shell.slint";
+import { LaneData } from "redact_video_window.slint";
+
+export component RedactAudioCard inherits Window {
+    // The size of the card, held here so the renderer reads what the
+    // window really is: the system tells us the client size, and the
+    // renderer draws exactly what these two say.
+    in property <length> card-width: 420px;
+    in property <length> card-height: 360px;
+
+    // What the card says.
+    in property <string> file-name;
+    in property <string> detail;
+    in property <float> ui-scale: 1.0;
+
+    // Where everything stands, in the card's own pixels, absolute.
+    in property <Panel> header-box;
+    in property <Panel> detail-box;
+    in property <Panel> hairline-top-box;
+    in property <Panel> bleeps-label-box;
+    in property <Panel> bleeps-said-box;
+    in property <Panel> bleep-label-box;
+    in property <Panel> bleep-track-box;
+    in property <Panel> audio-label-box;
+    in property <Panel> audio-track-box;
+    in property <Panel> time-left-box;
+    in property <Panel> time-right-box;
+    in property <Panel> helper-box;
+    in property <Panel> hairline-mid-box;
+    in property <Panel> preview-label-box;
+    in property <Panel> original-box;
+    in property <Panel> with-bleeps-box;
+    in property <Panel> hairline-bottom-box;
+    in property <Panel> run-box;
+
+    // The sound's own peaks, worn over the Audio row, and whether any
+    // of them has been worn yet.
+    in property <image> wave-image;
+    in property <bool> has-wave: false;
+
+    // The bleeps: one stretch each, shares of the track said the way
+    // every row of the machine says its own. Which one stands chosen.
+    in property <[LaneData]> bleeps;
+    in property <int> selected-bleep: -1;
+
+    // Where the playhead stands, as a share of the sound, and what the
+    // times say.
+    in property <float> playhead-fraction: 0.0;
+    in property <string> time-left;
+    in property <string> time-right;
+
+    // The count of the bleeps, said and held as a number, for the
+    // footer's saving to answer to.
+    in property <string> bleeps-said;
+    in property <int> bleeps-count: 0;
+
+    // The keyboard's stops: 1 the original, 2 the bleeped preview, 3
+    // save.
+    in property <int> focus-stop: 0;
+
+    callback run-chosen();
+    callback original-chosen();
+    callback with-bleeps-chosen();
+
+    width: root.card-width;
+    height: root.card-height;
+
+    Rectangle {
+        background: Tokens.window-bg;
+    }
+
+    CardHeader {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        file-name: root.file-name;
+        detail: root.detail;
+        ui-scale: root.ui-scale;
+        header-box: root.header-box;
+        detail-box: root.detail-box;
+    }
+    Hairline {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.hairline-top-box;
+    }
+
+    // The count of the bleeps, at the top of the section: the word,
+    // and how many stand.
+    Text {
+        x: root.bleeps-label-box.x; y: root.bleeps-label-box.y;
+        width: root.bleeps-label-box.width; height: root.bleeps-label-box.height;
+        text: "Bleeps";
+        color: Tokens.text;
+        font-size: root.ui-scale * 13px;
+        font-weight: 600;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+    }
+    Text {
+        x: root.bleeps-said-box.x; y: root.bleeps-said-box.y;
+        width: root.bleeps-said-box.width; height: root.bleeps-said-box.height;
+        text: root.bleeps-said;
+        color: Tokens.text;
+        font-size: root.ui-scale * 13px;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+    }
+
+    // The Bleep row: a label at the left, the track at the right, and
+    // every covered stretch standing on it with a cap at each of its
+    // ends — pulled together or at one end, the way a trim's own
+    // range is.
+    Text {
+        x: root.bleep-label-box.x; y: root.bleep-label-box.y;
+        width: root.bleep-label-box.width; height: root.bleep-label-box.height;
+        text: "Bleep";
+        color: Tokens.text;
+        font-size: root.ui-scale * 13px;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+    }
+    Rectangle {
+        x: root.bleep-track-box.x; y: root.bleep-track-box.y;
+        width: root.bleep-track-box.width;
+        height: root.bleep-track-box.height;
+        border-radius: Tokens.radius-control;
+        background: Tokens.quiet;
+
+        for bleep[bleep-index] in root.bleeps: Rectangle {
+            x: (root.bleep-track-box.x + bleep.start * root.bleep-track-box.width)
+               - root.bleep-track-box.x;
+            y: 0;
+            width: (bleep.end - bleep.start) * root.bleep-track-box.width;
+            height: root.bleep-track-box.height;
+            border-radius: Tokens.radius-control;
+            background: Tokens.accent-tint;
+            border-width: bleep-index == root.selected-bleep ? 2px : 0px;
+            border-color: Tokens.accent;
+
+            Rectangle {
+                x: 1px; y: 5px;
+                width: 3px;
+                height: parent.height - 10px;
+                border-radius: 2px;
+                background: Tokens.accent;
+            }
+            Rectangle {
+                x: parent.width - 4px; y: 5px;
+                width: 3px;
+                height: parent.height - 10px;
+                border-radius: 2px;
+                background: Tokens.accent;
+            }
+
+            Text {
+                x: 2px; y: 0;
+                width: parent.width - 4px; height: parent.height;
+                text: "Bleep " + bleep.number;
+                color: Tokens.accent;
+                font-size: root.ui-scale * 12px;
+                font-weight: 600;
+                font-family: "Segoe UI";
+                vertical-alignment: center;
+                horizontal-alignment: center;
+            }
+        }
+    }
+
+    // The Audio row: the sound's own peaks, worn over a track of its
+    // own, with the playhead standing in it where the sound is.
+    Text {
+        x: root.audio-label-box.x; y: root.audio-label-box.y;
+        width: root.audio-label-box.width; height: root.audio-label-box.height;
+        text: "Audio";
+        color: Tokens.text;
+        font-size: root.ui-scale * 13px;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+    }
+    Rectangle {
+        x: root.audio-track-box.x; y: root.audio-track-box.y;
+        width: root.audio-track-box.width;
+        height: root.audio-track-box.height;
+        border-radius: Tokens.radius-control;
+        background: Tokens.quiet;
+        clip: true;
+
+        Image {
+            x: 0; y: 0;
+            width: parent.width;
+            height: parent.height;
+            source: root.wave-image;
+            image-fit: fill;
+            visible: root.has-wave;
+        }
+        Rectangle {
+            x: root.playhead-fraction * parent.width - 1px;
+            y: 0;
+            width: 2px;
+            height: parent.height;
+            background: Tokens.text;
+            visible: root.playhead-fraction >= 0;
+        }
+    }
+
+    // The times under the rows: where the playhead stands, and how
+    // long the sound runs.
+    Text {
+        x: root.time-left-box.x; y: root.time-left-box.y;
+        width: root.time-left-box.width; height: root.time-left-box.height;
+        text: root.time-left;
+        color: Tokens.text;
+        font-size: root.ui-scale * 13px;
+        font-family: "Consolas";
+        vertical-alignment: center;
+    }
+    Text {
+        x: root.time-right-box.x; y: root.time-right-box.y;
+        width: root.time-right-box.width; height: root.time-right-box.height;
+        text: root.time-right;
+        color: Tokens.text;
+        font-size: root.ui-scale * 13px;
+        font-family: "Consolas";
+        vertical-alignment: center;
+        horizontal-alignment: right;
+    }
+
+    // The words that tell how a bleep is made.
+    Text {
+        x: root.helper-box.x; y: root.helper-box.y;
+        width: root.helper-box.width; height: root.helper-box.height;
+        text: "Drag across the Bleep layer to add a section, "
+            + "then drag a clip or either edge to adjust it.";
+        color: Tokens.text-muted;
+        font-size: root.ui-scale * 12px;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+        wrap: word-wrap;
+        overflow: elide;
+    }
+
+    // The section the preview stands in: a hairline to open it, the
+    // word of it, and the two pills that hear the sound.
+    Hairline {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.hairline-mid-box;
+    }
+    Text {
+        x: root.preview-label-box.x; y: root.preview-label-box.y;
+        width: root.preview-label-box.width; height: root.preview-label-box.height;
+        text: "Preview";
+        color: Tokens.text;
+        font-size: root.ui-scale * 13px;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+    }
+    PillButton {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.original-box; label: "Original";
+        focused: root.focus-stop == 1;
+        ui-scale: root.ui-scale;
+        clicked => { root.original-chosen(); }
+    }
+    PillButton {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.with-bleeps-box;
+        label: "\u{25b6} With Bleeps";
+        focused: root.focus-stop == 2;
+        ui-scale: root.ui-scale;
+        clicked => { root.with-bleeps-chosen(); }
+    }
+
+    Hairline {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.hairline-bottom-box;
+    }
+
+    // The footer: only the making of the bleeped copy stands here, the
+    // way the reference leaves a bleeped sound. Escape says no.
+    Rectangle {
+        x: root.run-box.x - 3px; y: root.run-box.y - 3px;
+        width: root.run-box.width + 6px; height: root.run-box.height + 6px;
+        border-radius: Tokens.radius-control + 3px;
+        border-width: 2px;
+        border-color: Tokens.accent;
+        visible: root.focus-stop == 3;
+    }
+    Rectangle {
+        x: root.run-box.x; y: root.run-box.y;
+        width: root.run-box.width; height: root.run-box.height;
+        border-radius: Tokens.radius-control;
+        background: root.bleeps-count == 0 ? Tokens.quiet
+                   : (run-touch.pressed ? Tokens.quiet-pressed
+                   : (run-touch.has-hover ? Tokens.quiet-hover : Tokens.quiet));
+
+        run-touch := TouchArea {
+            enabled: root.bleeps-count > 0;
+            clicked => { root.run-chosen(); }
+        }
+
+        Text {
+            text: "Save Bleeped Copy";
+            color: root.bleeps-count == 0 ? Tokens.text-muted : Tokens.text;
+            font-size: root.ui-scale * 13px;
+            font-weight: 500;
+            font-family: "Segoe UI";
+            vertical-alignment: center;
+            horizontal-alignment: center;
+        }
+    }
+}
