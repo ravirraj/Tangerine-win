@@ -17,6 +17,7 @@
 //! - [`animation`] decides whether a file holds more than one frame;
 //! - [`publish`] puts a finished file at its final name.
 
+pub mod adjustments;
 pub mod animation;
 pub mod annotate;
 pub mod audio;

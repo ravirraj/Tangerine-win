@@ -895,6 +895,20 @@ pub const OPERATIONS: &[Operation] = &[
         implemented: true,
         requires: Requirement::Processor("image"),
     },
+    Operation {
+        id: "tools.edit_image",
+        label: "Adjust",
+        detail: "Adjust photo brightness, contrast, and color",
+        icon: IconKind::Picture,
+        mode: RadialMode::Tools,
+        categories: &[FileKind::Image],
+        batch: Batch::Several,
+        folders: false,
+        output: Output::Beside("jpg"),
+        collision: Collision::Rename,
+        implemented: true,
+        requires: Requirement::Processor("image"),
+    },
     // ------------------------------------------------------ file actions
     Operation {
         id: "actions.copy-path",
@@ -1708,6 +1722,7 @@ mod tests {
             "tools.audio_to_video",
             "tools.collage",
             "tools.annotate",
+            "tools.edit_image",
             "actions.copy-path",
             "actions.duplicate",
             "actions.rename",

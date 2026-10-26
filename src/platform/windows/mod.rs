@@ -8,6 +8,7 @@ pub mod clipboard;
 pub mod compresswindow;
 pub mod cropwindow;
 pub mod droptarget;
+pub mod editimagewindow;
 pub mod explorer;
 pub mod frameimagewindow;
 pub mod input;

@@ -301,6 +301,8 @@ struct App {
     collage_window: crate::platform::windows::collagewindow::CollageWindow,
     /// The window a photo is annotated in, hidden until annotate is picked.
     annotate_window: crate::platform::windows::annotatewindow::AnnotateWindow,
+    /// The window a photo's adjustments are configured in, hidden until edit photo is picked.
+    edit_image_window: crate::platform::windows::editimagewindow::EditImageWindow,
 }
 
 /// The end of a drag that has not been acted on yet.
@@ -646,6 +648,21 @@ impl App {
             crate::platform::windows::annotatewindow::AnnotateWindow::new(annotate_sender)
                 .map_err(|reason| reason)?;
 
+        let (edit_image_sender, edit_image_receiver) = std::sync::mpsc::channel();
+        {
+            let sender = sender.clone();
+            std::thread::spawn(move || {
+                while let Ok(event) = edit_image_receiver.recv() {
+                    if sender.send(Message::ToolWindow(event)).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+        let edit_image_window =
+            crate::platform::windows::editimagewindow::EditImageWindow::new(edit_image_sender)
+                .map_err(|reason| reason)?;
+
         Ok(Self {
             controller,
             animation: WheelAnimation::new(),
@@ -706,6 +723,7 @@ impl App {
             visualizer_window,
             collage_window,
             annotate_window,
+            edit_image_window,
         })
     }
 
@@ -969,6 +987,12 @@ impl App {
         // An annotation asks for its own card: tool chips, color swatches, thickness, and callout text.
         if segment.id == "tools.annotate" {
             self.annotate_window
+                .show_for(&segment.id, &segment.label, &segment.detail, files);
+            return;
+        }
+        // A photo adjustment asks for its own card: preview canvas, sliders, compare toggle.
+        if segment.id == "tools.edit_image" {
+            self.edit_image_window
                 .show_for(&segment.id, &segment.label, &segment.detail, files);
             return;
         }

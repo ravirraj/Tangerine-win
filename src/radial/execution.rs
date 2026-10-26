@@ -269,6 +269,8 @@ pub struct ToolSettings {
     pub collage_aspect: Option<String>,
     /// Only `tools.annotate` reads this.
     pub annotations_data: Vec<crate::media::annotate::Annotation>,
+    /// Only `tools.edit_image` reads this.
+    pub photo_adjustments: Option<crate::media::adjustments::PhotoAdjustments>,
 }
 
 impl ToolSettings {

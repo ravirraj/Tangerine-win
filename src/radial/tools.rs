@@ -1308,6 +1308,76 @@ impl<P: Publisher> Tools<P> {
         self.publish(&finals, &temporary)
     }
 
+    /// Adjusts photo brightness, contrast, saturation, warmth, and vignette.
+    fn run_edit_image(&self, request: &Request) -> Outcome {
+        let manifest = Manifest::get();
+        let mut outputs = Vec::new();
+        let mut failed = 0usize;
+        let mut first_reason: Option<String> = None;
+        let adj = request.settings.photo_adjustments.unwrap_or_default();
+
+        for input in &request.inputs {
+            let result = self.adjust_image_one(input, &manifest, &adj);
+            match result {
+                Ok(path) => outputs.push(path),
+                Err(reason) => {
+                    failed += 1;
+                    let name = reason.name();
+                    diagnostics::log(Level::Warn, "action", &format!("a file was not processed: {name}"));
+                    if first_reason.is_none() {
+                        first_reason = Some(name.to_string());
+                    }
+                }
+            }
+        }
+
+        if failed == 0 {
+            Outcome::Succeeded { outputs }
+        } else {
+            let because = match first_reason {
+                Some(reason) => format!(": {reason}"),
+                None => String::new(),
+            };
+            Outcome::Failed {
+                reason: Failure::Error(format!(
+                    "{failed} of the files could not be processed{because}"
+                )),
+            }
+        }
+    }
+
+    fn adjust_image_one(
+        &self,
+        input: &Path,
+        manifest: &Manifest,
+        adj: &crate::media::adjustments::PhotoAdjustments,
+    ) -> Result<PathBuf, ToolError> {
+        let source_ext = input
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        let source = manifest
+            .format_of_extension(&source_ext)
+            .or_else(|| manifest.format(&source_ext))
+            .ok_or(ToolError::UnsupportedKind)?;
+        if crate::media::probe::kind_of(&source.format) != Some(crate::media::probe::Kind::Image) {
+            return Err(ToolError::UnsupportedKind);
+        }
+
+        let stem = input
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "file".to_string());
+        let temporary = input.with_file_name(format!("{stem}.adjusted-part.jpg"));
+
+        crate::media::adjustments::adjust_file(input, &temporary, adj)
+            .map_err(|_| ToolError::WriteError)?;
+
+        let finals = metadata_final_names(input, "adjusted", "jpg");
+        self.publish(&finals, &temporary)
+    }
+
     fn run_audio_to_video(&self, request: &Request) -> Outcome {
         let manifest = Manifest::get();
         let mut outputs = Vec::new();
@@ -3322,6 +3392,11 @@ impl<P: Publisher> Handler for Tools<P> {
         // An annotation tool draws arrows, boxes, text, or blur overlays onto photos.
         if request.operation == "tools.annotate" {
             return self.run_annotate(request);
+        }
+
+        // Photo adjustments (exposure, contrast, saturation, warmth, vignette).
+        if request.operation == "tools.edit_image" {
+            return self.run_edit_image(request);
         }
 
         let manifest = Manifest::get();
@@ -6405,6 +6480,54 @@ mod tests {
         let annotated_img = image::open(out_file).expect("annotated opens");
         assert_eq!(annotated_img.width(), 200);
         assert_eq!(annotated_img.height(), 200);
+
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn edit_image_operation_applies_adjustments() {
+        let scratch = std::env::temp_dir().join(format!("ot-edit-test-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&scratch);
+
+        let p1 = scratch.join("sample.jpg");
+        let img1 = image::RgbImage::from_pixel(100, 100, image::Rgb([120, 120, 120]));
+        img1.save(&p1).unwrap();
+
+        let tools = Tools {
+            ffmpeg_tools: crate::media::locator::Tools {
+                ffmpeg: PathBuf::from("ffmpeg"),
+                ffprobe: PathBuf::from("ffprobe"),
+            },
+            publisher: CopyPublisher,
+        };
+        let request = Request {
+            operation: "tools.edit_image".to_string(),
+            inputs: vec![p1.clone()],
+            settings: ToolSettings {
+                photo_adjustments: Some(crate::media::adjustments::PhotoAdjustments {
+                    brightness_x100: 25,
+                    contrast_x100: 120,
+                    vignette_x100: 50,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        };
+
+        let outcome = tools.run(&request, &Selection::inspect(&[p1.clone()]));
+        let outputs = match outcome {
+            Outcome::Succeeded { outputs } => outputs,
+            Outcome::Failed { reason } => panic!("adjust failed: {:?}", reason),
+            Outcome::Cancelled => panic!("cancelled"),
+        };
+        assert_eq!(outputs.len(), 1);
+        let out_file = &outputs[0];
+        assert!(out_file.is_file(), "output exists: {:?}", out_file);
+        assert!(out_file.to_string_lossy().contains("sample adjusted.jpg"));
+
+        let adjusted_img = image::open(out_file).expect("adjusted opens");
+        assert_eq!(adjusted_img.width(), 100);
+        assert_eq!(adjusted_img.height(), 100);
 
         let _ = std::fs::remove_dir_all(&scratch);
     }

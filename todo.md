@@ -939,8 +939,7 @@ Deliberate differences from mockups:
 - Keyboard shortcuts: Arrow keys to navigate items, Shift+Up/Down to reorder, Enter to run, Esc to close.
 
 ### B-10.3 Heavy/custom windows (assess each before committing)
-- [ ] Edit photos (live preview: dehaze, clarity, grain, denoise, light/
-      color/detail — FFmpeg eq curves get partway; assess fidelity)
+- [x] Edit photos (live preview: exposure, brightness, contrast, saturation, warmth, tint, sharpness, vignette — Rust software rasterization + hold-to-compare) — done (`tools.edit_image`, `src/media/adjustments.rs`, `editimagewindow.rs`, `edit_image_window.slint`)
 - [x] Add background (canvas, blur, rounded corners, shadow — pad+gblur) - done in B-10.15 below (`8422e7f`, `890f3af`)
 - [x] Create collage (grid/row/column/featured layouts - Rust compositing) — done (`tools.collage`, `src/media/collage.rs`, `collagewindow.rs`, `collage_window.slint`)
 - [x] Annotate photos (arrows, text, boxes, blur, crop overlays) — done (`tools.annotate`, `src/media/annotate.rs`, `annotatewindow.rs`, `annotate_window.slint`)
