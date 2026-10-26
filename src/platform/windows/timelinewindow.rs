@@ -225,9 +225,21 @@ thread_local! {
     // finished for the last trim can land nowhere.
     static STRIP_INBOX: std::cell::RefCell<Option<std::sync::mpsc::Receiver<StripPiece>>> =
         const { std::cell::RefCell::new(None) };
+    // A cancellation token for the background strip worker.
+    static STRIP_CANCEL: std::cell::RefCell<Option<std::sync::Arc<std::sync::atomic::AtomicBool>>> =
+        const { std::cell::RefCell::new(None) };
     // Whether a strip has been worn: the judgement the capture check
     // waits on, answered without touching the strip's own inbox.
     static STRIP_WORN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Cancels any running strip generation worker.
+fn cancel_strip_worker() {
+    STRIP_CANCEL.with(|slot| {
+        if let Some(cancel) = slot.borrow().as_ref() {
+            cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    });
 }
 
 /// Whether a strip has been worn, without touching what still may come.
@@ -252,17 +264,29 @@ fn ask_for_strip(
     height: u32,
     is_audio: bool,
 ) {
+    cancel_strip_worker();
+    let cancel_token = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let cancel_thread = cancel_token.clone();
+    STRIP_CANCEL.with(|slot| {
+        *slot.borrow_mut() = Some(cancel_token);
+    });
+
     let (sender, receiver) = std::sync::mpsc::channel::<StripPiece>();
     std::thread::spawn(move || {
         if is_audio {
             let (samples, rate) =
                 crate::media::audio::pcm_samples(&tools, &input).unwrap_or_default();
+            if cancel_thread.load(std::sync::atomic::Ordering::Relaxed) {
+                return;
+            }
             let buckets = ((width as f32 / 4.0).round() as usize).clamp(50, 200);
             let peaks = crate::media::audio::waveform_peaks(&samples, buckets);
             let strip = crate::media::audio::render_waveform_strip(&peaks, width, height);
             let (wide, tall) = (strip.width(), strip.height());
             let silence = crate::media::audio::detect_silence(&samples, rate, 0.01);
-            let _ = sender.send((strip.into_raw(), wide, tall, silence));
+            if !cancel_thread.load(std::sync::atomic::Ordering::Relaxed) {
+                let _ = sender.send((strip.into_raw(), wide, tall, silence));
+            }
         } else {
             let tiles = ((width as f32 / PILLAR_UNITS).round() as u32).clamp(6, 30);
             let tile_w = (width / tiles).max(1);
@@ -270,6 +294,9 @@ fn ask_for_strip(
             let step = (duration / tiles as f64).max(0.05);
             let mut strip = image::RgbaImage::new(tile_w * tiles, tile_h);
             for index in 0..tiles {
+                if cancel_thread.load(std::sync::atomic::Ordering::Relaxed) {
+                    return;
+                }
                 let moment = ((index as f64 + 0.5) * step).min(duration);
                 let Some(frame) = frame_at(&tools, &input, moment) else {
                     continue;
@@ -277,8 +304,10 @@ fn ask_for_strip(
                 let pillar = pillar_of(&frame, tile_w, tile_h);
                 image::imageops::overlay(&mut strip, &pillar, (index * tile_w) as i64, 0);
             }
-            let (wide, tall) = (strip.width(), strip.height());
-            let _ = sender.send((strip.into_raw(), wide, tall, None));
+            if !cancel_thread.load(std::sync::atomic::Ordering::Relaxed) {
+                let (wide, tall) = (strip.width(), strip.height());
+                let _ = sender.send((strip.into_raw(), wide, tall, None));
+            }
         }
     });
     STRIP_INBOX.with(|slot| {
@@ -2055,9 +2084,10 @@ unsafe extern "system" fn window_procedure(
         }
         WM_ERASEBKGND => LRESULT(1),
         WM_CLOSE => {
+            cancel_strip_worker();
             send(ToolEvent::Cancelled);
             unsafe {
-                ShowWindow(window, SW_HIDE);
+                let _ = ShowWindow(window, SW_HIDE);
             }
             LRESULT(0)
         }
@@ -2069,6 +2099,7 @@ unsafe extern "system" fn window_procedure(
 /// Runs what the window was open for, with the range the handles hold —
 /// or, when the window is asked for a split, with the cuts standing.
 unsafe fn run(window: HWND) {
+    cancel_strip_worker();
     let (split, shots, empty_points) = STATE.with(|slot| {
         let state = slot.borrow();
         let empty = if state.shots {
@@ -2141,8 +2172,9 @@ unsafe fn run(window: HWND) {
 
 /// Says no to what the window was open for, and puts it away.
 unsafe fn cancel(window: HWND) {
+    cancel_strip_worker();
     send(ToolEvent::Cancelled);
-    unsafe { ShowWindow(window, SW_HIDE) };
+    unsafe { let _ = ShowWindow(window, SW_HIDE); };
 }
 
 #[cfg(test)]

@@ -23,7 +23,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, LoadCursorW, PostQuitMessage, RegisterClassW,
     SetForegroundWindow, SetLayeredWindowAttributes, SetWindowPos, SetWindowTextW, ShowWindow,
     CW_USEDEFAULT, IDC_ARROW, LWA_ALPHA, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER, SW_HIDE,
-    SW_SHOW, WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
+    SW_SHOW, WM_DESTROY, WM_DPICHANGED, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
     WM_PAINT, WNDCLASSW, WS_EX_LAYERED,
 };
 
@@ -858,6 +858,34 @@ unsafe extern "system" fn frame_card_proc(
         }
         WM_DESTROY => {
             unsafe { PostQuitMessage(0) };
+            LRESULT(0)
+        }
+        WM_DPICHANGED => {
+            let rect_ptr = lparam.0 as *const RECT;
+            if !rect_ptr.is_null() {
+                let r = unsafe { *rect_ptr };
+                let _ = unsafe {
+                    SetWindowPos(
+                        hwnd,
+                        None,
+                        r.left,
+                        r.top,
+                        r.right - r.left,
+                        r.bottom - r.top,
+                        SWP_NOZORDER | SWP_NOACTIVATE,
+                    )
+                };
+            }
+            CURRENT_HOST.with(|cell| {
+                if let Some(host_rc) = cell.borrow().as_ref() {
+                    let mut host = host_rc.borrow_mut();
+                    let scale = scale_factor(hwnd);
+                    let phys_w = (CARD_W as f32 * scale).round() as u32;
+                    let phys_h = (CARD_H as f32 * scale).round() as u32;
+                    host.resize(phys_w, phys_h);
+                }
+            });
+            let _ = unsafe { InvalidateRect(Some(hwnd), None, true) };
             LRESULT(0)
         }
         _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },

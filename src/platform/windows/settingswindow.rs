@@ -21,7 +21,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, LoadCursorW, PostQuitMessage, RegisterClassW,
     SetForegroundWindow, SetLayeredWindowAttributes, SetWindowPos, ShowWindow,
     CW_USEDEFAULT, IDC_ARROW, LWA_ALPHA, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER, SW_HIDE,
-    SW_SHOW, WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN, WM_PAINT,
+    SW_SHOW, WM_DESTROY, WM_DPICHANGED, WM_ERASEBKGND, WM_KEYDOWN, WM_PAINT,
     WNDCLASSW, WS_EX_LAYERED,
 };
 
@@ -496,6 +496,25 @@ impl SettingsWindow {
             }
             WM_DESTROY => {
                 unsafe { PostQuitMessage(0); }
+                LRESULT(0)
+            }
+            WM_DPICHANGED => {
+                let rect_ptr = lparam.0 as *const RECT;
+                if !rect_ptr.is_null() {
+                    let r = unsafe { *rect_ptr };
+                    let _ = unsafe {
+                        SetWindowPos(
+                            hwnd,
+                            None,
+                            r.left,
+                            r.top,
+                            r.right - r.left,
+                            r.bottom - r.top,
+                            SWP_NOZORDER | SWP_NOACTIVATE,
+                        )
+                    };
+                }
+                let _ = unsafe { windows::Win32::Graphics::Gdi::InvalidateRect(Some(hwnd), None, true) };
                 LRESULT(0)
             }
             _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },

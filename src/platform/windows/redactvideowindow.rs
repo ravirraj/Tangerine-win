@@ -316,8 +316,20 @@ thread_local! {
     /// the work is buried here for the window to collect.
     static STRIP_INBOX: std::cell::RefCell<Option<std::sync::mpsc::Receiver<StripPiece>>> =
         const { std::cell::RefCell::new(None) };
+    /// A cancellation token for the background strip worker.
+    static STRIP_CANCEL: std::cell::RefCell<Option<std::sync::Arc<std::sync::atomic::AtomicBool>>> =
+        const { std::cell::RefCell::new(None) };
     /// Whether the finished strip has been put on the card already.
     static STRIP_WORN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Cancels any running strip generation worker.
+fn cancel_strip_worker() {
+    STRIP_CANCEL.with(|slot| {
+        if let Some(cancel) = slot.borrow().as_ref() {
+            cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    });
 }
 
 /// One finished strip: its pixels laid one colour after another, and
@@ -688,6 +700,13 @@ fn strip_edges(window: HWND) -> (u32, u32) {
 /// Asks the strip of moments elsewhere, one moment of the video at a
 /// time, laying the tiles' answers together into one strip.
 fn ask_for_strip(tools: locator::Tools, input: PathBuf, duration: f64, width: u32, height: u32) {
+    cancel_strip_worker();
+    let cancel_token = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let cancel_thread = cancel_token.clone();
+    STRIP_CANCEL.with(|slot| {
+        *slot.borrow_mut() = Some(cancel_token);
+    });
+
     let (sender, receiver) = std::sync::mpsc::channel::<StripPiece>();
     std::thread::spawn(move || {
         let tiles = ((width as f32 / PILLAR_UNITS).round() as u32).clamp(6, 30);
@@ -696,6 +715,9 @@ fn ask_for_strip(tools: locator::Tools, input: PathBuf, duration: f64, width: u3
         let step = (duration / tiles as f64).max(0.05);
         let mut strip = image::RgbaImage::new(tile_w * tiles, tile_h);
         for index in 0..tiles {
+            if cancel_thread.load(std::sync::atomic::Ordering::Relaxed) {
+                return;
+            }
             let moment = ((index as f64 + 0.5) * step).min(duration);
             let Some(frame) = frame_at(&tools, &input, moment) else {
                 continue;
@@ -703,8 +725,10 @@ fn ask_for_strip(tools: locator::Tools, input: PathBuf, duration: f64, width: u3
             let pillar = pillar_of(&frame, tile_w, tile_h);
             image::imageops::overlay(&mut strip, &pillar, (index * tile_w) as i64, 0);
         }
-        let (wide, tall) = (strip.width(), strip.height());
-        let _ = sender.send((strip.into_raw(), wide, tall));
+        if !cancel_thread.load(std::sync::atomic::Ordering::Relaxed) {
+            let (wide, tall) = (strip.width(), strip.height());
+            let _ = sender.send((strip.into_raw(), wide, tall));
+        }
     });
     STRIP_INBOX.with(|slot| {
         *slot.borrow_mut() = Some(receiver);
@@ -1797,6 +1821,7 @@ unsafe fn remove_selected(window: HWND) {
 /// covering at the same relative places. A cover that was given no
 /// stretch stands for the whole video.
 unsafe fn run(window: HWND) {
+    cancel_strip_worker();
     STATE.with(|slot| {
         let state = slot.borrow();
         if state.dragging != Drag::Nothing
@@ -1830,6 +1855,7 @@ unsafe fn run(window: HWND) {
 
 /// Says no to what the window was open for, and puts it away.
 unsafe fn cancel(window: HWND) {
+    cancel_strip_worker();
     send(ToolEvent::Cancelled);
     unsafe {
         let _ = ShowWindow(window, SW_HIDE);

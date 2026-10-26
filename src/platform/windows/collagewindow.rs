@@ -18,7 +18,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, LoadCursorW, PostQuitMessage,
     RegisterClassW, SetForegroundWindow, SetLayeredWindowAttributes, SetWindowPos,
     SetWindowTextW, ShowWindow, CW_USEDEFAULT, IDC_ARROW, LWA_ALPHA, SWP_NOACTIVATE,
-    SWP_NOMOVE, SWP_NOZORDER, SW_HIDE, SW_SHOW, WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN,
+    SWP_NOMOVE, SWP_NOZORDER, SW_HIDE, SW_SHOW, WM_DESTROY, WM_DPICHANGED, WM_ERASEBKGND, WM_KEYDOWN,
     WM_LBUTTONDOWN, WM_MOUSEMOVE, WM_LBUTTONUP, WM_PAINT, WNDCLASSW, WS_EX_LAYERED,
 };
 
@@ -660,6 +660,35 @@ impl CollageWindow {
             }
             WM_DESTROY => {
                 unsafe { PostQuitMessage(0); }
+                LRESULT(0)
+            }
+            WM_DPICHANGED => {
+                let rect_ptr = lparam.0 as *const RECT;
+                if !rect_ptr.is_null() {
+                    let r = unsafe { *rect_ptr };
+                    let _ = unsafe {
+                        SetWindowPos(
+                            hwnd,
+                            None,
+                            r.left,
+                            r.top,
+                            r.right - r.left,
+                            r.bottom - r.top,
+                            SWP_NOZORDER | SWP_NOACTIVATE,
+                        )
+                    };
+                }
+                HOST_RC.with(|cell| {
+                    if let Some(host_rc) = cell.borrow().as_ref() {
+                        let mut host = host_rc.borrow_mut();
+                        let scale = scale_factor(hwnd);
+                        let client_w = ((CARD_W as f32) * scale).round() as u32;
+                        let client_h = ((CARD_H as f32) * scale).round() as u32;
+                        let _ = host.renderer_window.set_size(slint::PhysicalSize::new(client_w, client_h));
+                        host.sync_card();
+                    }
+                });
+                let _ = unsafe { InvalidateRect(Some(hwnd), None, true) };
                 LRESULT(0)
             }
             _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },

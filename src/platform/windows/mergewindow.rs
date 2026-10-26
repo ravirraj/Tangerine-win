@@ -24,7 +24,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, GetClientRect, LoadCursorW, PostQuitMessage, RegisterClassW,
     SetForegroundWindow, SetLayeredWindowAttributes, SetWindowPos, ShowWindow, CW_USEDEFAULT,
     IDC_ARROW, LWA_ALPHA, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER, SW_HIDE, SW_SHOW,
-    WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_PAINT, WNDCLASSW, WS_EX_LAYERED,
+    WM_DESTROY, WM_DPICHANGED, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_PAINT, WNDCLASSW, WS_EX_LAYERED,
 };
 
 use crate::media::locator;
@@ -871,6 +871,31 @@ unsafe extern "system" fn merge_card_proc(
         }
         WM_DESTROY => {
             unsafe { PostQuitMessage(0) };
+            LRESULT(0)
+        }
+        WM_DPICHANGED => {
+            let rect_ptr = lparam.0 as *const RECT;
+            if !rect_ptr.is_null() {
+                let r = unsafe { *rect_ptr };
+                let _ = unsafe {
+                    SetWindowPos(
+                        hwnd,
+                        None,
+                        r.left,
+                        r.top,
+                        r.right - r.left,
+                        r.bottom - r.top,
+                        SWP_NOZORDER | SWP_NOACTIVATE,
+                    )
+                };
+            }
+            let scale = scale_factor(hwnd);
+            let count = STATE.with(|s| s.borrow().items.len());
+            let phys_w = (CARD_W as f32 * scale).round() as i32;
+            let height_units = Layout::card_height(count);
+            let phys_h = (height_units * scale).round() as i32;
+            apply_layout(phys_w, phys_h, count);
+            refresh_card();
             LRESULT(0)
         }
         _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
