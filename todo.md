@@ -944,7 +944,7 @@ Deliberate differences from mockups:
 - [x] Add background (canvas, blur, rounded corners, shadow — pad+gblur) - done in B-10.15 below (`8422e7f`, `890f3af`)
 - [ ] Create collage (grid/row/column/featured layouts - Rust compositing) — TODO (scheduled after audio visualizer)
 - [ ] Annotate photos (arrows, text, boxes, blur, crop overlays) — TODO (scheduled after audio visualizer)
-- [ ] Audio visualizer (animated waveform -> MP4, orientation options) — in progress B-10.16
+- [ ] Audio visualizer (animated waveform -> MP4, orientation options) — TODO (backend done `c71d443`; window UI to complete afterward)
 - [x] Bleep audio (movable time ranges, original-vs-bleep comparison) - done in B-10.10 above (preview heard through the system's own player; the headmoving time-range asking is the window's own drag; done `0bdf17e`)
 - [x] Redact photos / Redact video (movable solid/blur/pixelate boxes) - done in B-10.10 above (`203f2b7`, `a9cae5b`)
 - [x] Organize PDF pages (rotate/duplicate/remove pages) - done in B-10.14 below (`9ff1973`, `fe5150a`)
@@ -1026,11 +1026,11 @@ Original behavior (Swift + operations, authoritative — read 2026-10-26):
 - Output: `{stem} visualizer.mp4` beside input audio file.
 
 Progress & Plan:
-- [x] Phase A — Evidence & Audit: reference mockup `audioToVideo.webp` probed and converted to PNG artifact `ref-audioToVideo.png`, Swift `AudioToVideoToolView` and `AudioOps.visualize` audited, todo section documented.
-- [ ] Phase B — Backend: Audio visualizer module `src/media/visualizer.rs` (waveform sample bucketing, frame rendering, MP4 video multiplexing with input audio), register `tools.visualize_audio` for `FileKind::Audio`, `run_visualize_audio` in `tools.rs`, unit tests.
-- [ ] Phase C — Window: twin layout host `audiovisualizerwindow.rs` + Slint card `audio_visualizer_window.slint`, stage canvas preview, style & shape pickers, color swatches, footer actions, dispatch in `app.rs`.
-- [ ] Phase D — Proof: pump test, capture test (`target/shots/audio-visualizer-window.png`), visual check against `ref-audioToVideo.png`.
-- [ ] Phase E — Docs: update `todo.md`, `HANDOFF.md`, `PLAN.md`, `ui-preview.md`.
+- [x] Phase A — Evidence & Audit: reference mockup `audioToVideo.webp` probed and converted to PNG artifact `ref-audioToVideo.png`, Swift `AudioToVideoToolView` and `AudioOps.visualize` audited, todo section documented (`819e200`).
+- [x] Phase B — Backend: Audio visualizer module `src/media/visualizer.rs` (waveform sample bucketing, frame rendering, MP4 video multiplexing with input audio), register `tools.audio_to_video` for `FileKind::Audio`, `run_audio_to_video` in `tools.rs`, real FFmpeg MP4 unit tests passing (`c71d443`).
+- [ ] Phase C — Window Host & Card: (TODO - skipped per user instruction; to be completed afterward with Collage & Annotate)
+- [ ] Phase D — Proof & Window Capture: (TODO - to be completed with Phase C)
+- [ ] Phase E — Docs & UI Preview: (TODO)
 
 Deliberate differences from mockups:
 - Windows native chrome ("Audio Visualizer") with close top-right.
