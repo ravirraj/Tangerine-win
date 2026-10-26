@@ -946,7 +946,7 @@ Deliberate differences from mockups:
 - [ ] Audio visualizer (animated waveform -> MP4, orientation options)
 - [x] Bleep audio (movable time ranges, original-vs-bleep comparison) - done in B-10.10 above (preview heard through the system's own player; the headmoving time-range asking is the window's own drag; done `0bdf17e`)
 - [x] Redact photos / Redact video (movable solid/blur/pixelate boxes) - done in B-10.10 above (`203f2b7`, `a9cae5b`)
-- [ ] Organize PDF pages (rotate/duplicate/remove pages) - IN PROGRESS: B-10.14 below.
+- [x] Organize PDF pages (rotate/duplicate/remove pages) - done in B-10.14 below (`9ff1973`, `fe5150a`)
 
 ### B-10.14 Organize PDF Pages (roadmap P3-14)
 Reference: `tool-windows/organizePDF.webp` + `DESIGN-SPEC.md` §5/§13 + Swift `PDF/PDFToolViews.swift` (`OrganizePDFToolView`, `PageCell`), `Operations/PDFOps.swift` (`PDFOps.assemble`).
@@ -966,11 +966,11 @@ Original behavior (Swift + operations, authoritative — read 2026-10-26):
   - Execution (`PDFOps.assemble`): Copies specified pages with rotations to new PDF document, output named `{stem} organized.pdf` beside input.
 
 Progress & Plan:
-- [x] Phase A — Evidence & Audit: mockups read (`organizePDF.webp`), Swift sources read (`PDFToolViews.swift`, `PDFOps.swift`), todo section created.
-- [ ] Phase B — Backend: implement `assemble` in `src/media/pdf.rs` using `copy_page_from_document` + `set_rotation`, register `tools.organize_pdf` in `registry.rs`, implement `run_organize_pdf` in `tools.rs`, unit tests + real PDFium tests.
-- [ ] Phase C — Window: twin layout host `organizepdfwindow.rs` + Slint card `organize_pdf_window.slint`, grid of PageCards, sidebar action buttons (Rotate L/R, Duplicate, Remove, Reverse), selection management, keyboard shortcuts, dispatch in `app.rs`.
-- [ ] Phase D — Proof: pump test, capture test (`target/shots/organize-pdf-window.png`), eyeballed against `organizePDF.webp`.
-- [ ] Phase E — Docs: update `todo.md`, `HANDOFF.md`, `PLAN.md`.
+- [x] Phase A — Evidence & Audit: mockups read (`organizePDF.webp`), Swift sources read (`PDFToolViews.swift`, `PDFOps.swift`), todo section created (`12a00d9`).
+- [x] Phase B — Backend: implement `assemble` in `src/media/pdf.rs` using `copy_page_from_document` + `set_rotation`, register `tools.organize_pdf` in `registry.rs`, implement `run_organize_pdf` in `tools.rs`, unit tests + real PDFium tests (`9ff1973`).
+- [x] Phase C — Window: twin layout host `organizepdfwindow.rs` + Slint card `organize_pdf_window.slint`, grid of PageCards, sidebar action buttons (Rotate L/R, Duplicate, Remove, Reverse), selection management, keyboard shortcuts, dispatch in `app.rs` (`fe5150a`).
+- [x] Phase D — Proof: pump test, capture test (`target/shots/organize-pdf-window.png`), eyeballed against `organizePDF.webp` (`fe5150a`).
+- [x] Phase E — Docs: update `todo.md`, `HANDOFF.md`, `PLAN.md`.
 
 Deliberate differences from mockups:
 - Windows native chrome ("Organize Pages") with close top-right.

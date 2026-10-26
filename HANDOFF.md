@@ -68,28 +68,18 @@ All `reference\…` paths above are relative to the repo root
 ## 3. State at handoff
 
 - Branch `phase/b-10-tool-windows`, tree clean. Chain ends:
-  `… 500d9cc` (metadata window host + card)
-  → `453681b` (audio trim backend) → `31d584e` (audio trim timeline skin)
-  → `9584c9a` (normalize volume backend) → `df67df1` (shared LabeledSlider control)
-  → `bee8c6e` (normalize volume window host + Slint card)
-  → `3380dbd` (convert audio channels backend)
-  → `42b08d8` (convert audio channels window host + Slint card)
-  → `6b5dbd8` (unify normalize volume and audio channels window UI with Windows shell standard)
-  → `aeeba44` (docs: HANDOFF unification note) → `1c01ef3` (chrome-aware outer
-  size) → `bf62786` (titlebar chrome parity fixes)
-  → `0efe153` (docs: Redact Phase A evidence and plan for B-10.10)
-  → `95f3f15` (must-use warnings quieted in the new window hosts, dead metadata
-  code dropped, three-shot capture probe test added). The 2026-10-26 audit round
-  over these twenty commits is recorded in `todo.md` B-10.11; the capture-hash
-  protocol it amended lives in PLAYBOOK §3.
-- Tools wheel now has **10** implemented ops: compress, crop, trim, split, rotate,
-  resize, merge, metadata, normalize, channels. Dedicated windows exist for
+  `… 3f42bb9` (Phase A merge) -> `93d60a3` (merge execution backend) -> `6da91cc` (merge window host and card) -> `d59bc3b` (docs: complete B-10.13)
+  → `12a00d9` (docs: B-10.14 Organize PDF Pages Phase A evidence and audit)
+  → `9ff1973` (feat(organize-pdf): organize pdf pages execution backend)
+  → `fe5150a` (feat(organize-pdf): organize pdf pages window host and card)
+- Tools wheel now has **11** implemented ops: compress, crop, trim, split, rotate,
+  resize, merge, metadata, normalize, channels, organize_pdf. Dedicated windows exist for
   Trim Video, Split Video, Crop Video/Image, Compress, Edit Metadata, Trim Audio,
   Normalize Volume, Convert Audio Channels, Redact Photo, Redact Video, Bleep Audio,
-  Change Speed, and Join Videos / Merge PDFs matching reference behavior and visual mockups.
-- Tests at handoff: **494 passed; 0 failed; 69 ignored** (`cargo test`:
-  `test result: ok. 494 passed; 0 failed; 69 ignored` — real-FFmpeg and real-PDFium operation
-  tests, and all window captures including `join-videos-window.png` and `merge-pdf-window.png`).
+  Change Speed, Join Videos / Merge PDFs, and Organize PDF Pages matching reference behavior and visual mockups.
+- Tests at handoff: **498 passed; 0 failed; 72 ignored** (`cargo test`:
+  `test result: ok. 498 passed; 0 failed; 72 ignored` — real-FFmpeg and real-PDFium operation
+  tests, and all window captures including `join-videos-window.png`, `merge-pdf-window.png`, and `organize-pdf-window.png`).
   Warnings: **43** (exact baseline, 0 new warnings).
 - `ToolSettings` fields today: `width, height (u32)`, `start_ms, end_ms (u64)`,
   `points_ms: Vec<u64>`, `crop_x, crop_y, crop_w, crop_h (Option<u32>)`,
@@ -99,7 +89,7 @@ All `reference\…` paths above are relative to the repo root
   `metadata_remove_sensitive: bool`, `normalize_lufs_x10: Option<i32>`,
   `normalize_range_x10: Option<i32>`, `normalize_true_peak_x10: Option<i32>`,
   `channel_mode: Option<String>`, `channel_left_gain: Option<u32>`,
-  `channel_right_gain: Option<u32>`.
+  `channel_right_gain: Option<u32>`, `pdf_pages: Vec<(usize, usize, i32)>`.
 
 ## 4. The conventions a new window must follow
 
