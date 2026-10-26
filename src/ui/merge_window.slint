@@ -1,0 +1,302 @@
+// The card a list of videos or PDFs is reordered and merged on.
+//
+// Shared by Join Videos (video concatenation) and Merge PDFs (document merging).
+// The skeleton — header, hairlines, footer — is the shell's, shared by
+// every tool window (shell.slint). The body is an ordered list of items,
+// each wearing its index number, a thumbnail or badge, the file name,
+// duration or page count, and stacked Up/Down chevron buttons to reorder.
+
+import { Tokens, Panel } from "tokens.slint";
+import { CardHeader, Hairline, CardFooter } from "shell.slint";
+
+export struct MergeItemData {
+    index: int,
+    display-index: string,
+    name: string,
+    detail: string,
+    thumb: image,
+    has-thumb: bool,
+    ext-badge: string,
+    focused: bool,
+    can-move-up: bool,
+    can-move-down: bool,
+    y: float,
+    height: float,
+}
+
+export component MergeCard inherits Window {
+    in property <float> ui-scale: 1.0;
+    in property <length> card-width: 400px;
+    in property <length> card-height: 400px;
+
+    // Window / Header
+    in property <Panel> header-box;
+    in property <Panel> detail-box;
+    in property <Panel> hairline-top;
+    in property <string> file-name: "Join Videos";
+    in property <string> detail: "2 videos";
+
+    // Section
+    in property <Panel> section-box;
+    in property <string> section-title: "Playback order";
+
+    // Reorderable items list
+    in property <[MergeItemData]> items;
+    in property <int> focused-index: -1;
+
+    // Footnote / summary text
+    in property <Panel> footnote-box;
+    in property <string> footnote-text: "Clips are scaled to fit the first clip. Output is MP4.";
+
+    // Footer
+    in property <Panel> hairline-bottom;
+    in property <Panel> helper-box;
+    in property <Panel> cancel-box;
+    in property <Panel> run-box;
+    in property <string> run-label: "Join Videos";
+    in property <bool> run-enabled: true;
+    in property <int> button-focus: 0; // 0=none, 1=cancel, 2=run
+
+    callback move-up-chosen(int);
+    callback move-down-chosen(int);
+    callback item-chosen(int);
+    callback run-chosen();
+    callback cancel-chosen();
+
+    width: root.card-width;
+    height: root.card-height;
+    background: Tokens.window-bg;
+
+    CardHeader {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        file-name: root.file-name;
+        detail: root.detail;
+        ui-scale: root.ui-scale;
+        header-box: root.header-box;
+        detail-box: root.detail-box;
+    }
+
+    Hairline {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.hairline-top;
+    }
+
+    // Section title
+    Text {
+        x: root.section-box.x;
+        y: root.section-box.y;
+        width: root.section-box.width;
+        height: root.section-box.height;
+        text: root.section-title;
+        color: Tokens.text-muted;
+        font-size: root.ui-scale * 12px;
+        font-weight: 600;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+    }
+
+    // Items
+    for item in root.items: Rectangle {
+        x: 0px;
+        y: item.y * 1px;
+        width: root.card-width;
+        height: item.height * 1px;
+        background: item.focused ? Tokens.quiet : transparent;
+
+        // Mouse click on row selects it
+        TouchArea {
+            x: 0; y: 0;
+            width: parent.width - 56px * root.ui-scale;
+            height: parent.height;
+            clicked => { root.item-chosen(item.index); }
+        }
+
+        // Left focus accent bar
+        Rectangle {
+            x: 0; y: 4px * root.ui-scale;
+            width: 3px * root.ui-scale;
+            height: parent.height - 8px * root.ui-scale;
+            background: Tokens.accent;
+            visible: item.focused;
+            border-radius: 1.5px * root.ui-scale;
+        }
+
+        // Index number
+        Text {
+            x: 14px * root.ui-scale;
+            y: 0px;
+            width: 22px * root.ui-scale;
+            height: parent.height;
+            text: item.display-index;
+            color: Tokens.text-muted;
+            font-size: root.ui-scale * 12px;
+            font-family: "Segoe UI";
+            vertical-alignment: center;
+            horizontal-alignment: center;
+        }
+
+        // Thumbnail / File Icon badge
+        Rectangle {
+            x: 40px * root.ui-scale;
+            y: (parent.height - 40px * root.ui-scale) / 2;
+            width: 40px * root.ui-scale;
+            height: 40px * root.ui-scale;
+            border-radius: 6px * root.ui-scale;
+            background: Tokens.elevated;
+            clip: true;
+
+            if item.has-thumb: Image {
+                x: 0; y: 0;
+                width: parent.width;
+                height: parent.height;
+                source: item.thumb;
+                image-fit: cover;
+            }
+
+            if !item.has-thumb: Text {
+                x: 0; y: 0;
+                width: parent.width;
+                height: parent.height;
+                text: item.ext-badge;
+                color: Tokens.text-muted;
+                font-size: root.ui-scale * 10px;
+                font-weight: 700;
+                font-family: "Segoe UI";
+                vertical-alignment: center;
+                horizontal-alignment: center;
+            }
+        }
+
+        // Text details (filename + subtitle)
+        Text {
+            x: 88px * root.ui-scale;
+            y: 8px * root.ui-scale;
+            width: parent.width - 146px * root.ui-scale;
+            height: 18px * root.ui-scale;
+            text: item.name;
+            color: Tokens.text;
+            font-size: root.ui-scale * 13px;
+            font-weight: 500;
+            font-family: "Segoe UI";
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        Text {
+            x: 88px * root.ui-scale;
+            y: 28px * root.ui-scale;
+            width: parent.width - 146px * root.ui-scale;
+            height: 16px * root.ui-scale;
+            text: item.detail;
+            color: Tokens.text-muted;
+            font-size: root.ui-scale * 11px;
+            font-family: "Segoe UI";
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        // Stacked Up and Down chevron buttons
+        // Up Chevron Button
+        up-touch := TouchArea {
+            x: parent.width - 48px * root.ui-scale;
+            y: 6px * root.ui-scale;
+            width: 32px * root.ui-scale;
+            height: 20px * root.ui-scale;
+            enabled: item.can-move-up;
+            clicked => { root.move-up-chosen(item.index); }
+
+            Rectangle {
+                x: 0; y: 0;
+                width: parent.width; height: parent.height;
+                border-radius: 4px * root.ui-scale;
+                background: !item.can-move-up ? transparent : (up-touch.pressed ? Tokens.quiet-pressed : (up-touch.has-hover ? Tokens.quiet-hover : transparent));
+
+                Path {
+                    commands: "M 6 13 L 12 7 L 18 13";
+                    viewbox-width: 24;
+                    viewbox-height: 20;
+                    fill: transparent;
+                    stroke: item.can-move-up ? (up-touch.pressed ? Tokens.accent : Tokens.transport) : Tokens.field-border;
+                    stroke-width: 1.8px;
+                    stroke-line-cap: round;
+                    stroke-line-join: round;
+                    width: 16px * root.ui-scale;
+                    height: 14px * root.ui-scale;
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                }
+            }
+        }
+
+        // Down Chevron Button
+        down-touch := TouchArea {
+            x: parent.width - 48px * root.ui-scale;
+            y: 28px * root.ui-scale;
+            width: 32px * root.ui-scale;
+            height: 20px * root.ui-scale;
+            enabled: item.can-move-down;
+            clicked => { root.move-down-chosen(item.index); }
+
+            Rectangle {
+                x: 0; y: 0;
+                width: parent.width; height: parent.height;
+                border-radius: 4px * root.ui-scale;
+                background: !item.can-move-down ? transparent : (down-touch.pressed ? Tokens.quiet-pressed : (down-touch.has-hover ? Tokens.quiet-hover : transparent));
+
+                Path {
+                    commands: "M 6 7 L 12 13 L 18 7";
+                    viewbox-width: 24;
+                    viewbox-height: 20;
+                    fill: transparent;
+                    stroke: item.can-move-down ? (down-touch.pressed ? Tokens.accent : Tokens.transport) : Tokens.field-border;
+                    stroke-width: 1.8px;
+                    stroke-line-cap: round;
+                    stroke-line-join: round;
+                    width: 16px * root.ui-scale;
+                    height: 14px * root.ui-scale;
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                }
+            }
+        }
+    }
+
+    // Footnote / canvas helper info
+    Text {
+        x: root.footnote-box.x;
+        y: root.footnote-box.y;
+        width: root.footnote-box.width;
+        height: root.footnote-box.height;
+        text: root.footnote-text;
+        color: Tokens.text-muted;
+        font-size: root.ui-scale * 11px;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    Hairline {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.hairline-bottom;
+    }
+
+    CardFooter {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        ui-scale: root.ui-scale;
+        helper-box: root.helper-box;
+        cancel-box: root.cancel-box;
+        run-box: root.run-box;
+        run-label: root.run-label;
+        run-enabled: root.run-enabled;
+        button-focus: root.button-focus;
+        run-chosen => { root.run-chosen(); }
+        cancel-chosen => { root.cancel-chosen(); }
+    }
+}

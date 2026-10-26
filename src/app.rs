@@ -289,6 +289,8 @@ struct App {
     redact_video_window: crate::platform::windows::redactvideowindow::RedactVideoWindow,
     /// The window a sound is covered in, hidden until a bleep is picked.
     redact_audio_window: crate::platform::windows::redactaudiowindow::RedactAudioWindow,
+    /// The window videos or PDFs are reordered and merged in, hidden until merge is picked.
+    merge_window: crate::platform::windows::mergewindow::MergeWindow,
 }
 
 /// The end of a drag that has not been acted on yet.
@@ -545,6 +547,20 @@ impl App {
         let speed_window = crate::platform::windows::speedwindow::SpeedWindow::new(speed_sender)
             .map_err(|reason| reason)?;
 
+        let (merge_sender, merge_receiver) = std::sync::mpsc::channel();
+        {
+            let sender = sender.clone();
+            std::thread::spawn(move || {
+                while let Ok(event) = merge_receiver.recv() {
+                    if sender.send(Message::ToolWindow(event)).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+        let merge_window = crate::platform::windows::mergewindow::MergeWindow::new(merge_sender)
+            .map_err(|reason| reason)?;
+
         Ok(Self {
             controller,
             animation: WheelAnimation::new(),
@@ -599,6 +615,7 @@ impl App {
             redact_image_window,
             redact_video_window,
             redact_audio_window,
+            merge_window,
         })
     }
 
@@ -826,6 +843,12 @@ impl App {
         // own beginning, and the six stops the pace is chosen of.
         if segment.id == "tools.speed" {
             self.speed_window
+                .show_for(&segment.id, &segment.label, &segment.detail, files);
+            return;
+        }
+        // A merge asks for its own card: file list reorder for videos or PDFs.
+        if segment.id == "tools.merge" {
+            self.merge_window
                 .show_for(&segment.id, &segment.label, &segment.detail, files);
             return;
         }

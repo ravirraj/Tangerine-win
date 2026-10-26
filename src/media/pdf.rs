@@ -148,6 +148,41 @@ pub fn render_pages(
     Ok(pages)
 }
 
+/// Renders the first page of a PDF document as an image.
+pub fn render_first_page(input: &Path, max_dimension: u32) -> Result<image::DynamicImage, PdfError> {
+    let pdfium = pdfium()?;
+    let document = pdfium
+        .load_pdf_from_file(input, None)
+        .map_err(|_| PdfError::NotAPdf)?;
+    let first_page = document.pages().get(0).map_err(|_| PdfError::NotAPdf)?;
+    let size = first_page.page_size();
+    let w = size.width().value;
+    let h = size.height().value;
+    if !(w.is_finite() && h.is_finite()) || w < 1.0 || h < 1.0 {
+        return Err(PdfError::RenderFailed);
+    }
+    let scale = (max_dimension as f32 / w.max(h)).min(2.0).max(0.1);
+    let target_w = (w * scale).max(1.0) as i32;
+    let target_h = (h * scale).max(1.0) as i32;
+    let config = PdfRenderConfig::new()
+        .set_target_width(target_w)
+        .set_target_height(target_h);
+    let bitmap = first_page
+        .render_with_config(&config)
+        .map_err(|_| PdfError::RenderFailed)?;
+    let picture = bitmap.as_image().map_err(|_| PdfError::RenderFailed)?;
+    Ok(picture)
+}
+
+/// Returns the number of pages in the PDF document.
+pub fn page_count(input: &Path) -> Result<usize, PdfError> {
+    let pdfium = pdfium()?;
+    let document = pdfium
+        .load_pdf_from_file(input, None)
+        .map_err(|_| PdfError::NotAPdf)?;
+    Ok(document.pages().len() as usize)
+}
+
 /// Reads the text of every page, one page after another.
 pub fn extract_text(input: &Path) -> Result<String, PdfError> {
     let pdfium = pdfium()?;

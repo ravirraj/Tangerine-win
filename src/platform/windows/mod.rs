@@ -8,6 +8,7 @@ pub mod cropwindow;
 pub mod droptarget;
 pub mod explorer;
 pub mod input;
+pub mod mergewindow;
 pub mod metadatawindow;
 pub mod monitors;
 pub mod normalizewindow;
