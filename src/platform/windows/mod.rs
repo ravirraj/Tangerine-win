@@ -7,6 +7,7 @@ pub mod compresswindow;
 pub mod cropwindow;
 pub mod droptarget;
 pub mod explorer;
+pub mod frameimagewindow;
 pub mod input;
 pub mod mergewindow;
 pub mod metadatawindow;

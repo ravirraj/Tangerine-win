@@ -293,6 +293,8 @@ struct App {
     merge_window: crate::platform::windows::mergewindow::MergeWindow,
     /// The window PDF pages are inspected, reordered, rotated and removed in, hidden until organize is picked.
     organize_pdf_window: crate::platform::windows::organizepdfwindow::OrganizePdfWindow,
+    /// The window a photo is framed on a background in, hidden until add background is picked.
+    frame_image_window: crate::platform::windows::frameimagewindow::FrameImageWindow,
 }
 
 /// The end of a drag that has not been acted on yet.
@@ -578,6 +580,21 @@ impl App {
             crate::platform::windows::organizepdfwindow::OrganizePdfWindow::new(organize_sender)
                 .map_err(|reason| reason)?;
 
+        let (frame_sender, frame_receiver) = std::sync::mpsc::channel();
+        {
+            let sender = sender.clone();
+            std::thread::spawn(move || {
+                while let Ok(event) = frame_receiver.recv() {
+                    if sender.send(Message::ToolWindow(event)).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+        let frame_image_window =
+            crate::platform::windows::frameimagewindow::FrameImageWindow::new(frame_sender)
+                .map_err(|reason| reason)?;
+
         Ok(Self {
             controller,
             animation: WheelAnimation::new(),
@@ -634,6 +651,7 @@ impl App {
             redact_audio_window,
             merge_window,
             organize_pdf_window,
+            frame_image_window,
         })
     }
 
@@ -873,6 +891,12 @@ impl App {
         // An organize asks for its own card: PDF page grid reordering, rotation and removal.
         if segment.id == "tools.organize_pdf" {
             self.organize_pdf_window
+                .show_for(&segment.id, &segment.label, &segment.detail, files);
+            return;
+        }
+        // An image framing asks for its own card: preview canvas, swatches, sliders, and ratio.
+        if segment.id == "tools.frame_image" {
+            self.frame_image_window
                 .show_for(&segment.id, &segment.label, &segment.detail, files);
             return;
         }

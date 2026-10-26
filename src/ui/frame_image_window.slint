@@ -1,0 +1,510 @@
+// The card a picture background and frame is chosen in.
+//
+// Matches the reference `tool-windows/frameImage.webp` and `press/add-background.png`.
+// Shows the composed preview on a light surface stage, two rows of background swatches
+// (gradients/blur/image and solid colors), padding/corner/shadow sliders,
+// aspect ratio chips, and Reset / Save footer buttons.
+
+import { Tokens } from "tokens.slint";
+import { Panel } from "tokens.slint";
+import { CardHeader, Hairline, LabeledSlider, PillButton } from "shell.slint";
+
+component SwatchCircle {
+    in property <Panel> box;
+    in property <color> fill-color: #FFFFFF;
+    in property <color> fill-color2: #FFFFFF;
+    in property <bool> is-gradient: false;
+    in property <bool> is-blur: false;
+    in property <bool> is-custom: false;
+    in property <bool> selected: false;
+
+    callback clicked();
+
+    x: root.box.x;
+    y: root.box.y;
+    width: root.box.width;
+    height: root.box.height;
+
+    Rectangle {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: parent.height;
+        border-radius: parent.width / 2;
+        border-width: 1px;
+        border-color: #00000025;
+        clip: true;
+
+        if !root.is-gradient && !root.is-blur && !root.is-custom: Rectangle {
+            background: root.fill-color;
+        }
+
+        if root.is-gradient: Rectangle {
+            background: @linear-gradient(135deg, root.fill-color 0%, root.fill-color2 100%);
+        }
+
+        if root.is-blur: Rectangle {
+            background: @linear-gradient(135deg, #FF6B6B 0%, #4ECDC4 50%, #45B649 100%);
+            Text {
+                text: "Blur";
+                font-size: 8px;
+                font-weight: 700;
+                font-family: "Segoe UI";
+                color: white;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+
+        if root.is-custom: Rectangle {
+            background: Tokens.elevated;
+            Text {
+                text: "+";
+                font-size: 15px;
+                font-weight: 600;
+                font-family: "Segoe UI";
+                color: Tokens.text;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+
+        TouchArea {
+            clicked => { root.clicked(); }
+        }
+    }
+
+    if root.selected: Rectangle {
+        x: -3px;
+        y: -3px;
+        width: parent.width + 6px;
+        height: parent.height + 6px;
+        border-radius: (parent.width + 6px) / 2;
+        border-width: 2px;
+        border-color: Tokens.accent;
+    }
+}
+
+component RatioChip {
+    in property <Panel> box;
+    in property <string> label;
+    in property <bool> selected: false;
+
+    callback clicked();
+
+    x: root.box.x;
+    y: root.box.y;
+    width: root.box.width;
+    height: root.box.height;
+
+    Rectangle {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: parent.height;
+        border-radius: Tokens.radius-control;
+        background: root.selected ? Tokens.accent-tint : (touch.has-hover ? Tokens.quiet-hover : Tokens.quiet);
+        border-width: 1px;
+        border-color: root.selected ? Tokens.accent : Tokens.hairline;
+
+        touch := TouchArea {
+            clicked => { root.clicked(); }
+        }
+
+        Text {
+            text: root.label;
+            color: root.selected ? Tokens.accent : Tokens.text;
+            font-size: 12px;
+            font-weight: root.selected ? 600 : 500;
+            font-family: "Segoe UI";
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+}
+
+export component FrameImageCard inherits Window {
+    in property <length> card-width: 460px;
+    in property <length> card-height: 660px;
+    in property <float> ui-scale: 1.0;
+
+    in property <string> file-name: "photo.png";
+    in property <string> detail: "Add Background";
+
+    in property <Panel> header-box;
+    in property <Panel> detail-box;
+    in property <Panel> hairline-top;
+    in property <Panel> stage-box;
+    in property <image> preview-image;
+    in property <bool> has-preview: false;
+
+    // Swatches row 1 (Gradients / Blur / Image)
+    in property <[Panel]> gradient-swatches;
+    // Swatches row 2 (Solids)
+    in property <[Panel]> solid-swatches;
+    in property <int> selected-row: 0; // 0 = gradients/blur/custom, 1 = solids
+    in property <int> selected-col: 0; // 0..9
+
+    // Sliders
+    in property <Panel> padding-box;
+    in property <float> padding-val: 0.08;
+    in property <string> padding-text: "160 px";
+
+    in property <Panel> corner-box;
+    in property <float> corner-val: 24.0;
+    in property <string> corner-text: "24 px";
+
+    in property <Panel> shadow-box;
+    in property <float> shadow-val: 24.0;
+    in property <string> shadow-text: "24 px";
+
+    // Ratio chips
+    in property <Panel> ratio-auto-box;
+    in property <Panel> ratio-square-box;
+    in property <Panel> ratio-wide-box;
+    in property <Panel> ratio-tall-box;
+    in property <int> ratio-index: 0; // 0=Auto, 1=1:1, 2=16:9, 3=4:5
+
+    // Footer
+    in property <Panel> hairline-bottom;
+    in property <Panel> reset-box;
+    in property <Panel> run-box;
+    in property <Panel> helper-box;
+    in property <string> helper-text: "Enter to save \u{b7} Esc to close";
+    in property <bool> run-enabled: true;
+
+    callback swatch-chosen(int, int); // (row, col)
+    callback padding-changed(float);
+    callback corner-changed(float);
+    callback shadow-changed(float);
+    callback ratio-chosen(int);
+    callback reset-chosen();
+    callback run-chosen();
+    callback cancel-chosen();
+
+    width: root.card-width;
+    height: root.card-height;
+    background: Tokens.window-bg;
+
+    CardHeader {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        file-name: root.file-name;
+        detail: root.detail;
+        ui-scale: root.ui-scale;
+        header-box: root.header-box;
+        detail-box: root.detail-box;
+    }
+
+    Hairline {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.hairline-top;
+    }
+
+    // 1. Preview Stage (Light surface canvas per DESIGN-SPEC §6)
+    Rectangle {
+        x: root.stage-box.x;
+        y: root.stage-box.y;
+        width: root.stage-box.width;
+        height: root.stage-box.height;
+        background: Tokens.surface;
+        border-radius: Tokens.radius-preview;
+        clip: true;
+
+        if root.has-preview: Image {
+            x: 8px;
+            y: 8px;
+            width: parent.width - 16px;
+            height: parent.height - 16px;
+            source: root.preview-image;
+            image-fit: contain;
+        }
+
+        if !root.has-preview: Text {
+            text: "Loading preview\u{2026}";
+            color: Tokens.text-muted;
+            font-size: 13px;
+            font-family: "Segoe UI";
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    // 2. Swatches (Gradients & Blur & Custom)
+    // Blur
+    SwatchCircle {
+        box: root.gradient-swatches[0];
+        is-blur: true;
+        selected: root.selected-row == 0 && root.selected-col == 0;
+        clicked => { root.swatch-chosen(0, 0); }
+    }
+    // Gradient 1: Sunset
+    SwatchCircle {
+        box: root.gradient-swatches[1];
+        is-gradient: true;
+        fill-color: #FF5A1F;
+        fill-color2: #FF3366;
+        selected: root.selected-row == 0 && root.selected-col == 1;
+        clicked => { root.swatch-chosen(0, 1); }
+    }
+    // Gradient 2: Purple Dream
+    SwatchCircle {
+        box: root.gradient-swatches[2];
+        is-gradient: true;
+        fill-color: #8A2387;
+        fill-color2: #E94057;
+        selected: root.selected-row == 0 && root.selected-col == 2;
+        clicked => { root.swatch-chosen(0, 2); }
+    }
+    // Gradient 3: Ocean
+    SwatchCircle {
+        box: root.gradient-swatches[3];
+        is-gradient: true;
+        fill-color: #00B4DB;
+        fill-color2: #0083B0;
+        selected: root.selected-row == 0 && root.selected-col == 3;
+        clicked => { root.swatch-chosen(0, 3); }
+    }
+    // Gradient 4: Emerald
+    SwatchCircle {
+        box: root.gradient-swatches[4];
+        is-gradient: true;
+        fill-color: #11998E;
+        fill-color2: #38EF7D;
+        selected: root.selected-row == 0 && root.selected-col == 4;
+        clicked => { root.swatch-chosen(0, 4); }
+    }
+    // Gradient 5: Sunburst
+    SwatchCircle {
+        box: root.gradient-swatches[5];
+        is-gradient: true;
+        fill-color: #FFB75E;
+        fill-color2: #ED8F03;
+        selected: root.selected-row == 0 && root.selected-col == 5;
+        clicked => { root.swatch-chosen(0, 5); }
+    }
+    // Gradient 6: Sky
+    SwatchCircle {
+        box: root.gradient-swatches[6];
+        is-gradient: true;
+        fill-color: #4CA1AF;
+        fill-color2: #C4E0E5;
+        selected: root.selected-row == 0 && root.selected-col == 6;
+        clicked => { root.swatch-chosen(0, 6); }
+    }
+    // Gradient 7: Neon Violet
+    SwatchCircle {
+        box: root.gradient-swatches[7];
+        is-gradient: true;
+        fill-color: #654EA3;
+        fill-color2: #EAAFC8;
+        selected: root.selected-row == 0 && root.selected-col == 7;
+        clicked => { root.swatch-chosen(0, 7); }
+    }
+    // Gradient 8: Dark Slate
+    SwatchCircle {
+        box: root.gradient-swatches[8];
+        is-gradient: true;
+        fill-color: #232526;
+        fill-color2: #414345;
+        selected: root.selected-row == 0 && root.selected-col == 8;
+        clicked => { root.swatch-chosen(0, 8); }
+    }
+    // Custom Image button
+    SwatchCircle {
+        box: root.gradient-swatches[9];
+        is-custom: true;
+        selected: root.selected-row == 0 && root.selected-col == 9;
+        clicked => { root.swatch-chosen(0, 9); }
+    }
+
+    // Row 2: Solids
+    SwatchCircle {
+        box: root.solid-swatches[0];
+        fill-color: #FFFFFF;
+        selected: root.selected-row == 1 && root.selected-col == 0;
+        clicked => { root.swatch-chosen(1, 0); }
+    }
+    SwatchCircle {
+        box: root.solid-swatches[1];
+        fill-color: #F7F6F4;
+        selected: root.selected-row == 1 && root.selected-col == 1;
+        clicked => { root.swatch-chosen(1, 1); }
+    }
+    SwatchCircle {
+        box: root.solid-swatches[2];
+        fill-color: #FEE440;
+        selected: root.selected-row == 1 && root.selected-col == 2;
+        clicked => { root.swatch-chosen(1, 2); }
+    }
+    SwatchCircle {
+        box: root.solid-swatches[3];
+        fill-color: #2EC4B6;
+        selected: root.selected-row == 1 && root.selected-col == 3;
+        clicked => { root.swatch-chosen(1, 3); }
+    }
+    SwatchCircle {
+        box: root.solid-swatches[4];
+        fill-color: #006466;
+        selected: root.selected-row == 1 && root.selected-col == 4;
+        clicked => { root.swatch-chosen(1, 4); }
+    }
+    SwatchCircle {
+        box: root.solid-swatches[5];
+        fill-color: #00B4D8;
+        selected: root.selected-row == 1 && root.selected-col == 5;
+        clicked => { root.swatch-chosen(1, 5); }
+    }
+    SwatchCircle {
+        box: root.solid-swatches[6];
+        fill-color: #3A86FF;
+        selected: root.selected-row == 1 && root.selected-col == 6;
+        clicked => { root.swatch-chosen(1, 6); }
+    }
+    SwatchCircle {
+        box: root.solid-swatches[7];
+        fill-color: #7209B7;
+        selected: root.selected-row == 1 && root.selected-col == 7;
+        clicked => { root.swatch-chosen(1, 7); }
+    }
+    SwatchCircle {
+        box: root.solid-swatches[8];
+        fill-color: #2B2D42;
+        selected: root.selected-row == 1 && root.selected-col == 8;
+        clicked => { root.swatch-chosen(1, 8); }
+    }
+    SwatchCircle {
+        box: root.solid-swatches[9];
+        fill-color: #1A1A1A;
+        selected: root.selected-row == 1 && root.selected-col == 9;
+        clicked => { root.swatch-chosen(1, 9); }
+    }
+
+    // 3. Canvas Sliders
+    LabeledSlider {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.padding-box;
+        label: "Padding";
+        value-text: root.padding-text;
+        min: 0.0;
+        max: 0.3;
+        value: root.padding-val;
+        value-changed(v) => { root.padding-changed(v); }
+    }
+
+    LabeledSlider {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.corner-box;
+        label: "Corners";
+        value-text: root.corner-text;
+        min: 0.0;
+        max: 50.0;
+        value: root.corner-val;
+        value-changed(v) => { root.corner-changed(v); }
+    }
+
+    LabeledSlider {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.shadow-box;
+        label: "Shadow";
+        value-text: root.shadow-text;
+        min: 0.0;
+        max: 50.0;
+        value: root.shadow-val;
+        value-changed(v) => { root.shadow-changed(v); }
+    }
+
+    // 4. Ratio Segmented Picker
+    RatioChip {
+        box: root.ratio-auto-box;
+        label: "Auto";
+        selected: root.ratio-index == 0;
+        clicked => { root.ratio-chosen(0); }
+    }
+    RatioChip {
+        box: root.ratio-square-box;
+        label: "1:1";
+        selected: root.ratio-index == 1;
+        clicked => { root.ratio-chosen(1); }
+    }
+    RatioChip {
+        box: root.ratio-wide-box;
+        label: "16:9";
+        selected: root.ratio-index == 2;
+        clicked => { root.ratio-chosen(2); }
+    }
+    RatioChip {
+        box: root.ratio-tall-box;
+        label: "4:5";
+        selected: root.ratio-index == 3;
+        clicked => { root.ratio-chosen(3); }
+    }
+
+    // 5. Hairline bottom
+    Hairline {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.hairline-bottom;
+    }
+
+    // 6. Footer
+    PillButton {
+        x: 0; y: 0;
+        width: root.card-width;
+        height: root.card-height;
+        box: root.reset-box;
+        label: "Reset";
+        ui-scale: root.ui-scale;
+        clicked => { root.reset-chosen(); }
+    }
+
+    Text {
+        x: root.helper-box.x;
+        y: root.helper-box.y;
+        width: root.helper-box.width;
+        height: root.helper-box.height;
+        text: root.helper-text;
+        color: Tokens.text-muted;
+        font-size: 12px;
+        font-family: "Segoe UI";
+        vertical-alignment: center;
+        horizontal-alignment: center;
+    }
+
+    // Save with Background (Accent orange)
+    Rectangle {
+        x: root.run-box.x;
+        y: root.run-box.y;
+        width: root.run-box.width;
+        height: root.run-box.height;
+        border-radius: Tokens.radius-control;
+        background: !root.run-enabled ? Tokens.quiet
+                   : (save-touch.pressed ? Tokens.accent-pressed
+                   : (save-touch.has-hover ? Tokens.accent-hover : Tokens.accent));
+
+        save-touch := TouchArea {
+            enabled: root.run-enabled;
+            clicked => { root.run-chosen(); }
+        }
+
+        Text {
+            text: "Save with Background";
+            color: root.run-enabled ? white : Tokens.text-muted;
+            font-size: 13px;
+            font-weight: 600;
+            font-family: "Segoe UI";
+            vertical-alignment: center;
+            horizontal-alignment: center;
+        }
+    }
+}
