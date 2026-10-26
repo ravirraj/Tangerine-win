@@ -765,7 +765,49 @@ Deliberate differences from the mockups, and why:
 - Native Windows title bar ("Trim", "Normalize", "Convert channels") with left alignment and close top-right — matching all tool windows.
 - Keyboard walk (Tab, Shift+Tab, Arrow keys, Enter to run, Esc to close) preserved across all audio tool windows.
 
-### B-10.2 FFmpeg-backed windows (1-3 days each once template exists)
+### B-10.10 Redact photo / video / bleep audio (roadmap P3-11)
+Reference: `tool-windows/redactImage.webp`, `tool-windows/redactVideo.webp`, `tool-windows/redactAudio.webp` + `DESIGN-SPEC.md` §5/§6/§7/§15/§16 + `reference/extracted/Open-Tangerine-main/NativeApp/Sources/Tools/Images/RedactImageToolView.swift`, `Tools/Video/SnapshotsRedactVideoToolViews.swift`, `Tools/Audio/AudioToolViews.swift` + `Operations/FaceBlur.swift`, `Operations/ImageOps.swift`, `Operations/VideoOps.swift`, `Operations/AudioOps.swift`.
+
+Original behavior (Swift + operations, authoritative — read 2026-10-26):
+- REDACT PHOTO (`RedactImageToolView`): RectangleEditorCanvas on a checkerboard stage — drag to add a rectangle, drag its corners to resize, drag to move, ⌫ deletes selected. Faces found automatically (Vision) with a margin slider. Style picker: Blur / Pixelate / Box (segmented); Blur strength or Pixel size slider; Color swatch for solid boxes. Areas list with remove buttons and Remove all. Batch: every image gets its own face detection; hand-drawn areas go at the same fractional place on every image. Save suffix: "redacted".
+- REDACT VIDEO (`RedactVideoToolView` in SnapshotsRedactVideoToolViews): RectangleEditorCanvas on the current video frame; RangeTrack below with per-area time range (From/To timecode fields, "Whole video" button); face hide toggle with style/strength/margin sliders; areas list with time ranges. Save suffix: "redacted", ext mp4. `VideoOps.redact` uses FFmpeg drawbox (solid), boxblur/pixellate (strength → radius/block), per-area `:enable='between(t,start,end)'`. Face detection needs native MP4/MOV (Vision).
+- BLEEP AUDIO (`RedactAudioToolView` in AudioToolViews): RangeTrack with markers at bleep start/end; "Add bleep at playhead" button (1s default); timecode start/end per bleep; nudge −0.1/+0.1 s; play bleep section; frequency slider 300–2000 Hz (default 1000 Hz). Save suffix: "bleeped". `AudioOps.bleep` uses FFmpeg filter_complex: mute selected ranges + sine tone at frequency, mixed together. FFmpeg required.
+- Style enum: `RedactionStyle.solid` (title "Box"), `.blur`, `.pixelate`. Default strength 0.5. Effect size = 0.02..0.30 of min dimension by strength.
+- Per-area time ranges (video only): each area covers its own `start..end`; new areas cover whole video.
+- Faces: detected once per photo, every frame searched when saving video. FaceBlur.padding default 0.3.
+
+Backend audit (read 2026-10-26):
+- No redact ops exist in `registry.rs` — no `tools.redact_image`, `tools.redact_video`, `tools.bleep`/`tools.redact_audio`.
+- No `run_redact_*` handler in `tools.rs`.
+- No `ToolSettings` fields for redact (no preset, no style, no ranges, no frequency).
+- No icon for redact in `IconKind` (need to add — matches existing pattern).
+- The Swift `FaceBlur` uses Apple Vision (Mac-only). On Windows, face detection is deferred — redact works via hand-drawn areas only; "Hide faces" / "Find faces" are stubbed out (not implemented) with a note.
+
+DESIGN-SPEC.md controls for redact (§5, §15, §16):
+- Control #1: QuietButton — gray #EFEFED r10, 34px, disabled ~35% opacity (used for "Save Bleeped Copy" when no ranges).
+- Control #11: ColorWell pill — 56×32 black pill inside gray container (redaction color).
+- Control #15: TrackLane / LaneClip — gray rounded lane r10 h~56; clips = accent@~45% fill r8 with white edge grips + white label + small icon; empty lane muted "Drag to add"; playhead spans all lanes.
+- Control #15: ValidationNote — danger color #E0483E text on rgba(224,72,62,.14) fill above footer, paired with disabled primary (Bleep empty state).
+- §16 Video: Redact adds Style/Color rows + multi-lane "Redactions" editor.
+- §17 Image: redact canvas + Style/Color rows.
+
+Decisions asked and answered (before building):
+- None yet — this is Phase A.
+
+Progress & Plan:
+- [ ] Phase A — Evidence & Audit: mockups listed, Swift sources read (RedactImageToolView, SnapshotsRedactVideoToolViews, AudioToolViews/RedactAudioToolView), operations read (FaceBlur, ImageOps.redact, VideoOps.redact, AudioOps.bleep), design specs read (§5/§6/§7/§15/§16), todo section initialized.
+- [ ] Phase B.1 — Redact image backend: register `tools.redact_image` in `registry.rs`, add `run_redact_image` + `redact_image_one` in `tools.rs` (image crate compositing: blur/pixelate/solid boxes), `ToolSettings` fields (redact_style, redact_strength, redact_color), unit tests + real FFmpeg test.
+- [ ] Phase B.2 — Redact video backend: register `tools.redact_video` in `registry.rs`, add `run_redact_video` + `redact_video_one` in `tools.rs` (FFmpeg drawbox/boxblur/pixellate filters with per-area time enable), unit tests + real FFmpeg test.
+- [ ] Phase B.3 — Bleep audio backend: register `tools.bleep` in `registry.rs`, add `run_bleep` + `bleep_one` in `tools.rs` (FFmpeg filter_complex mute+sine tone), unit tests + real FFmpeg test.
+- [ ] Phase C.1 — Redact photo window: `redactimagewindow.rs` + `redact_image_window.slint` (RectangleEditorCanvas-equivalent with drag/resize/move handles, style picker, strength slider, color picker, areas list), capture `target/shots/redact-image-window.png`, verify against redactImage.webp.
+- [ ] Phase C.2 — Redact video window: `redactvideowindow.rs` + `redact_video_window.slint` (frame stage + RangeTrack time ranges per area), capture `target/shots/redact-video-window.png`, verify against redactVideo.webp.
+- [ ] Phase C.3 — Bleep audio window: `bleepwindow.rs` + `bleep_window.slint` (RangeTrack with markers, frequency slider, timecode fields), capture `target/shots/bleep-window.png`, verify against redactAudio.webp.
+- [ ] Full regression check: all tests pass, all baseline window captures byte-identical.
+
+Deliberate differences from the mockups, and why:
+- Face detection (Apple Vision) is Mac-only; on Windows redact works via hand-drawn areas only. "Find faces" / "Hide faces" controls are stubbed — not implemented — with a note in the UI. Recorded so P3-15 doesn't re-open this.
+- Native Windows title bars ("Redact image", "Redact video", "Bleep") instead of frameless centered headers — the B-10.4 chrome decision every window keeps.
+
 - [ ] Change video speed (setpts/atempo, preserve pitch)
 - [ ] Split video (custom points or equal parts, one output folder)
 - [ ] Save video frames (frame-step picker -> full-resolution PNGs)
