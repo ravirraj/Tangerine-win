@@ -9,6 +9,8 @@
 //! program follows the appearance of the system. A person who has a light
 //! system gets a light wheel.
 
+use crate::settings::{AppSettings, ThemeMode};
+
 /// A colour, as the four numbers the renderer wants: red, green, blue and
 /// alpha.
 pub type Rgba = (u8, u8, u8, u8);
@@ -86,6 +88,29 @@ impl Theme {
         if dark { Self::dark() } else { Self::light() }
     }
 
+    /// The theme for a given configured mode.
+    pub fn for_mode(mode: ThemeMode) -> Self {
+        match mode {
+            ThemeMode::Light => Self::light(),
+            ThemeMode::Dark => Self::dark(),
+            ThemeMode::System => {
+                #[cfg(windows)]
+                {
+                    Self::for_appearance(crate::platform::windows::appearance::prefers_dark())
+                }
+                #[cfg(not(windows))]
+                {
+                    Self::dark()
+                }
+            }
+        }
+    }
+
+    /// Resolves the theme according to user settings and system preference.
+    pub fn resolve() -> Self {
+        Self::for_mode(AppSettings::load().theme)
+    }
+
     /// The colour of the words on a choice that has been made.
     ///
     /// The accent is dark enough in both themes for the words on it to be
@@ -158,5 +183,12 @@ mod tests {
     fn the_appearance_picks_the_theme() {
         assert_eq!(Theme::for_appearance(false), Theme::light());
         assert_eq!(Theme::for_appearance(true), Theme::dark());
+    }
+
+    #[test]
+    fn the_mode_picks_the_theme() {
+        assert_eq!(Theme::for_mode(ThemeMode::Light), Theme::light());
+        assert_eq!(Theme::for_mode(ThemeMode::Dark), Theme::dark());
+        let _ = Theme::resolve();
     }
 }

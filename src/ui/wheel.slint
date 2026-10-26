@@ -44,6 +44,8 @@ export component Wheel inherits Window {
     in property <float> hub-size: 95;
     in property <length> heading-size: 12px;
     in property <length> subtitle-size: 10px;
+    in property <bool> has-thumbnail: false;
+    in property <image> file-thumbnail;
     // The segment that is being pointed at, and the one that is on its way out.
     in property <string> emphasis-path: "";
     in property <float> emphasis: 0;
@@ -176,27 +178,46 @@ export component Wheel inherits Window {
             border-width: 1px;
             border-color: root.border-color;
 
+            if root.has-thumbnail : Rectangle {
+                x: (root.hub-size * 1px - 34px) / 2;
+                y: (root.hub-size / 2 - 38) * 1px;
+                width: 34px;
+                height: 34px;
+                border-radius: 6px;
+                clip: true;
+                border-width: 1px;
+                border-color: root.border-color;
+                background: root.disc-color;
+
+                Image {
+                    width: 100%;
+                    height: 100%;
+                    source: root.file-thumbnail;
+                }
+            }
+
             Text {
                 text: root.heading;
                 color: root.text-color;
-                font-size: root.heading-size;
+                font-size: root.has-thumbnail ? 11px : root.heading-size;
                 font-weight: 700;
                 horizontal-alignment: center;
                 vertical-alignment: center;
                 x: 0px;
-                y: root.hub-size / 2 * 1px - 27px;
+                y: root.has-thumbnail ? (root.hub-size / 2 + 1) * 1px : (root.hub-size / 2 - 27) * 1px;
                 width: root.hub-size * 1px;
-                height: 18px;
+                height: root.has-thumbnail ? 15px : 18px;
             }
 
             Text {
+                visible: !root.has-thumbnail;
                 text: root.subtitle;
                 color: root.text-secondary-color;
                 font-size: root.subtitle-size;
                 horizontal-alignment: center;
                 vertical-alignment: center;
                 x: 0px;
-                y: root.hub-size / 2 * 1px - 8px;
+                y: (root.hub-size / 2 - 8) * 1px;
                 width: root.hub-size * 1px;
                 height: 16px;
             }
@@ -208,7 +229,8 @@ export component Wheel inherits Window {
                 width: i == root.mode-index ? 16px : 6px;
                 height: 5px;
                 border-radius: 3px;
-                background: i == root.mode-index ? #ff8a3d : #ffffff2e;
+                background: i == root.mode-index ? #ff8a3d : root.text-secondary-color;
+                opacity: i == root.mode-index ? 1.0 : 0.35;
             }
         }
 

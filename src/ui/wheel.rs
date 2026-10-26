@@ -178,6 +178,10 @@ pub struct ViewModel {
     pub fading_color: Rgba,
     /// The colour of the edge of that choice.
     pub fading_border: Rgba,
+    /// Whether a file thumbnail should be shown in the hub.
+    pub has_thumbnail: bool,
+    /// The downscaled thumbnail image for the hub.
+    pub thumbnail: Option<slint::Image>,
 }
 
 /// How the wheel is drawn at this moment.
@@ -208,6 +212,10 @@ pub struct ViewOptions {
     /// dragged the button is down too, but there the pointer is choosing, not
     /// pressing.
     pub preview_pressed: bool,
+    /// Whether a file thumbnail should be shown in the hub.
+    pub has_thumbnail: bool,
+    /// The downscaled thumbnail image for the hub.
+    pub thumbnail: Option<slint::Image>,
 }
 
 /// A short message about what came of an operation.
@@ -360,6 +368,8 @@ pub fn build_view_model(
         emphasis_border: preview_accent,
         fading_color: theme.hover,
         fading_border: theme.border,
+        has_thumbnail: options.has_thumbnail,
+        thumbnail: options.thumbnail,
     }
 }
 
@@ -440,6 +450,28 @@ impl WheelUi {
         self.wheel.set_emphasis_border(color(model.emphasis_border));
         self.wheel.set_fading_color(color(model.fading_color));
         self.wheel.set_fading_border(color(model.fading_border));
+        self.wheel.set_has_thumbnail(model.has_thumbnail);
+        if let Some(thumb) = &model.thumbnail {
+            self.wheel.set_file_thumbnail(thumb.clone());
+        }
+    }
+
+    /// Draws the wheel into an RGBA image file for preview or verification.
+    pub fn save_capture(&mut self, path: &std::path::Path) -> Result<(), String> {
+        let _ = self.render();
+        let (w, h) = (self.width, self.height);
+        let mut rgba = image::RgbaImage::new(w, h);
+        for y in 0..h {
+            for x in 0..w {
+                let pixel = self.buffer[(y * w + x) as usize];
+                let (a, r, g, b) = pixel.parts();
+                rgba.put_pixel(x, y, image::Rgba([r, g, b, a]));
+            }
+        }
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        rgba.save(path).map_err(|e| e.to_string())
     }
 
     /// Draws the wheel if anything changed. Returns whether it did.
@@ -475,6 +507,23 @@ impl WheelUi {
     }
 }
 
+/// Loads a downscaled thumbnail image for hub mode display.
+#[allow(dead_code)]
+pub fn load_thumbnail_image(path: &std::path::Path) -> Option<slint::Image> {
+    if let Ok(img) = image::open(path) {
+        let thumb = img.thumbnail(64, 64).to_rgba8();
+        let (w, h) = thumb.dimensions();
+        let buffer = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(
+            thumb.as_raw(),
+            w,
+            h,
+        );
+        Some(slint::Image::from_rgba8(buffer))
+    } else {
+        None
+    }
+}
+
 // The geometry module keeps its own `Point`; the view model needs it here.
 use crate::radial::geometry::Point;
 
@@ -506,6 +555,8 @@ mod tests {
             notice_appear: 0.0,
             theme: Theme::dark(),
             preview_pressed: false,
+            has_thumbnail: false,
+            thumbnail: None,
         }
     }
 
@@ -740,5 +791,39 @@ mod tests {
             );
             assert_eq!(model.subtitle, expected);
         }
+    }
+
+    #[test]
+    fn thumbnail_hub_mode_is_represented_in_view_model() {
+        let mut opts = options(1.0);
+        opts.has_thumbnail = true;
+        let segments = vec![segment(0)];
+        let model = build_view_model(
+            &segments,
+            RadialMode::Convert,
+            None,
+            1,
+            false,
+            RadialGeometry::new(1),
+            opts,
+        );
+        assert!(model.has_thumbnail);
+    }
+
+    #[test]
+    fn capture_the_wheel_light_and_dark() {
+        let mut ui_light = WheelUi::new(1.0).expect("wheel ui can be created");
+        let model_light = model_with(6, Some(1), Theme::light());
+        ui_light.apply(&model_light);
+        let shot_light = std::path::Path::new("target").join("shots").join("wheel-light.png");
+        ui_light.save_capture(&shot_light).expect("wheel light captured");
+        assert!(shot_light.is_file(), "wheel-light.png written");
+
+        let mut ui_dark = WheelUi::new(1.0).expect("wheel ui can be created");
+        let model_dark = model_with(6, Some(1), Theme::dark());
+        ui_dark.apply(&model_dark);
+        let shot_dark = std::path::Path::new("target").join("shots").join("wheel-dark.png");
+        ui_dark.save_capture(&shot_dark).expect("wheel dark captured");
+        assert!(shot_dark.is_file(), "wheel-dark.png written");
     }
 }

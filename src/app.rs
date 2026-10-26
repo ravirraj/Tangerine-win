@@ -332,9 +332,9 @@ impl App {
         // wheel is, and that has to be known before the window is made.
         let cursor = input::cursor_position().unwrap_or(Point::new(960.0, 540.0));
         let scale = detect_scale(cursor);
-        // The wheel is drawn in the theme of the appearance of the system: a
-        // person who has a light Windows gets a light wheel.
-        let theme = Theme::for_appearance(crate::platform::windows::appearance::prefers_dark());
+        // The wheel is drawn in the configured theme, following the appearance
+        // of the system by default.
+        let theme = Theme::resolve();
         diagnostics::log(
             Level::Info,
             "wheel",
@@ -1922,7 +1922,7 @@ impl App {
     /// turn the dark appearance on. The wheel follows, without being put
     /// anywhere else on the screen.
     fn follow_the_appearance(&mut self) {
-        let theme = Theme::for_appearance(crate::platform::windows::appearance::prefers_dark());
+        let theme = Theme::resolve();
         let name = if theme == Theme::dark() {
             "dark"
         } else {
@@ -2026,6 +2026,8 @@ impl App {
                     // button is down too, but there the pointer is choosing.
                     preview_pressed: self.controller.is_interactive()
                         && input::is_key_down(VK_LBUTTON),
+                    has_thumbnail: false,
+                    thumbnail: None,
                 },
             );
             self.last_model = Some(model.clone());
