@@ -998,7 +998,7 @@ unsafe extern "system" fn window_procedure(
                     st.fade_alpha
                 });
                 let _ = unsafe { SetLayeredWindowAttributes(window, COLORREF(0), alpha, LWA_ALPHA) };
-                if alpha >= 255 {
+                if alpha == 255 {
                     let _ = unsafe { KillTimer(Some(window), FADE_TIMER_ID) };
                 }
                 return LRESULT(0);
@@ -1332,7 +1332,7 @@ pub(crate) mod show_tests {
             }
             std::thread::sleep(std::time::Duration::from_millis(5));
             let alpha = STATE.with(|s| s.borrow().fade_alpha);
-            if alpha >= 255 {
+            if alpha == 255 {
                 break;
             }
         }
@@ -1367,7 +1367,7 @@ pub(crate) mod show_tests {
             }
             std::thread::sleep(std::time::Duration::from_millis(5));
             let alpha = STATE.with(|s| s.borrow().fade_alpha);
-            if alpha >= 255 {
+            if alpha == 255 {
                 break;
             }
         }

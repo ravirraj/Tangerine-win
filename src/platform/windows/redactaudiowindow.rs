@@ -1563,7 +1563,7 @@ unsafe extern "system" fn window_procedure(
                         alpha,
                         LWA_ALPHA,
                     );
-                    if alpha >= 255 {
+                    if alpha == 255 {
                         let _ = KillTimer(Some(window), FADE_TIMER_ID);
                     }
                 } else if wparam.0 as usize == STRIP_TIMER_ID {

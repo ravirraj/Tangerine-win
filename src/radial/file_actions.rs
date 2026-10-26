@@ -128,7 +128,7 @@ impl<P: Publisher> FileActions<P> {
             input.parent().unwrap_or(input).to_path_buf()
         };
         Command::new("cmd.exe")
-            .args(["/k", "cd /d", folder.to_string_lossy().as_ref()])
+            .current_dir(&folder)
             .spawn()
             .map_err(|_| FileActionError::ToolFailed)?;
         Ok(input.to_path_buf())
@@ -143,12 +143,12 @@ impl<P: Publisher> FileActions<P> {
         }
         fs::create_dir_all(&target_dir).map_err(|_| FileActionError::WriteError)?;
 
-        let data = fs::read(input).map_err(|_| FileActionError::ReadError)?;
+        let file = fs::File::open(input).map_err(|_| FileActionError::ReadError)?;
 
         match ext.as_str() {
-            "zip" => extract_zip(&data, &target_dir)?,
-            "tar" => extract_tar(&data, &target_dir)?,
-            "gz" => extract_gz(&data, &target_dir)?,
+            "zip" => extract_zip(file, &target_dir)?,
+            "tar" => extract_tar(file, &target_dir)?,
+            "gz" => extract_gz(file, &target_dir)?,
             _ => return Err(FileActionError::UnsupportedKind),
         }
 
@@ -179,16 +179,18 @@ impl FileActionError {
 }
 
 /// Extract a ZIP archive into a directory.
-fn extract_zip(data: &[u8], target_dir: &Path) -> Result<(), FileActionError> {
-    let reader = std::io::Cursor::new(data);
-    let mut archive = zip::ZipArchive::new(reader).map_err(|_| FileActionError::UnsupportedKind)?;
+fn extract_zip(file: fs::File, target_dir: &Path) -> Result<(), FileActionError> {
+    let mut archive = zip::ZipArchive::new(file).map_err(|_| FileActionError::UnsupportedKind)?;
     for i in 0..archive.len() {
         let mut file = archive.by_index(i).map_err(|_| FileActionError::UnsupportedKind)?;
-        let name = file.name().to_string();
         if file.is_dir() {
             continue;
         }
-        let out_path = target_dir.join(&name);
+        // Protect against Zip Slip: enclosed_name ensures path does not escape target_dir
+        let Some(enclosed) = file.enclosed_name() else {
+            continue;
+        };
+        let out_path = target_dir.join(enclosed);
         if let Some(parent) = out_path.parent() {
             fs::create_dir_all(parent).map_err(|_| FileActionError::WriteError)?;
         }
@@ -199,14 +201,19 @@ fn extract_zip(data: &[u8], target_dir: &Path) -> Result<(), FileActionError> {
 }
 
 /// Extract a TAR archive into a directory.
-fn extract_tar(data: &[u8], target_dir: &Path) -> Result<(), FileActionError> {
-    let mut archive = tar::Archive::new(std::io::Cursor::new(data));
+fn extract_tar(file: fs::File, target_dir: &Path) -> Result<(), FileActionError> {
+    let mut archive = tar::Archive::new(file);
     for entry in archive.entries().map_err(|_| FileActionError::UnsupportedKind)? {
         let mut entry = entry.map_err(|_| FileActionError::UnsupportedKind)?;
         if entry.header().entry_type().is_dir() {
             continue;
         }
-        let out_path = target_dir.join(entry.path().map_err(|_| FileActionError::UnsupportedKind)?);
+        let path = entry.path().map_err(|_| FileActionError::UnsupportedKind)?;
+        // Protect against Tar Slip: ensure no path components escape target_dir
+        if path.components().any(|c| matches!(c, std::path::Component::ParentDir | std::path::Component::Prefix(_) | std::path::Component::RootDir)) {
+            continue;
+        }
+        let out_path = target_dir.join(path);
         if let Some(parent) = out_path.parent() {
             fs::create_dir_all(parent).map_err(|_| FileActionError::WriteError)?;
         }
@@ -217,12 +224,11 @@ fn extract_tar(data: &[u8], target_dir: &Path) -> Result<(), FileActionError> {
 }
 
 /// Extract a GZ archive into a directory (single file).
-fn extract_gz(data: &[u8], target_dir: &Path) -> Result<(), FileActionError> {
-    let mut decoder = flate2::read::GzDecoder::new(data);
-    let mut bytes = Vec::new();
-    decoder.read_to_end(&mut bytes).map_err(|_| FileActionError::UnsupportedKind)?;
+fn extract_gz(file: fs::File, target_dir: &Path) -> Result<(), FileActionError> {
+    let mut decoder = flate2::read::GzDecoder::new(file);
     let out_path = target_dir.join("extracted");
-    fs::write(&out_path, &bytes).map_err(|_| FileActionError::WriteError)?;
+    let mut out_file = fs::File::create(&out_path).map_err(|_| FileActionError::WriteError)?;
+    std::io::copy(&mut decoder, &mut out_file).map_err(|_| FileActionError::WriteError)?;
     Ok(())
 }
 
@@ -571,6 +577,28 @@ mod tests {
             }
             other => panic!("unexpected outcome: {other:?}"),
         }
+        folder.try_clear();
+    }
+
+    #[test]
+    fn extract_zip_rejects_path_traversal_zip_slip() {
+        let folder = TempFolder::new("zip_slip");
+        let zip_path = folder.path.join("malicious.zip");
+        {
+            let file = fs::File::create(&zip_path).unwrap();
+            let mut zip = zip::ZipWriter::new(file);
+            let options = zip::write::FileOptions::default();
+            let _ = zip.start_file("../outside.txt", options);
+            let _ = zip.write_all(b"pwned");
+            let _ = zip.finish();
+        }
+        let target_dir = folder.path.join("out");
+        fs::create_dir_all(&target_dir).unwrap();
+        let file = fs::File::open(&zip_path).unwrap();
+        let _ = extract_zip(file, &target_dir);
+
+        // Verify the file was NOT written outside target_dir
+        assert!(!folder.path.join("outside.txt").exists(), "Zip slip successfully prevented!");
         folder.try_clear();
     }
 }
