@@ -32,6 +32,7 @@ impl<P: Publisher> FileActions<P> {
             "actions.reveal" => self.reveal(input),
             "actions.terminal" => self.terminal(input),
             "actions.extract" => self.extract(input),
+            "actions.nearby-share" => self.share(input),
             _ => Err(FileActionError::NotImplemented),
         }
     }
@@ -108,6 +109,13 @@ impl<P: Publisher> FileActions<P> {
     /// Reveal the file in Explorer.
     fn reveal(&self, input: &Path) -> Result<PathBuf, FileActionError> {
         crate::platform::windows::shell::reveal_in_explorer(input)
+            .map_err(|_| FileActionError::ToolFailed)?;
+        Ok(input.to_path_buf())
+    }
+
+    /// Invoke the Windows Share contract on the file.
+    fn share(&self, input: &Path) -> Result<PathBuf, FileActionError> {
+        crate::platform::windows::shell::share_file(input)
             .map_err(|_| FileActionError::ToolFailed)?;
         Ok(input.to_path_buf())
     }

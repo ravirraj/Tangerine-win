@@ -1018,6 +1018,21 @@ pub const OPERATIONS: &[Operation] = &[
         // The program does this one itself: no backend is needed.
         requires: Requirement::None,
     },
+    Operation {
+        id: "actions.nearby-share",
+        label: "Share",
+        detail: "Share with Windows",
+        icon: IconKind::Folder,
+        mode: RadialMode::Actions,
+        categories: &FileKind::FILES,
+        batch: Batch::Several,
+        folders: false,
+        output: Output::Nothing,
+        collision: Collision::Ask,
+        implemented: true,
+        // The program does this one itself: Windows Share Contract via ShellExecuteExW.
+        requires: Requirement::None,
+    },
 ];
 
 /// What the machine can do right now.
@@ -1730,6 +1745,7 @@ mod tests {
             "actions.terminal",
             "actions.extract",
             "actions.zip",
+            "actions.nearby-share",
         ];
         for entry in OPERATIONS {
             assert_eq!(

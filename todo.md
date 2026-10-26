@@ -1080,9 +1080,9 @@ the reference only offers by mouse (see B-12.3).
 - [ ] Add real test
 
 ### B-11.3 Nearby Share / Smart Share (replaces AirDrop)
-- [ ] Assess Windows share contract API
-- [ ] Implement ShellExecuteExW with "share" verb or Explorer fallback
-- [ ] Add actions.nearby-share registry operation
+- [x] Assess Windows share contract API
+- [x] Implement ShellExecuteExW with "share" verb or Explorer fallback
+- [x] Add actions.nearby-share registry operation
 - [ ] Add test
 
 ### B-11.4 Copy Path / Duplicate / Rename / Reveal (already implemented)
@@ -1141,8 +1141,8 @@ the reference only offers by mouse (see B-12.3).
 - [x] Settings toggle and programmatic register/unregister
 
 ### B-13.5 Nearby Share / Smart Share
-- [ ] Implement ShellExecuteExW with "share" verb
-- [ ] Add actions.nearby-share registry operation
+- [x] Implement ShellExecuteExW with "share" verb
+- [x] Add actions.nearby-share registry operation
 
 ---
 

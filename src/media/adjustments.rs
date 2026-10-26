@@ -7,7 +7,7 @@
 //! Matches the Swift `EditImageToolView` / `PhotoAdjustments` specification.
 
 use std::path::Path;
-use image::{imageops, DynamicImage, Rgba, RgbaImage};
+use image::{imageops, DynamicImage, RgbaImage};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PhotoAdjustments {
@@ -204,6 +204,7 @@ pub fn adjust_file(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use image::Rgba;
 
     #[test]
     fn test_adjustments_identity_noop() {
