@@ -16,6 +16,7 @@ use std::path::Path;
 /// The handler for the document operations.
 pub struct Documents<P: Publisher> {
     /// Puts a finished file at its name, and never overwrites what is there.
+    #[allow(dead_code)]
     pub publisher: P,
 }
 
@@ -109,7 +110,7 @@ impl<P: Publisher> Handler for Documents<P> {
 mod tests {
     use super::*;
     use crate::media::publish::PublishError;
-    use std::path::PathBuf;
+    
 
     struct Nothing;
 

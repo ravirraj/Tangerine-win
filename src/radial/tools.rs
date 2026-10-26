@@ -7,7 +7,6 @@
 
 use std::ffi::OsString;
 use std::fs;
-use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use crate::diagnostics::{self, Level};
@@ -27,6 +26,7 @@ pub enum ToolError {
     /// The tool is not supported for this kind of file.
     UnsupportedKind,
     /// The tool is not implemented yet.
+    #[allow(dead_code)]
     NotImplemented,
     /// The tool failed to run.
     ToolFailed,

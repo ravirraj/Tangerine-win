@@ -391,7 +391,7 @@ impl CropWindow {
 
     /// Asks the window to hide itself.
     pub fn hide(&mut self) {
-        unsafe { ShowWindow(self.window, SW_HIDE) };
+        unsafe { let _ = ShowWindow(self.window, SW_HIDE); };
     }
 
     /// The first media is the one asked about: what it is made of, how
@@ -553,7 +553,7 @@ impl CropWindow {
             FADE_ALPHA.with(|slot| slot.set(0));
             let _ = SetLayeredWindowAttributes(card_window, COLORREF(0), 0, LWA_ALPHA);
             let _ = SetForegroundWindow(card_window);
-            ShowWindow(card_window, SW_SHOW);
+            let _ = ShowWindow(card_window, SW_SHOW);
             let _ = SetTimer(Some(card_window), FADE_TIMER_ID, 16, None);
             // The keyboard starts with nothing under it: the chips are
             // one Tab away, and the rectangle takes the pointer first.
@@ -1170,7 +1170,7 @@ fn picked_at(point: Spot, cut: Option<Cut>, reach: f64, inset: f64) -> Option<Pi
 /// drag holds the right edge — wherever the pointer went past, the
 /// span is kept.
 fn resized(corner: usize, anchor: Spot, point: Spot, ratio: Option<f64>, media_w: f64, media_h: f64) -> Option<Cut> {
-    let mut w = (point.0 - anchor.0).abs().max(1.0);
+    let w = (point.0 - anchor.0).abs().max(1.0);
     let mut h = (point.1 - anchor.1).abs().max(1.0);
     if let Some(ratio) = ratio {
         h = w / ratio;
@@ -1701,13 +1701,13 @@ unsafe fn run(window: HWND) {
             });
         }
     });
-    unsafe { ShowWindow(window, SW_HIDE) };
+    unsafe { let _ = ShowWindow(window, SW_HIDE); };
 }
 
 /// Says no to what the window was open for, and puts it away.
 unsafe fn cancel(window: HWND) {
     send(ToolEvent::Cancelled);
-    unsafe { ShowWindow(window, SW_HIDE) };
+    unsafe { let _ = ShowWindow(window, SW_HIDE); };
 }
 
 /// Says what the window was asked, to whoever is listening.
@@ -1882,7 +1882,7 @@ unsafe extern "system" fn window_procedure(
         WM_CLOSE => {
             send(ToolEvent::Cancelled);
             unsafe {
-                ShowWindow(window, SW_HIDE);
+                let _ = ShowWindow(window, SW_HIDE);
             }
             LRESULT(0)
         }

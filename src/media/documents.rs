@@ -4,16 +4,11 @@
 //! (SRT, VTT, TXT) and archive format conversion (ZIP, TAR, GZ).
 
 use std::fs;
-use std::io::{Cursor, Read, Write};
+use std::io::{Read, Write};
 use std::path::Path;
 
 use calamine::Reader as _;
-use flate2::read::GzDecoder;
-use flate2::write::GzEncoder;
 use flate2::write::ZlibEncoder;
-use tar::Archive;
-use tar::Builder;
-use tar::Header;
 use zip::ZipArchive;
 use zip::ZipWriter;
 
@@ -180,16 +175,16 @@ pub mod archives {
     use super::DocError;
     use std::fs;
     use std::fs::File;
-    use std::io::{Cursor, Read, Write};
+    use std::io::{Read, Write};
     use std::path::Path;
 
-    use flate2::read::GzDecoder;
-    use flate2::write::GzEncoder;
-    use tar::Archive;
-    use tar::Builder;
-    use tar::Header;
-    use zip::ZipArchive;
-    use zip::ZipWriter;
+    
+    
+    
+    
+    
+    
+    
 
     /// Convert an archive from one format to another.
     ///
@@ -474,7 +469,7 @@ fn escape_csv(cell: &str) -> String {
 /// is turned into pixels first, because PDF holds no vectors of that
 /// kind.
 pub fn images_to_pdf(sources: &[std::path::PathBuf], target: &Path) -> Result<(), DocError> {
-    use pdf_writer::{Content, Filter, Finish, Name, Pdf, Rect, Ref};
+    use pdf_writer::{Content, Filter, Name, Pdf, Rect, Ref};
 
     /// One picture, ready to go into the PDF.
     struct Encoded {

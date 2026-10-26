@@ -817,7 +817,7 @@ impl TimelineWindow {
             FADE_ALPHA.with(|slot| slot.set(0));
             let _ = SetLayeredWindowAttributes(card_window, COLORREF(0), 0, LWA_ALPHA);
             let _ = SetForegroundWindow(card_window);
-            ShowWindow(card_window, SW_SHOW);
+            let _ = ShowWindow(card_window, SW_SHOW);
             let _ = SetTimer(Some(card_window), FADE_TIMER_ID, 16, None);
             // The strip is being worked out elsewhere: the window asks it
             // every few beats whether some of it has come.
@@ -845,7 +845,7 @@ impl TimelineWindow {
     /// Hides the window.
     pub fn hide(&self) {
         unsafe {
-            ShowWindow(self.window, SW_HIDE);
+            let _ = ShowWindow(self.window, SW_HIDE);
         }
     }
 }
@@ -2167,7 +2167,7 @@ unsafe fn run(window: HWND) {
             });
         }
     });
-    unsafe { ShowWindow(window, SW_HIDE) };
+    unsafe { let _ = ShowWindow(window, SW_HIDE); };
 }
 
 /// Says no to what the window was open for, and puts it away.

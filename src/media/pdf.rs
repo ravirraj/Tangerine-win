@@ -28,6 +28,7 @@ pub enum PdfError {
 }
 
 impl PdfError {
+    #[allow(dead_code)]
     pub fn name(&self) -> &'static str {
         match self {
             PdfError::LibraryMissing => "the PDF reader is not installed",

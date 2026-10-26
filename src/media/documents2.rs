@@ -61,6 +61,7 @@ fn registered(name: &str) -> bool {
 
 /// Whether the program that reads this extension is installed, Office or
 /// LibreOffice.
+#[allow(dead_code)]
 pub fn installed(extension: &str) -> bool {
     if let Some(app) = app_of(extension) {
         if registered(prog_id(app)) {

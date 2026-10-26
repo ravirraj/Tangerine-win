@@ -334,16 +334,16 @@ impl ToolWindow {
             for field in [width_field, height_field] {
                 if !field.0.is_null() {
                     let _ = SetWindowTextW(field, PCWSTR::from_raw(to_wide("").as_ptr()));
-                    ShowWindow(field, if wants_size { SW_SHOW } else { SW_HIDE });
+                    let _ = ShowWindow(field, if wants_size { SW_SHOW } else { SW_HIDE });
                 }
             }
-            InvalidateRect(Some(card_window), None, true);
+            let _ = InvalidateRect(Some(card_window), None, true);
             // The window comes in softly, from nothing to whole in a few
             // beats of the timer.
             FADE_ALPHA.with(|slot| slot.set(0));
             let _ = SetLayeredWindowAttributes(card_window, COLORREF(0), 0, LWA_ALPHA);
             let _ = SetForegroundWindow(card_window);
-            ShowWindow(card_window, SW_SHOW);
+            let _ = ShowWindow(card_window, SW_SHOW);
             let _ = SetTimer(Some(card_window), FADE_TIMER_ID, 16, None);
             // The keyboard starts where the tool has something to take:
             // the first field when there are fields, the go button when
@@ -357,7 +357,7 @@ impl ToolWindow {
     /// Hides the window.
     pub fn hide(&self) {
         unsafe {
-            ShowWindow(self.window, SW_HIDE);
+            let _ = ShowWindow(self.window, SW_HIDE);
         }
     }
 }
@@ -805,7 +805,7 @@ unsafe extern "system" fn window_procedure(
         WM_CLOSE => {
             send(ToolEvent::Cancelled);
             unsafe {
-                ShowWindow(window, SW_HIDE);
+                let _ = ShowWindow(window, SW_HIDE);
             }
             LRESULT(0)
         }
@@ -870,13 +870,13 @@ unsafe fn run(window: HWND) {
             });
         }
     });
-    unsafe { ShowWindow(window, SW_HIDE) };
+    unsafe { let _ = ShowWindow(window, SW_HIDE); };
 }
 
 /// Says no to what the window was open for, and puts it away.
 unsafe fn cancel(window: HWND) {
     send(ToolEvent::Cancelled);
-    unsafe { ShowWindow(window, SW_HIDE) };
+    unsafe { let _ = ShowWindow(window, SW_HIDE); };
 }
 
 /// What a field says.

@@ -19,6 +19,7 @@ use crate::radial::selection::Selection;
 /// The handler for file actions.
 pub struct FileActions<P: Publisher> {
     /// Puts a finished file at its name (for duplicate).
+    #[allow(dead_code)]
     pub publisher: P,
 }
 
@@ -267,7 +268,7 @@ fn gather_folder(
     roads.sort_by_key(|road| road.file_name());
     for road in roads {
         let road = road.path();
-        let name = road
+        let _name = road
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .ok_or(FileActionError::UnsupportedKind)?;
@@ -307,7 +308,7 @@ fn write_zip(entries: &[(String, Vec<u8>)], target_path: &Path) -> Result<(), Fi
 
 impl<P: Publisher> Handler for FileActions<P> {
     fn run(&self, request: &Request, _selection: &Selection) -> Outcome {
-        let Some(operation) = operation_by_id(&request.operation) else {
+        let Some(_operation) = operation_by_id(&request.operation) else {
             return Outcome::Failed {
                 reason: Failure::UnknownOperation,
             };

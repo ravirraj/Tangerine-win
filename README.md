@@ -1,141 +1,136 @@
 # Open Tangerine for Windows
 
-A radial wheel for the files you are dragging. Hold a modifier while you drag
-files out of Explorer and a wheel appears around the pointer: move onto a choice,
-let go, and the action runs on the files you were dragging.
+A radial wheel for the files you are dragging. Hold a modifier while dragging files out of File Explorer (or Desktop) and a fluid, hardware-composited radial wheel appears under the cursor: move onto an action, release the mouse, and Tangerine executes the operation with high performance.
 
-This is **Milestone 1**: the interaction, the visual design and the Windows
-drag integration are real. The picture operations work too: a picture that
-is dragged onto one of them is converted, by the FFmpeg program, and the
-original is left exactly as it was. The other actions are still
-placeholders — nothing is compressed or renamed yet.
+## Key Features
 
-## Build and run
+- **Fluid Radial Menu**:
+  - Three distinct contextual wheels: **Convert**, **Tools**, and **File Actions**.
+  - Dynamic wheel switching using modifier keys (**Shift**, **Ctrl**, **Alt**) or mouse scroll / Up & Down arrows.
+  - Per-pixel alpha transparency and native Win32 layered window composition.
+- **18 Interactive Tool Cards & Dedicated Windows**:
+  - **Compress**: Smart video, audio, and image compression with target size computation.
+  - **Crop & Resize**: Interactive aspect ratios, freeform cropping, and dimension adjustment.
+  - **Trim & Cut**: Dual-handle timeline scrubbing with sub-second precision.
+  - **Split Video**: Multi-cut timeline markers with equal segment splitting.
+  - **Redact (Image, Audio, Video)**: Visual and temporal blur/pixelate/blackout redaction.
+  - **Edit Metadata**: Interactive Exif, ID3, and media metadata editor with tag inspection.
+  - **Normalize Audio**: EBU R128 loudness normalization and peak limiting.
+  - **Channels & Mix**: Mono/Stereo matrix remapping and channel isolation.
+  - **Frame Image**: Framed presentation with drop shadows, padding, and gradient backgrounds.
+  - **Organize PDF**: Multi-page reordering, rotation (90°/180°/270°), and page extraction.
+  - **Merge PDF / Join Videos**: Drag-and-drop file reordering, thumbnail inspection, and lossless concatenation.
+  - **Adjust Speed**: Speed multiplier adjustments with pitch correction.
+  - **Audio to Video**: Audio visualizer waveforms, frequency bars, and animated video generation.
+  - **Annotate Photos**: Freehand drawing, callout text, bounding boxes, and blur annotations.
+  - **Collage Maker**: Multi-photo layouts (Grid, Split, Featured) with corner rounding and custom backgrounds.
+  - **Image Adjustments**: Exposure, brightness, contrast, saturation, temperature, and tint controls.
+- **Native Document & Archive Conversions**:
+  - In-process lossless conversions for CSV, TSV, XLSX, HTML, Markdown, PDF, and archive extraction/creation (.zip, .tar, .gz) without external shell dependencies.
+- **High-DPI & Multi-Monitor**: Full per-monitor DPI awareness (`WM_DPICHANGED`) with dynamic UI re-scaling.
+- **Privacy & Security First**: Sandboxed argument vectors, zip slip protection, streaming archive handling, and zero telemetry.
 
-```sh
+## Build and Run
+
+```powershell
 cargo build --release
 cargo test
 .\target\release\open-tangerine.exe
 ```
 
-The program needs no installation and no runtime beyond the standard Windows
-libraries. It is a single executable of about 7 MB.
+The program requires no external runtimes beyond Windows 10/11 and bundled media tooling.
 
-### Options
+### CLI Options
 
 | Option | What it does |
 | --- | --- |
-| `--dev-wheel` | Opens the wheel straight away, for a look at the design. |
-| `--exit-after <seconds>` | Quits after so many seconds. Used by the checks. |
-| `--help` | Prints the same list. |
+| `--dev-wheel` | Opens the radial wheel directly for UI testing and inspection. |
+| `--exit-after <seconds>` | Automatically closes after specified seconds (used by automated checks). |
+| `--help` | Prints help and command-line usage. |
 
-The log level comes from the environment:
+The log level can be set via environment variable:
 
-```sh
-set OPEN_TANGERINE_LOG=debug
+```powershell
+$env:OPEN_TANGERINE_LOG = "debug"  # debug, info, warn, error
 ```
 
-`debug`, `info`, `warn` or `error`. Without it the log stays at `info`, which
-is quiet enough to leave running in the background.
+## Shortcuts & Controls
 
-## Using it
+- **Drag + Shift**: Open **Convert** wheel.
+- **Drag + Ctrl**: Open **Tools** wheel.
+- **Drag + Alt**: Open **File Actions** wheel.
+- **Scroll Wheel** or **Up / Down**: Switch between wheels.
+- **Left / Right**: Cycle highlighted action segments.
+- **Enter**: Execute selected action.
+- **Escape**: Cancel and dismiss menu.
+- **Ctrl+Alt+T**: Launch development wheel preview without active drag.
 
-1. Select one or more files in Explorer and start dragging them. A file on
-   the desktop can be dragged too.
-2. Hold **Shift** while you drag. The wheel opens around the pointer.
-   **Ctrl** opens the Tools wheel and **Alt** the File actions wheel, or
-   press **Up** and **Down** to move between the wheels while one is open.
-3. Move onto a choice. The segment under the pointer lifts and lights up.
-4. Let go of the mouse over the choice. The action is chosen.
-5. **Escape** cancels. **Scroll** moves between the Convert, Tools and File
-   actions wheels. **Left** and **Right** move between the segments, and
-   **Enter** picks the one that is lit.
-
-`Ctrl+Alt+T` opens the wheel without a drag. That is the development
-shortcut: the wheel is marked `DEVELOPMENT MODE`, no files are involved, and
-nothing it reports is a real Explorer drag.
-
-## How it is put together
+## Architecture
 
 ```
 src/
-  main.rs                  the entry point
-  app.rs                   the loop, the wiring, the diagnostics
-  diagnostics.rs           the timestamped log
-  session.rs               the file list of one drag
-  radial/
-    actions.rs             what the three wheels offer
-    controller.rs          the interaction state machine
-    geometry.rs            the wheel's shape and the hit testing
-    icons.rs               the little pictures
-    registry.rs            the operations, and when they may be used
-    selection.rs           what the dragged files are
-    state.rs               the states and the events
-  platform/windows/
-    droptarget.rs          being the target of a drag
-    explorer.rs            recognising an Explorer or desktop drag
-    input.rs               the pointer, the keys, the scroll wheel
-    monitors.rs            where the screens are
-    overlay.rs             the transparent window the wheel is drawn in
-    shellselection.rs      asking the shell what is being dragged
-  ui/
-    animation.rs           the one animation model
-    wheel.rs               the view model
-    wheel.slint            the markup
-tests/
-  windows-integration.ps1  the tests with a real Explorer window and the
-                           real desktop
+  main.rs                  Application entry point and CLI parsing
+  app.rs                   Message loop, window orchestration, and event dispatch
+  diagnostics.rs           Structured timestamped logging
+  session.rs               Active drag session tracking and file resolution
+  settings.rs              Persistent configuration and user preferences
+  media/                   Core media processing engines
+    adjustments.rs         Color balance and exposure adjustments
+    annotate.rs            Photo annotation rendering
+    audio.rs               PCM waveform analysis and peak detection
+    collage.rs             Multi-photo grid and layout compositor
+    command.rs             Safe external process argument generation
+    documents.rs           PDF and archive generation
+    frame.rs               Framed image and background composition
+    metadata.rs            Exif and multimedia tag inspection/editing
+    pdf.rs                 PDF parsing and page rendering via PDFium
+    visualizer.rs          Audio-to-video visualizer graphics
+  platform/windows/        Win32 platform integration
+    clipboard.rs           Native Win32 clipboard provider
+    droptarget.rs          OLE IDropTarget implementation
+    explorer.rs            Explorer drag detection
+    input.rs               Global low-level input hooks
+    monitors.rs            Multi-monitor enumeration and DPI tracking
+    overlay.rs             Layered radial wheel host window
+    windowhost.rs          Shared Win32 host helpers and DPI scaling
+    *window.rs             Dedicated Win32 host implementations for each tool
+  radial/                  Wheel business logic
+    actions.rs             Wheel definition and segment configuration
+    controller.rs          State machine for drag interaction
+    execution.rs           Tool execution coordinator
+    file_actions.rs        File system and archive action handlers
+    geometry.rs            Wheel trigonometry, layout, and hit-testing
+    registry.rs            Tool capabilities and registration
+    tools.rs               FFmpeg and tool command invocations
+  ui/                      Slint UI templates and software renderer bindings
+    animation.rs           Segment transition and glow animation easing
+    theme.rs               Light and Dark mode design tokens
+    wheel.slint            Radial menu Slint presentation
+tests/                     Integration tests, automated UI captures, and verification
 ```
 
-The rule the layout follows: the controller never knows about Windows, the
-platform layer never knows about the wheel, and the drawing never decides
-anything. Everything the user does arrives as a typed event, and everything the
-application wants to do comes back as a typed effect.
+## Running Tests
 
-## The tests
-
-```sh
+```powershell
 cargo test
 ```
 
-There is also a set of tests that needs a desktop: they open a real Explorer
-window, drag a real file with a real mouse and read what the program logged.
+Integration tests requiring external desktop interaction:
 
-```sh
-cargo build --release
+```powershell
 powershell -ExecutionPolicy Bypass -File tests\windows-integration.ps1
 ```
 
-They move the mouse and press keys, so they must not be run while somebody
-else is using the machine.
+## Packaging
 
-### The conversion program
+To produce a production-ready standalone distribution archive:
 
-The picture operations need the FFmpeg program, which is not in the
-repository: it is built from the sources by the script in `ffmpeg`, and the
-package is made from what that script builds. A developer who wants to try
-the conversions keeps the program in `vendor\ffmpeg`, which the repository
-ignores.
-
-```sh
-cargo build --features test-helper --bins   # the stand-in the tests use
-cargo test --features test-helper
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\package_dist.ps1
 ```
 
-The tests that run against the real program are marked as needing it, and
-are run with `cargo test -- --ignored` once it has been built.
+The resulting zip archive will be generated in `dist/OpenTangerine.zip`.
 
-## The documents
+## License
 
-- [`docs/INTERACTION.md`](docs/INTERACTION.md) - the gesture, the states, the
-  keys, the modifier mapping.
-- [`docs/CAPABILITIES.md`](docs/CAPABILITIES.md) - what the program can do,
-  what the machine can do, and how an operation is run.
-- [`docs/DRAG-INTEGRATION.md`](docs/DRAG-INTEGRATION.md) — how a Windows
-  Explorer drag is found, what was measured, and what the limits are.
-- [`docs/MILESTONE-1-REPORT.md`](docs/MILESTONE-1-REPORT.md) — what was built,
-  what was measured, and what is still to do.
-
-## Licence
-
-MIT or Apache-2.0, at your choice.
+Dual-licensed under MIT OR Apache-2.0.
