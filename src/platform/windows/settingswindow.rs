@@ -11,21 +11,18 @@ use std::rc::Rc;
 
 use slint::platform::software_renderer::MinimalSoftwareWindow;
 use slint::PhysicalSize;
-use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, EndPaint, PAINTSTRUCT,
 };
-use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, LoadCursorW, PostQuitMessage, RegisterClassW,
+    DefWindowProcW, PostQuitMessage,
     SetForegroundWindow, SetLayeredWindowAttributes, SetWindowPos, ShowWindow,
-    CW_USEDEFAULT, IDC_ARROW, LWA_ALPHA, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER, SW_HIDE,
+    LWA_ALPHA, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER, SW_HIDE,
     SW_SHOW, WM_DESTROY, WM_DPICHANGED, WM_ERASEBKGND, WM_KEYDOWN, WM_PAINT,
-    WNDCLASSW, WS_EX_LAYERED,
 };
 
-use crate::platform::windows::windowhost::{fixed_style, scale_factor, to_wide};
+use crate::platform::windows::windowhost::scale_factor;
 use crate::settings::{AppSettings, ThemeMode};
 use crate::ui::wheel::{window_for_next_component, Bgra8, Panel, SettingsCard};
 
@@ -251,8 +248,6 @@ pub struct SettingsWindow {
 }
 
 impl SettingsWindow {
-    const CLASS: PCWSTR = w!("OpenTangerineSettingsWindow");
-
     pub fn new() -> Result<Self, String> {
         let (window, renderer_window, card, settings, layout, scale, buffer) =
             Self::create_window(CARD_W, CARD_H)?;
@@ -284,63 +279,18 @@ impl SettingsWindow {
         ),
         String,
     > {
-        let hinstance = unsafe { GetModuleHandleW(None).map_err(|e| e.to_string())? };
-        let atom = unsafe {
-            let wc = WNDCLASSW {
-                style: windows::Win32::UI::WindowsAndMessaging::CS_HREDRAW
-                    | windows::Win32::UI::WindowsAndMessaging::CS_VREDRAW,
-                lpfnWndProc: Some(Self::wnd_proc),
-                hInstance: hinstance.into(),
-                hCursor: LoadCursorW(None, IDC_ARROW).map_err(|e| e.to_string())?,
-                hbrBackground: windows::Win32::Graphics::Gdi::HBRUSH(std::ptr::null_mut()),
-                lpszClassName: Self::CLASS,
-                ..Default::default()
-            };
-            RegisterClassW(&wc)
-        };
-        if atom == 0 {
-            // Already registered is ok
-        }
-
         let scale = scale_factor(HWND(std::ptr::null_mut()));
         let client_w = ((width_units as f32) * scale).round() as i32;
         let client_h = ((height_units as f32) * scale).round() as i32;
         let layout = Layout::of(client_w, client_h);
 
-        let mut rect = RECT {
-            left: 0,
-            top: 0,
-            right: client_w,
-            bottom: client_h,
-        };
-        let style = fixed_style();
-        let _ = unsafe {
-            windows::Win32::UI::WindowsAndMessaging::AdjustWindowRectEx(
-                &mut rect,
-                style,
-                false,
-                WS_EX_LAYERED,
-            )
-        };
-
-        let title = to_wide("Settings — Open Tangerine");
-        let hwnd = unsafe {
-            CreateWindowExW(
-                WS_EX_LAYERED,
-                Self::CLASS,
-                PCWSTR(title.as_ptr()),
-                style,
-                CW_USEDEFAULT,
-                CW_USEDEFAULT,
-                rect.right - rect.left,
-                rect.bottom - rect.top,
-                None,
-                None,
-                Some(hinstance.into()),
-                None,
-            )
-            .map_err(|e| e.to_string())?
-        };
+        let hwnd = crate::platform::windows::windowhost::create_layered_window(
+            "OpenTangerineSettingsWindow",
+            "Settings — Open Tangerine",
+            Some(Self::wnd_proc),
+            client_w,
+            client_h,
+        )?;
 
         let renderer_window = window_for_next_component();
         let card = SettingsCard::new().map_err(|e| e.to_string())?;
@@ -457,18 +407,7 @@ impl SettingsWindow {
 
     pub fn save_capture(&mut self, path: &std::path::Path) -> Result<(), String> {
         let (w, h) = self.render_to_buffer();
-        let mut rgba = image::RgbaImage::new(w as u32, h as u32);
-        for y in 0..h {
-            for x in 0..w {
-                let pixel = self.buffer[(y * w + x) as usize];
-                let (a, r, g, b) = pixel.parts();
-                rgba.put_pixel(x as u32, y as u32, image::Rgba([r, g, b, a]));
-            }
-        }
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        rgba.save(path).map_err(|e| e.to_string())
+        crate::platform::windows::windowhost::save_buffer_as_png(&self.buffer, w as u32, h as u32, path)
     }
 
     unsafe extern "system" fn wnd_proc(

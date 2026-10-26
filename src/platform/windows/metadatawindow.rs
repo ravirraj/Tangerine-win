@@ -26,8 +26,8 @@ use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{COLORREF, HMODULE, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, CreateFontIndirectW, CreateSolidBrush, DrawTextW, EndPaint, GetDC, InvalidateRect,
-    ReleaseDC, SelectObject, SetBkMode, SetDIBitsToDevice, SetTextColor, BITMAPINFO,
-    BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, DT_LEFT, DT_NOPREFIX, DT_SINGLELINE, DT_VCENTER,
+    ReleaseDC, SelectObject, SetBkMode, SetTextColor,
+    DT_LEFT, DT_NOPREFIX, DT_SINGLELINE, DT_VCENTER,
     HFONT, LOGFONTW, PAINTSTRUCT, TRANSPARENT,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -494,32 +494,12 @@ impl MetadataHost {
     }
 
     unsafe fn put_on_window(&self) {
-        unsafe {
-            let dc = GetDC(Some(self.window));
-            let mut info = BITMAPINFO::default();
-            info.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
-            info.bmiHeader.biWidth = self.width as i32;
-            info.bmiHeader.biHeight = -(self.height as i32);
-            info.bmiHeader.biPlanes = 1;
-            info.bmiHeader.biBitCount = 32;
-            info.bmiHeader.biCompression = BI_RGB.0 as u32;
-
-            SetDIBitsToDevice(
-                dc,
-                0,
-                0,
-                self.width,
-                self.height,
-                0,
-                0,
-                0,
-                self.height,
-                self.buffer.as_ptr() as *const core::ffi::c_void,
-                &info,
-                DIB_RGB_COLORS,
-            );
-            let _ = ReleaseDC(Some(self.window), dc);
-        }
+        crate::platform::windows::windowhost::blit_card_buffer(
+            self.window,
+            &self.buffer,
+            self.width,
+            self.height,
+        );
     }
 
     fn sync_to_card(&mut self, state: &MetadataState, scale: f32) {

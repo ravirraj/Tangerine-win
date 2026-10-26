@@ -12,20 +12,19 @@ use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, EndPaint, InvalidateRect, PAINTSTRUCT,
 };
-use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, LoadCursorW, PostQuitMessage,
-    RegisterClassW, SetForegroundWindow, SetLayeredWindowAttributes, SetWindowPos,
-    SetWindowTextW, ShowWindow, CW_USEDEFAULT, IDC_ARROW, LWA_ALPHA, SWP_NOACTIVATE,
+    DefWindowProcW, DestroyWindow, PostQuitMessage,
+    SetForegroundWindow, SetLayeredWindowAttributes, SetWindowPos,
+    SetWindowTextW, ShowWindow, LWA_ALPHA, SWP_NOACTIVATE,
     SWP_NOMOVE, SWP_NOZORDER, SW_HIDE, SW_SHOW, WM_DESTROY, WM_DPICHANGED, WM_ERASEBKGND, WM_KEYDOWN,
-    WM_PAINT, WNDCLASSW, WS_EX_LAYERED,
+    WM_PAINT,
 };
 
 use crate::media::visualizer::{
     render_visualizer_frame, VisualizerSettings, VisualizerShape, VisualizerStyle,
 };
 use crate::platform::windows::toolwindow::ToolEvent;
-use crate::platform::windows::windowhost::{fixed_style, scale_factor, to_wide};
+use crate::platform::windows::windowhost::{scale_factor, to_wide};
 use crate::radial::execution::ToolSettings;
 use crate::ui::wheel::{window_for_next_component, Bgra8, Panel, VisualizerCard};
 
@@ -165,57 +164,17 @@ impl VisualizerWindow {
         let renderer_window = window_for_next_component();
         let card = VisualizerCard::new().map_err(|e| e.to_string())?;
 
-        let class_name = to_wide("OpenTangerineVisualizerCardWindow");
-        let hinstance = unsafe { GetModuleHandleW(PCWSTR::null()).map_err(|e| e.to_string())? };
-        let wc = WNDCLASSW {
-            lpfnWndProc: Some(Self::wnd_proc),
-            hInstance: hinstance.into(),
-            lpszClassName: PCWSTR(class_name.as_ptr()),
-            hCursor: unsafe { LoadCursorW(None, IDC_ARROW) }.unwrap_or_default(),
-            hbrBackground: windows::Win32::Graphics::Gdi::HBRUSH(std::ptr::null_mut()),
-            ..Default::default()
-        };
-        unsafe {
-            let _ = RegisterClassW(&wc);
-        }
-
         let scale = scale_factor(HWND(std::ptr::null_mut()));
         let client_w = ((CARD_W as f32) * scale).round() as i32;
         let client_h = ((CARD_H as f32) * scale).round() as i32;
-        let mut rect = RECT {
-            left: 0,
-            top: 0,
-            right: client_w,
-            bottom: client_h,
-        };
-        let style = fixed_style();
-        let _ = unsafe {
-            windows::Win32::UI::WindowsAndMessaging::AdjustWindowRectEx(
-                &mut rect,
-                style,
-                false,
-                WS_EX_LAYERED,
-            )
-        };
 
-        let title = to_wide("Audio Visualizer — Open Tangerine");
-        let window = unsafe {
-            CreateWindowExW(
-                WS_EX_LAYERED,
-                PCWSTR(class_name.as_ptr()),
-                PCWSTR(title.as_ptr()),
-                style,
-                CW_USEDEFAULT,
-                CW_USEDEFAULT,
-                rect.right - rect.left,
-                rect.bottom - rect.top,
-                None,
-                None,
-                Some(hinstance.into()),
-                None,
-            )
-            .map_err(|e| e.to_string())?
-        };
+        let window = crate::platform::windows::windowhost::create_layered_window(
+            "OpenTangerineVisualizerCardWindow",
+            "Audio Visualizer — Open Tangerine",
+            Some(Self::wnd_proc),
+            client_w,
+            client_h,
+        )?;
 
         renderer_window.set_size(slint::PhysicalSize::new(CARD_W as u32, CARD_H as u32));
         Ok((window, renderer_window, card))
@@ -444,18 +403,7 @@ impl VisualizerWindow {
 
     pub fn save_capture(&mut self, path: &Path) -> Result<(), String> {
         let (w, h) = self.render_to_buffer();
-        let mut rgba = image::RgbaImage::new(w as u32, h as u32);
-        for y in 0..h {
-            for x in 0..w {
-                let pixel = self.buffer[(y * w + x) as usize];
-                let (a, r, g, b) = pixel.parts();
-                rgba.put_pixel(x as u32, y as u32, image::Rgba([r, g, b, a]));
-            }
-        }
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        rgba.save(path).map_err(|e| e.to_string())
+        crate::platform::windows::windowhost::save_buffer_as_png(&self.buffer, w as u32, h as u32, path)
     }
 
     #[allow(dead_code)]

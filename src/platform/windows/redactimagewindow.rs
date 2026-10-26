@@ -599,35 +599,12 @@ impl Host {
 
     /// Puts the pixels of the last drawing on the window.
     unsafe fn put_on_window(&self) {
-        unsafe {
-            let dc = windows::Win32::Graphics::Gdi::GetDC(Some(self.window));
-            let mut info = windows::Win32::Graphics::Gdi::BITMAPINFO::default();
-            info.bmiHeader.biSize = std::mem::size_of::<
-                windows::Win32::Graphics::Gdi::BITMAPINFOHEADER,
-            >() as u32;
-            info.bmiHeader.biWidth = self.width as i32;
-            // Negative height: the first row of the buffer is the top row.
-            info.bmiHeader.biHeight = -(self.height as i32);
-            info.bmiHeader.biPlanes = 1;
-            info.bmiHeader.biBitCount = 32;
-            info.bmiHeader.biCompression =
-                windows::Win32::Graphics::Gdi::BI_RGB.0 as u32;
-            windows::Win32::Graphics::Gdi::SetDIBitsToDevice(
-                dc,
-                0,
-                0,
-                self.width,
-                self.height,
-                0,
-                0,
-                0,
-                self.height,
-                self.buffer.as_ptr() as *const core::ffi::c_void,
-                &info,
-                windows::Win32::Graphics::Gdi::DIB_RGB_COLORS,
-            );
-            let _ = windows::Win32::Graphics::Gdi::ReleaseDC(Some(self.window), dc);
-        }
+        crate::platform::windows::windowhost::blit_card_buffer(
+            self.window,
+            &self.buffer,
+            self.width,
+            self.height,
+        );
     }
 }
 

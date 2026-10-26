@@ -68,6 +68,131 @@ pub(crate) fn timecode(moment: f64) -> String {
     format!("{minutes}:{seconds:05.2}")
 }
 
+/// The outer window dimensions needed to contain a client area of `client_w` x `client_h`.
+pub(crate) fn outer_size_for(window: HWND, client_w: i32, client_h: i32) -> (i32, i32) {
+    let mut rect = windows::Win32::Foundation::RECT {
+        left: 0,
+        top: 0,
+        right: client_w,
+        bottom: client_h,
+    };
+    let style = fixed_style();
+    let dpi = (scale_factor(window) * 96.0).round() as u32;
+    let _ = unsafe {
+        windows::Win32::UI::HiDpi::AdjustWindowRectExForDpi(
+            &mut rect,
+            style,
+            false,
+            windows::Win32::UI::WindowsAndMessaging::WINDOW_EX_STYLE::default(),
+            if dpi == 0 { 96 } else { dpi },
+        )
+    };
+    (rect.right - rect.left, rect.bottom - rect.top)
+}
+
+/// Blits a BGRA8 pixel buffer directly to the window's device context using top-down DIB.
+pub(crate) fn blit_card_buffer(window: HWND, buffer: &[crate::ui::wheel::Bgra8], width: u32, height: u32) {
+    if buffer.is_empty() || width == 0 || height == 0 {
+        return;
+    }
+    unsafe {
+        let dc = windows::Win32::Graphics::Gdi::GetDC(Some(window));
+        let mut info = windows::Win32::Graphics::Gdi::BITMAPINFO::default();
+        info.bmiHeader.biSize =
+            std::mem::size_of::<windows::Win32::Graphics::Gdi::BITMAPINFOHEADER>() as u32;
+        info.bmiHeader.biWidth = width as i32;
+        info.bmiHeader.biHeight = -(height as i32); // Negative for top-down
+        info.bmiHeader.biPlanes = 1;
+        info.bmiHeader.biBitCount = 32;
+        info.bmiHeader.biCompression = windows::Win32::Graphics::Gdi::BI_RGB.0 as u32;
+        windows::Win32::Graphics::Gdi::SetDIBitsToDevice(
+            dc,
+            0,
+            0,
+            width,
+            height,
+            0,
+            0,
+            0,
+            height,
+            buffer.as_ptr() as *const core::ffi::c_void,
+            &info,
+            windows::Win32::Graphics::Gdi::DIB_RGB_COLORS,
+        );
+        let _ = windows::Win32::Graphics::Gdi::ReleaseDC(Some(window), dc);
+    }
+}
+
+/// Creates and registers a standard Win32 layered card window.
+pub(crate) fn create_layered_window(
+    class_name: &str,
+    title: &str,
+    wnd_proc: windows::Win32::UI::WindowsAndMessaging::WNDPROC,
+    client_w: i32,
+    client_h: i32,
+) -> Result<HWND, String> {
+    unsafe {
+        let wide_class = to_wide(class_name);
+        let hinstance = windows::Win32::System::LibraryLoader::GetModuleHandleW(windows::core::PCWSTR::null())
+            .map_err(|e| e.to_string())?;
+        let wc = windows::Win32::UI::WindowsAndMessaging::WNDCLASSW {
+            lpfnWndProc: wnd_proc,
+            hInstance: hinstance.into(),
+            lpszClassName: windows::core::PCWSTR(wide_class.as_ptr()),
+            hCursor: windows::Win32::UI::WindowsAndMessaging::LoadCursorW(
+                None,
+                windows::Win32::UI::WindowsAndMessaging::IDC_ARROW,
+            )
+            .unwrap_or_default(),
+            hbrBackground: windows::Win32::Graphics::Gdi::HBRUSH(std::ptr::null_mut()),
+            ..Default::default()
+        };
+        let _ = windows::Win32::UI::WindowsAndMessaging::RegisterClassW(&wc);
+
+        let (outer_w, outer_h) = outer_size_for(HWND(std::ptr::null_mut()), client_w, client_h);
+        let wide_title = to_wide(title);
+        let window = windows::Win32::UI::WindowsAndMessaging::CreateWindowExW(
+            windows::Win32::UI::WindowsAndMessaging::WS_EX_LAYERED,
+            windows::core::PCWSTR(wide_class.as_ptr()),
+            windows::core::PCWSTR(wide_title.as_ptr()),
+            fixed_style(),
+            windows::Win32::UI::WindowsAndMessaging::CW_USEDEFAULT,
+            windows::Win32::UI::WindowsAndMessaging::CW_USEDEFAULT,
+            outer_w,
+            outer_h,
+            None,
+            None,
+            Some(hinstance.into()),
+            None,
+        )
+        .map_err(|e| e.to_string())?;
+
+        Ok(window)
+    }
+}
+
+/// Saves a BGRA8 pixel buffer to a PNG file, creating parent directories if needed.
+#[allow(dead_code)]
+pub(crate) fn save_buffer_as_png(
+    buffer: &[crate::ui::wheel::Bgra8],
+    width: u32,
+    height: u32,
+    path: &std::path::Path,
+) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let mut rgba = image::RgbaImage::new(width, height);
+    for y in 0..height {
+        for x in 0..width {
+            let pixel = buffer[(y * width + x) as usize];
+            let (a, r, g, b) = pixel.parts();
+            rgba.put_pixel(x, y, image::Rgba([r, g, b, a]));
+        }
+    }
+    rgba.save(path).map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 pub(crate) mod screenshot {
     //! The ways a test gives proof: a small video made of a sure red,

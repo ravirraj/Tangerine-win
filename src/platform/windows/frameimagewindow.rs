@@ -29,7 +29,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 use crate::media::frame::{FrameBackground, FrameRatio, FrameSettings};
 use crate::platform::windows::toolwindow::ToolEvent;
-use crate::platform::windows::windowhost::{fixed_style, scale_factor, to_wide};
+use crate::platform::windows::windowhost::{fixed_style, outer_size_for, scale_factor, to_wide};
 use crate::radial::execution::ToolSettings;
 use crate::ui::wheel::{window_for_next_component, Bgra8, FrameImageCard, Panel};
 
@@ -492,32 +492,12 @@ impl Host {
     }
 
     unsafe fn put_on_window(&self) {
-        unsafe {
-            let dc = windows::Win32::Graphics::Gdi::GetDC(Some(self.window));
-            let mut info = windows::Win32::Graphics::Gdi::BITMAPINFO::default();
-            info.bmiHeader.biSize =
-                std::mem::size_of::<windows::Win32::Graphics::Gdi::BITMAPINFOHEADER>() as u32;
-            info.bmiHeader.biWidth = self.width as i32;
-            info.bmiHeader.biHeight = -(self.height as i32);
-            info.bmiHeader.biPlanes = 1;
-            info.bmiHeader.biBitCount = 32;
-            info.bmiHeader.biCompression = windows::Win32::Graphics::Gdi::BI_RGB.0 as u32;
-            windows::Win32::Graphics::Gdi::SetDIBitsToDevice(
-                dc,
-                0,
-                0,
-                self.width,
-                self.height,
-                0,
-                0,
-                0,
-                self.height,
-                self.buffer.as_ptr() as *const _,
-                &info,
-                windows::Win32::Graphics::Gdi::DIB_RGB_COLORS,
-            );
-            windows::Win32::Graphics::Gdi::ReleaseDC(Some(self.window), dc);
-        }
+        crate::platform::windows::windowhost::blit_card_buffer(
+            self.window,
+            &self.buffer,
+            self.width,
+            self.height,
+        );
     }
 }
 
@@ -525,25 +505,6 @@ pub struct FrameImageWindow {
     pub window: HWND,
     #[allow(dead_code)]
     pub sender: Sender<ToolEvent>,
-}
-
-fn outer_size(window: HWND, client_w: i32, client_h: i32) -> (i32, i32) {
-    let mut rect = RECT {
-        left: 0,
-        top: 0,
-        right: client_w,
-        bottom: client_h,
-    };
-    unsafe {
-        let _ = windows::Win32::UI::HiDpi::AdjustWindowRectExForDpi(
-            &mut rect,
-            fixed_style(),
-            false,
-            windows::Win32::UI::WindowsAndMessaging::WINDOW_EX_STYLE::default(),
-            (scale_factor(window) * 96.0).round() as u32,
-        );
-    }
-    (rect.right - rect.left, rect.bottom - rect.top)
 }
 
 impl FrameImageWindow {
@@ -652,7 +613,7 @@ impl FrameImageWindow {
             }
         });
 
-        let (outer_w, outer_h) = outer_size(self.window, CARD_W, CARD_H);
+        let (outer_w, outer_h) = outer_size_for(self.window, CARD_W, CARD_H);
         unsafe {
             let _ = SetWindowTextW(self.window, PCWSTR::from_raw(to_wide("Add Background").as_ptr()));
             let _ = SetWindowPos(

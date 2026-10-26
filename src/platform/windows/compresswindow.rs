@@ -21,12 +21,10 @@ use slint::PhysicalSize;
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{COLORREF, HMODULE, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
-    BeginPaint, CreateFontIndirectW, CreateSolidBrush, EndPaint, GetDC, InvalidateRect, ReleaseDC,
-    SetDIBitsToDevice, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HFONT, LOGFONTW,
-    PAINTSTRUCT,
+    BeginPaint, CreateFontIndirectW, CreateSolidBrush, EndPaint, InvalidateRect,
+    HFONT, LOGFONTW, PAINTSTRUCT,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::UI::HiDpi::AdjustWindowRectExForDpi;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetKeyState, SetFocus, VK_ESCAPE, VK_LEFT, VK_RETURN, VK_RIGHT, VK_SHIFT, VK_SPACE, VK_TAB,
 };
@@ -44,7 +42,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use crate::media::probe::Kind;
 use crate::platform::windows::toolwindow::ToolEvent;
 use crate::platform::windows::windowhost::{
-    fixed_style, scale_factor, to_wide,
+    fixed_style, outer_size_for, scale_factor, to_wide,
 };
 use crate::radial::execution::ToolSettings;
 use crate::ui::wheel::{window_for_next_component, Bgra8, CompressCard, Panel};
@@ -521,32 +519,12 @@ impl Host {
     }
 
     unsafe fn put_on_window(&self) {
-        unsafe {
-            let dc = GetDC(Some(self.window));
-            let mut info = BITMAPINFO::default();
-            info.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
-            info.bmiHeader.biWidth = self.width as i32;
-            info.bmiHeader.biHeight = -(self.height as i32);
-            info.bmiHeader.biPlanes = 1;
-            info.bmiHeader.biBitCount = 32;
-            info.bmiHeader.biCompression = BI_RGB.0 as u32;
-
-            SetDIBitsToDevice(
-                dc,
-                0,
-                0,
-                self.width,
-                self.height,
-                0,
-                0,
-                0,
-                self.height,
-                self.buffer.as_ptr() as *const core::ffi::c_void,
-                &info,
-                DIB_RGB_COLORS,
-            );
-            let _ = ReleaseDC(Some(self.window), dc);
-        }
+        crate::platform::windows::windowhost::blit_card_buffer(
+            self.window,
+            &self.buffer,
+            self.width,
+            self.height,
+        );
     }
 }
 
@@ -755,7 +733,7 @@ impl CompressWindow {
 
         let scale = scale_factor(self.window);
         let layout = Layout::of(scale, has_video, false);
-        let outer = outer_size(self.window, (layout.card_w * scale).round() as i32, (layout.card_h * scale).round() as i32);
+        let outer = outer_size_for(self.window, (layout.card_w * scale).round() as i32, (layout.card_h * scale).round() as i32);
 
         unsafe {
             let _ = SetWindowPos(
@@ -810,30 +788,11 @@ fn toggle_target(window: HWND) {
     });
     let scale = scale_factor(window);
     let layout = Layout::of(scale, has_video, target_enabled);
-    let outer = outer_size(window, (layout.card_w * scale).round() as i32, (layout.card_h * scale).round() as i32);
+    let outer = outer_size_for(window, (layout.card_w * scale).round() as i32, (layout.card_h * scale).round() as i32);
     unsafe {
         let _ = SetWindowPos(window, None, 0, 0, outer.0, outer.1, SWP_NOZORDER | SWP_NOACTIVATE);
     }
     redraw(window);
-}
-
-fn outer_size(window: HWND, client_w: i32, client_h: i32) -> (i32, i32) {
-    let mut rect = RECT {
-        left: 0,
-        top: 0,
-        right: client_w,
-        bottom: client_h,
-    };
-    unsafe {
-        let _ = AdjustWindowRectExForDpi(
-            &mut rect,
-            fixed_style(),
-            false,
-            WINDOW_EX_STYLE::default(),
-            (scale_factor(window) * 96.0).round() as u32,
-        );
-    }
-    (rect.right - rect.left, rect.bottom - rect.top)
 }
 
 unsafe fn run(window: HWND) {
@@ -1226,7 +1185,7 @@ unsafe extern "system" fn window_procedure(
                 (st.has_video, st.target_enabled)
             });
             let layout = Layout::of(scale, has_video, target_enabled);
-            let outer = outer_size(window, (layout.card_w * scale).round() as i32, (layout.card_h * scale).round() as i32);
+            let outer = outer_size_for(window, (layout.card_w * scale).round() as i32, (layout.card_h * scale).round() as i32);
             let _ = unsafe { SetWindowPos(window, None, 0, 0, outer.0, outer.1, SWP_NOZORDER | SWP_NOACTIVATE) };
             redraw(window);
             return LRESULT(0);
