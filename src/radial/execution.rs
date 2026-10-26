@@ -235,6 +235,26 @@ pub struct ToolSettings {
     ///
     /// Only `tools.organize_pdf` reads this.
     pub pdf_pages: Vec<(usize, usize, i32)>,
+    /// Background kind for framed images: "color", "gradient", "blur", "image".
+    ///
+    /// Only `tools.frame_image` reads this.
+    pub frame_bg_kind: Option<String>,
+    /// Background color 1 (hex or name).
+    pub frame_color_a: Option<String>,
+    /// Background color 2 (hex or name for gradient).
+    pub frame_color_b: Option<String>,
+    /// Gradient angle in degrees (0..360).
+    pub frame_gradient_angle: Option<u32>,
+    /// Custom background image path.
+    pub frame_bg_image: Option<PathBuf>,
+    /// Padding fraction in thousandths (e.g. 80 for 0.08).
+    pub frame_padding_x1000: Option<u32>,
+    /// Corner radius in pixels (default 24).
+    pub frame_corner_radius: Option<u32>,
+    /// Drop shadow blur radius in pixels (default 24).
+    pub frame_shadow: Option<u32>,
+    /// Aspect ratio: "auto", "1:1", "16:9", "4:5".
+    pub frame_aspect: Option<String>,
 }
 
 impl ToolSettings {
@@ -307,6 +327,80 @@ impl ToolSettings {
     /// push the tone where the window could never draw it).
     pub fn bleep_frequency_hz(&self) -> u32 {
         self.bleep_frequency.unwrap_or(1000).clamp(300, 2000)
+    }
+
+    /// Resolves the framing options into a `FrameSettings` struct for execution.
+    pub fn frame_settings(&self) -> crate::media::frame::FrameSettings {
+        use crate::media::frame::{FrameBackground, FrameRatio, FrameSettings};
+
+        let aspect = match self.frame_aspect.as_deref() {
+            Some("1:1") => FrameRatio::Square1x1,
+            Some("16:9") => FrameRatio::Wide16x9,
+            Some("4:5") => FrameRatio::Tall4x5,
+            _ => FrameRatio::Auto,
+        };
+        let padding_fraction = self.frame_padding_x1000.unwrap_or(80) as f32 / 1000.0;
+        let corner_radius = self.frame_corner_radius.unwrap_or(24) as f32;
+        let shadow_radius = self.frame_shadow.unwrap_or(24) as f32;
+
+        let parse_color = |s: Option<&str>, default: [u8; 4]| -> [u8; 4] {
+            if let Some(hex) = s {
+                let hex = hex.trim_start_matches('#');
+                if hex.len() == 6 {
+                    let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(default[0]);
+                    let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(default[1]);
+                    let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(default[2]);
+                    [r, g, b, 255]
+                } else if hex.len() == 8 {
+                    let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(default[0]);
+                    let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(default[1]);
+                    let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(default[2]);
+                    let a = u8::from_str_radix(&hex[6..8], 16).unwrap_or(default[3]);
+                    [r, g, b, a]
+                } else {
+                    default
+                }
+            } else {
+                default
+            }
+        };
+
+        let background = match self.frame_bg_kind.as_deref() {
+            Some("color") => {
+                let c = parse_color(self.frame_color_a.as_deref(), [255, 255, 255, 255]);
+                FrameBackground::Color(c)
+            }
+            Some("gradient") => {
+                let ca = parse_color(self.frame_color_a.as_deref(), [255, 90, 31, 255]);
+                let cb = parse_color(self.frame_color_b.as_deref(), [255, 51, 102, 255]);
+                let angle = self.frame_gradient_angle.unwrap_or(45) as f32;
+                FrameBackground::Gradient {
+                    color_a: ca,
+                    color_b: cb,
+                    angle_deg: angle,
+                }
+            }
+            Some("image") => {
+                if let Some(path) = &self.frame_bg_image {
+                    if let Ok(img) = image::open(path) {
+                        FrameBackground::Image(img.to_rgba8())
+                    } else {
+                        FrameBackground::Blur { radius: 30.0 }
+                    }
+                } else {
+                    FrameBackground::Blur { radius: 30.0 }
+                }
+            }
+            _ => FrameBackground::Blur { radius: 30.0 },
+        };
+
+        FrameSettings {
+            aspect,
+            padding_fraction,
+            corner_radius,
+            shadow_radius,
+            background,
+        }
     }
 }
 

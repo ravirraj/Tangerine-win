@@ -1136,6 +1136,76 @@ impl<P: Publisher> Tools<P> {
         }
     }
 
+    /// Puts photos on framed canvases with backgrounds, padding, corners, and shadows.
+    fn run_frame_image(&self, request: &Request) -> Outcome {
+        let manifest = Manifest::get();
+        let mut outputs = Vec::new();
+        let mut failed = 0usize;
+        let mut first_reason: Option<String> = None;
+        let settings = request.settings.frame_settings();
+
+        for input in &request.inputs {
+            let result = self.frame_image_one(input, &manifest, &settings);
+            match result {
+                Ok(path) => outputs.push(path),
+                Err(reason) => {
+                    failed += 1;
+                    let name = reason.name();
+                    diagnostics::log(Level::Warn, "action", &format!("a file was not processed: {name}"));
+                    if first_reason.is_none() {
+                        first_reason = Some(name.to_string());
+                    }
+                }
+            }
+        }
+
+        if failed == 0 {
+            Outcome::Succeeded { outputs }
+        } else {
+            let because = match first_reason {
+                Some(reason) => format!(": {reason}"),
+                None => String::new(),
+            };
+            Outcome::Failed {
+                reason: Failure::Error(format!(
+                    "{failed} of the files could not be processed{because}"
+                )),
+            }
+        }
+    }
+
+    fn frame_image_one(
+        &self,
+        input: &Path,
+        manifest: &Manifest,
+        settings: &crate::media::frame::FrameSettings,
+    ) -> Result<PathBuf, ToolError> {
+        let source_ext = input
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        let source = manifest
+            .format_of_extension(&source_ext)
+            .or_else(|| manifest.format(&source_ext))
+            .ok_or(ToolError::UnsupportedKind)?;
+        if crate::media::probe::kind_of(&source.format) != Some(crate::media::probe::Kind::Image) {
+            return Err(ToolError::UnsupportedKind);
+        }
+
+        let stem = input
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "file".to_string());
+        let temporary = input.with_file_name(format!("{stem}.frame-part.png"));
+
+        crate::media::frame::frame_file(input, &temporary, settings)
+            .map_err(|_| ToolError::WriteError)?;
+
+        let finals = metadata_final_names(input, "framed", "png");
+        self.publish(&finals, &temporary)
+    }
+
     /// Joins multiple videos into one MP4 movie, clips scaled to fit the first clip.
     fn merge_videos(&self, inputs: &[PathBuf]) -> Result<PathBuf, ToolError> {
         let first = &inputs[0];
@@ -3014,6 +3084,12 @@ impl<P: Publisher> Handler for Tools<P> {
         // one or more PDF documents into a newly assembled PDF.
         if request.operation == "tools.organize_pdf" {
             return self.run_organize_pdf(request);
+        }
+
+        // An image frame / add background puts a photo on a new canvas
+        // with configurable padding, corners, shadow, and background styles.
+        if request.operation == "tools.frame_image" {
+            return self.run_frame_image(request);
         }
 
         let manifest = Manifest::get();
@@ -5814,6 +5890,80 @@ mod tests {
         let duration = crate::media::frames::duration_of(&tools.ffmpeg_tools, made).expect("duration");
         // Two 1-second clips should make a ~2-second joined video
         assert!(duration >= 1.5, "duration should be ~2s: {duration}");
+
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn frame_image_adds_background_and_saves_framed_png() {
+        let scratch = std::env::temp_dir().join(format!("ot-frame-img-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&scratch);
+        let photo = scratch.join("sample.png");
+
+        let src = image::DynamicImage::new_rgb8(100, 80);
+        src.save(&photo).expect("saved sample photo");
+
+        let tools = Tools {
+            ffmpeg_tools: crate::media::locator::Tools {
+                ffmpeg: PathBuf::from("ffmpeg"),
+                ffprobe: PathBuf::from("ffprobe"),
+            },
+            publisher: CopyPublisher,
+        };
+        let request = Request {
+            operation: "tools.frame_image".to_string(),
+            inputs: vec![photo.clone()],
+            settings: ToolSettings {
+                frame_bg_kind: Some("color".to_string()),
+                frame_color_a: Some("FF5A1F".to_string()),
+                frame_padding_x1000: Some(100),
+                frame_corner_radius: Some(16),
+                frame_shadow: Some(12),
+                frame_aspect: Some("1:1".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let outcome = tools.run(&request, &Selection::inspect(&[photo.clone()]));
+        let outputs = match outcome {
+            Outcome::Succeeded { outputs } => outputs,
+            Outcome::Failed { reason } => panic!("framing failed: {:?}", reason),
+            Outcome::Cancelled => panic!("cancelled"),
+        };
+        assert_eq!(outputs.len(), 1);
+        let out_file = &outputs[0];
+        assert!(out_file.is_file(), "output exists: {:?}", out_file);
+        assert!(out_file.to_string_lossy().contains("sample framed.png"));
+
+        let framed = image::open(out_file).expect("framed image opens");
+        // Aspect 1:1 means width == height
+        assert_eq!(framed.width(), framed.height());
+        assert!(framed.width() > 100);
+
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn frame_image_unsupported_kind_fails() {
+        let scratch = std::env::temp_dir().join(format!("ot-frame-non-img-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&scratch);
+        let txt = scratch.join("notes.txt");
+        std::fs::write(&txt, b"hello").unwrap();
+
+        let tools = Tools {
+            ffmpeg_tools: crate::media::locator::Tools {
+                ffmpeg: PathBuf::from("ffmpeg"),
+                ffprobe: PathBuf::from("ffprobe"),
+            },
+            publisher: CopyPublisher,
+        };
+        let request = Request {
+            operation: "tools.frame_image".to_string(),
+            inputs: vec![txt.clone()],
+            ..Default::default()
+        };
+        let outcome = tools.run(&request, &Selection::inspect(&[txt]));
+        assert!(matches!(outcome, Outcome::Failed { .. }));
 
         let _ = std::fs::remove_dir_all(&scratch);
     }

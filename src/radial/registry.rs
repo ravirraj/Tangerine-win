@@ -839,6 +839,20 @@ pub const OPERATIONS: &[Operation] = &[
         implemented: true,
         requires: Requirement::Processor("pdf"),
     },
+    Operation {
+        id: "tools.frame_image",
+        label: "Add BG",
+        detail: "Add background or frame to photo",
+        icon: IconKind::Picture,
+        mode: RadialMode::Tools,
+        categories: &[FileKind::Image],
+        batch: Batch::Several,
+        folders: false,
+        output: Output::Beside("png"),
+        collision: Collision::Rename,
+        implemented: true,
+        requires: Requirement::Processor("image"),
+    },
     // ------------------------------------------------------ file actions
     Operation {
         id: "actions.copy-path",
@@ -1648,6 +1662,7 @@ mod tests {
             "tools.normalize",
             "tools.channels",
             "tools.organize_pdf",
+            "tools.frame_image",
             "actions.copy-path",
             "actions.duplicate",
             "actions.rename",

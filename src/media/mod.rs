@@ -23,6 +23,7 @@ pub mod command;
 pub mod convert;
 pub mod documents;
 pub mod documents2;
+pub mod frame;
 pub mod frames;
 pub mod ico;
 pub mod locator;

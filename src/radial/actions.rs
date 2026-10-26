@@ -312,6 +312,7 @@ mod tests {
                     "tools.normalize | Normalize | Normalize audio volume | Music",
                     "tools.channels | Channels | Convert audio channels | Music",
                     "tools.organize_pdf | Organize | Organize PDF pages | Document",
+                    "tools.frame_image | Add BG | Add background or frame to photo | Picture",
                 ],
             ),
             (
