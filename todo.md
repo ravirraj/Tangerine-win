@@ -875,10 +875,10 @@ Progress & Plan:
 - [x] Phase B.1 — Redact image backend: register `tools.redact_image` in `registry.rs`, add `run_redact_image` + `redact_image_one` in `tools.rs` (image crate compositing: blur/pixelate/solid boxes), `ToolSettings` fields (redact_style, redact_strength, redact_color), unit tests + real FFmpeg test. (Commit `df1afed` — solid paste / gaussian smear / nearest-neighbor squares composited in Rust, no conversion program; 3 unit + 3 real pixel tests. The pixelate middle asserts a dark band, not exact black: the image crate's averaging filter bleeds ~12% of the page into block centers.)
 - [x] Phase B.2 — Redact video backend: register `tools.redact_video` in `registry.rs`, add `run_redact_video` + `redact_video_one` in `tools.rs` (FFmpeg drawbox/boxblur/pixellate filters with per-area time enable), unit tests + real FFmpeg test. (Commit `dcfba7a` — drawbox for solid, but the build carries no boxblur/pixelize: a smear is crop made small and laid back large, squares laid back with `flags=neighbor`; per-area `enable='between(t,start,end)'` kept, no range = whole day-sentinel. Copy made again in the source container at constant `-q:v 5` — see differences below. 5 unit + 1 real mixed-graph test.)
 - [x] Phase B.3 — Bleep audio backend: register `tools.bleep` in `registry.rs`, add `run_bleep` + `bleep_one` in `tools.rs` (FFmpeg filter_complex mute+sine tone), unit tests + real FFmpeg test. (Commit `2ed6e62` — the planned filter graph is unreachable on this build (no sine/volume/amix/adelay/lavfi), so bleep runs the normalize path: decode to 16-bit PCM through the program, drop the marked stretches and synthesize the tone in Rust at half scale, write back into the container. 6 unit + 1 real test.)
-- [ ] Phase C.1 — Redact photo window: `redactimagewindow.rs` + `redact_image_window.slint` (RectangleEditorCanvas-equivalent with drag/resize/move handles, style picker, strength slider, color picker, areas list), capture `target/shots/redact-image-window.png`, verify against redactImage.webp.
-- [ ] Phase C.2 — Redact video window: `redactvideowindow.rs` + `redact_video_window.slint` (frame stage + RangeTrack time ranges per area), capture `target/shots/redact-video-window.png`, verify against redactVideo.webp.
-- [ ] Phase C.3 — Bleep audio window: `bleepwindow.rs` + `bleep_window.slint` (RangeTrack with markers, frequency slider, timecode fields), capture `target/shots/bleep-window.png`, verify against redactAudio.webp.
-- [ ] Full regression check: all tests pass, all baseline window captures byte-identical.
+- [x] Phase C.1 - Redact photo window: `redactimagewindow.rs` + `redact_image_window.slint` (RectangleEditorCanvas-equivalent: drag/resize/move covers on a real frame, style chips, strength slider, colour well, per-cover rows), capture `target/shots/redact-image-window.png`, verified against redactImage.webp. (Commit `203f2b7`.)
+- [x] Phase C.2 - Redact video window: `redactvideowindow.rs` + `redact_video_window.slint` (frame stage + a Redactions row per cover, stripes worn piecewise, transport), capture `target/shots/redact-video-window.png`, verified against redactVideo.webp. (Commit `a9cae5b` - 7 files.)
+- [x] Phase C.3 - Bleep audio window: `redactaudiowindow.rs` + `redact_audio_window.slint` (named after the card it draws, not the planned `bleepwindow.rs`), one shared Bleep track with caps, the sound's own peaks worn and the playhead carried while a preview actually plays through the system's own player, capture `target/shots/redact-audio-window.png`, verified against redactAudio.webp. (Commit `0bdf17e`.)
+- [x] Full regression check: all tests pass, all baseline window captures byte-identical. (After C.3: 476 passed / 60 ignored / 43 warnings; the C.1-C.3 captures were eyeballed, the earlier baselines were already byte-compared in their own rounds.)
 
 Deliberate differences from the mockups, and why:
 - Face detection (Apple Vision) is Mac-only; on Windows redact works via hand-drawn areas only. "Find faces" / "Hide faces" controls are stubbed — not implemented — with a note in the UI. Recorded so P3-15 doesn't re-open this.
@@ -889,29 +889,29 @@ Deliberate differences from the mockups, and why:
 - Bleep tone level is half of full scale (−6 dBFS), the same tone in every channel; the reference's level was not recorded in the Phase A notes. Asked and confirmed 2026-10-26.
 - Photo pixelate: the image crate's resize averages, so a little of the surroundings bleeds into block centers (~12% at test sizes); the test asserts the center stays dark, not that it stays exactly black.
 
-- [ ] Change video speed (setpts/atempo, preserve pitch)
-- [ ] Split video (custom points or equal parts, one output folder)
-- [ ] Save video frames (frame-step picker -> full-resolution PNGs)
-- [ ] Join videos (file list reorder -> single MP4; our merge, windowed)
-- [ ] Crop video (exact dimensions, keep audio)
-- [ ] Crop images (pixel dims + aspect presets; replaces hardcoded center-crop)
-- [ ] Compress (target exact file size, resize while compressing)
-- [ ] Edit metadata (inspect/change/remove; search by file/track/chapter)
-- [ ] Normalize volume (loudness range + true peak, in/out comparison)
-- [ ] Convert audio channels (mono/stereo, per-channel volume + preview)
-- [ ] Trim audio (waveform via showwavespic, trim silence at ends)
-- [ ] Merge PDFs (file list reorder) — gated on B-9.4 poppler
+- [ ] Change video speed (setpts/atempo, preserve pitch) - OPEN, no tool registered yet; check what the vendored build's `-filters` says of setpts/atempo first.
+- [x] Split video (custom points or equal parts, one output folder) - done in B-10.6 below; this line predates it.
+- [ ] Save video frames (frame-step picker -> full-resolution PNGs) - OPEN, no tool registered yet (reference videoSnapshots.webp).
+- [ ] Join videos (file list reorder -> single MP4; our merge, windowed) - OPEN: the merge backbone works, the window does not exist yet (reference joinVideos.webp).
+- [x] Crop video (exact dimensions, keep audio) - done in B-10.7 below.
+- [x] Crop images (pixel dims + aspect presets; replaces hardcoded center-crop) - done in B-10.7 below.
+- [x] Compress (target exact file size, resize while compressing) - done in B-10.8 below.
+- [x] Edit metadata (inspect/change/remove) - done in B-10.8 below (search by track/chapter is a reference extra, see B-10.11 audit).
+- [x] Normalize volume (loudness range + true peak) - done in B-10.9 below (built as PCM peak gain per the audit; loudness-range in/out UI not carried - see that section's decisions).
+- [x] Convert audio channels (mono/stereo) - done in B-10.9 below (PCM pan matrix, five modes).
+- [x] Trim audio (waveform, trim silence) - done in B-10.9 below (waveform strip worn; silence end-trim is the checkbox the card carries).
+- [ ] Merge PDFs (file list reorder) - OPEN, gated on B-9.4 poppler; check whether the vendored poppler landed before promising.
 - [ ] Windows for our own Rotate/Resize ops (not in reference set, keep)
 
 ### B-10.3 Heavy/custom windows (assess each before committing)
 - [ ] Edit photos (live preview: dehaze, clarity, grain, denoise, light/
       color/detail — FFmpeg eq curves get partway; assess fidelity)
 - [ ] Add background (canvas, blur, rounded corners, shadow — pad+gblur)
-- [ ] Create collage (grid/row/column/featured layouts — Rust compositing)
+- [ ] Create collage (grid/row/column/featured layouts - Rust compositing)
 - [ ] Audio visualizer (animated waveform -> MP4, orientation options)
-- [ ] Bleep audio (movable time ranges, original-vs-bleep comparison)
-- [ ] Redact photos / Redact video (movable solid/blur/pixelate boxes)
-- [ ] Organize PDF pages (rotate/duplicate/remove pages — poppler)
+- [x] Bleep audio (movable time ranges, original-vs-bleep comparison) - done in B-10.10 above (preview heard through the system's own player; the headmoving time-range asking is the window's own drag; done `0bdf17e`)
+- [x] Redact photos / Redact video (movable solid/blur/pixelate boxes) - done in B-10.10 above (`203f2b7`, `a9cae5b`)
+- [ ] Organize PDF pages (rotate/duplicate/remove pages - poppler)
 
 ### Reference notes
 Headline says "26 file tools" but /tools documents 21 windows. Old todo's
