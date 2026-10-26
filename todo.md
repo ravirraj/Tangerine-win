@@ -889,10 +889,10 @@ Deliberate differences from the mockups, and why:
 - Bleep tone level is half of full scale (−6 dBFS), the same tone in every channel; the reference's level was not recorded in the Phase A notes. Asked and confirmed 2026-10-26.
 - Photo pixelate: the image crate's resize averages, so a little of the surroundings bleeds into block centers (~12% at test sizes); the test asserts the center stays dark, not that it stays exactly black.
 
-- [ ] Change video speed (setpts/atempo, preserve pitch) - OPEN, no tool registered yet; check what the vendored build's `-filters` says of setpts/atempo first.
+- [x] Change video speed (setpts/atempo, preserve pitch) - done in commit `71838f2` (windowed, 6 presets [0.25x..4x], format_clock duration, pitch disclosure).
 - [x] Split video (custom points or equal parts, one output folder) - done in B-10.6 below; this line predates it.
-- [ ] Save video frames (frame-step picker -> full-resolution PNGs) - OPEN, no tool registered yet (reference videoSnapshots.webp).
-- [ ] Join videos (file list reorder -> single MP4; our merge, windowed) - OPEN: the merge backbone works, the window does not exist yet (reference joinVideos.webp).
+- [x] Save video frames (frame-step picker -> full-resolution PNGs) - done in commit `236a05f` (windowed, frame chip grid, timecodes, beside original).
+- [ ] Join videos (file list reorder -> single MP4; our merge, windowed) - IN PROGRESS: B-10.13 below.
 - [x] Crop video (exact dimensions, keep audio) - done in B-10.7 below.
 - [x] Crop images (pixel dims + aspect presets; replaces hardcoded center-crop) - done in B-10.7 below.
 - [x] Compress (target exact file size, resize while compressing) - done in B-10.8 below.
@@ -900,8 +900,43 @@ Deliberate differences from the mockups, and why:
 - [x] Normalize volume (loudness range + true peak) - done in B-10.9 below (built as PCM peak gain per the audit; loudness-range in/out UI not carried - see that section's decisions).
 - [x] Convert audio channels (mono/stereo) - done in B-10.9 below (PCM pan matrix, five modes).
 - [x] Trim audio (waveform, trim silence) - done in B-10.9 below (waveform strip worn; silence end-trim is the checkbox the card carries).
-- [ ] Merge PDFs (file list reorder) - OPEN, gated on B-9.4 poppler; check whether the vendored poppler landed before promising.
+- [ ] Merge PDFs (file list reorder) - IN PROGRESS: B-10.13 below (PDFium backend + reorder list window).
 - [ ] Windows for our own Rotate/Resize ops (not in reference set, keep)
+
+### B-10.13 Join videos + Merge PDFs (roadmap P3-13)
+Reference: `tool-windows/joinVideos.webp`, `tool-windows/mergePDF.webp` + `DESIGN-SPEC.md` §5/§13 + Swift `Video/CropSpeedJoinVideoToolViews.swift` (`JoinVideosToolView`), `PDF/PDFToolViews.swift` (`MergePDFToolView`), `Images/CreatePDFCollageToolViews.swift` (`OrderedFileList`), `Operations/VideoOps.swift` (`VideoOps.join`), `Operations/PDFOps.swift` (`PDFOps.merge`).
+
+Original behavior (Swift + operations, authoritative — read 2026-10-26):
+- JOIN VIDEOS (`JoinVideosToolView`):
+  - Card with header, section "Playback order", list of video files.
+  - Each row: item index (1-based, monospaced), video frame thumbnail, filename, and stacked Up/Down chevron buttons.
+  - Up chevron disabled at index 0; Down chevron disabled at last index.
+  - Reordering moves/swaps items in the list.
+  - Footer pill button: "Join Videos" (or "Join N clips"), enabled when files.count >= 2.
+  - Execution (`VideoOps.join`): Scales clips to fit the first clip's dimensions (letterboxed/padded if aspect ratio differs), 30 fps, audio normalized to stereo 48000 Hz. Output named `{stem} joined.mp4` beside input.
+- MERGE PDFS (`MergePDFToolView`):
+  - Card with header, section "Document order", list of PDF documents.
+  - Each row: item index (1-based, monospaced), document icon or page 1 thumbnail, filename, and stacked Up/Down chevron buttons.
+  - Up chevron disabled at index 0; Down chevron disabled at last index.
+  - Footer pill button: "Merge PDFs", enabled when files.count >= 1 (typically >= 2 for merge).
+  - Execution (`PDFOps.merge`): Copies all pages from each document sequentially into one new PDF document. Output named `{stem} merged.pdf` beside input.
+
+Shared twin archetype:
+- Both windows share the exact same UI archetype (`OrderedFileList`):
+  - Reorderable list of items with index numbers, thumbnail/icon, filename, and Up/Down chevron buttons.
+  - Adapts to context: "Join Videos" + "Playback order" for videos; "Merge PDFs" + "Document order" for PDFs.
+
+Progress & Plan:
+- [x] Phase A — Evidence & Audit: mockups read (`joinVideos.webp`, `mergePDF.webp`), Swift sources read (`CropSpeedJoinVideoToolViews.swift`, `PDFToolViews.swift`, `CreatePDFCollageToolViews.swift`, `VideoOps.swift`, `PDFOps.swift`), todo section created.
+- [ ] Phase B — Backend: register `tools.merge` for Video and PDF with `Requirement::AnyProcessor(&["video", "pdf"])`, implement `run_merge` in `tools.rs` (video concatenation scaled to first clip + PDFium page merging), unit tests + real tests.
+- [ ] Phase C — Window: twin layout host `mergewindow.rs` + Slint card `merge_window.slint`, support reordering via chevrons and keyboard (Up/Down focus, Shift+Up/Down swap), thumbnails/icons, dispatch in `app.rs`.
+- [ ] Phase D — Proof: pump test, capture tests (`target/shots/join-videos-window.png`, `target/shots/merge-pdf-window.png`), eyeballed against `joinVideos.webp` and `mergePDF.webp`.
+- [ ] Phase E — Docs: update `todo.md`, `HANDOFF.md`, `PLAN.md`.
+
+Deliberate differences from mockups:
+- Windows native chrome ("Join Videos" / "Merge PDFs") with close top-right.
+- Fixed width CARD_W = 400, dynamic height based on file count (HEADER_UNITS + SECTION_UNITS + ITEM_UNITS * count + FOOTER_UNITS).
+- Keyboard shortcuts: Arrow keys to navigate items, Shift+Up/Down to reorder, Enter to run, Esc to close.
 
 ### B-10.3 Heavy/custom windows (assess each before committing)
 - [ ] Edit photos (live preview: dehaze, clarity, grain, denoise, light/
