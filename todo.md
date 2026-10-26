@@ -815,8 +815,8 @@ FINDING 2 — compress video codec row is a ghost (needs a decision):
   `source.write.encoder` (mpeg4 for mp4/mkv/avi), `ToolSettings` has no codec
   field, and `ffprobe -encoders` lists no H.264/HEVC encoder in the vendored ffmpeg.
   Resolution and fps rows DO plumb (`max_long_edge`, `max_fps` verified `840-867`).
-- Options: (a) drop the row, one honest line instead (recommended; matches the
-  image-size cut), or (b) relabel honestly. **Ask the user before B-10.10 Phase B.**
+- Decision (user, 2026-10-26): **leave the row as-is for now**; revisit when a
+  real H.264/HEVC encoder is vendored. No UI change until then.
 
 FINDING 3 — docs accuracy fixes (this commit):
 - The "metadata-window.png matches mockup at 100% visual parity" claim is wrong:
