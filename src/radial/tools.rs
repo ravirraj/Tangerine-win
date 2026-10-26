@@ -297,6 +297,98 @@ impl<P: Publisher> Tools<P> {
         self.publish(&finals, &temporary)
     }
 
+    /// Covers the parts of videos the window drew on.
+    ///
+    /// The rectangles go to the conversion program as a filter graph:
+    /// a solid box is drawn, a smeared part is the crop made small and
+    /// laid back large (the program carries no blur of its own — this
+    /// build has none), a pixelated part is the crop made small and laid
+    /// back large in squares. Every rectangle shows for its own stretch
+    /// of time, told with `between(t, start, end)`; a rectangle given no
+    /// stretch covers the whole way through. The copy is made again in
+    /// the container it came in, at a constant picture quality — a
+    /// redaction is not about the size.
+    fn run_redact_video(&self, request: &Request, runner: &dyn ProcessRunner) -> Outcome {
+        if request.settings.redact_areas.is_empty() {
+            return Outcome::Failed {
+                reason: Failure::InvalidInput("there are no redaction areas".to_string()),
+            };
+        }
+
+        let manifest = Manifest::get();
+        let mut outputs = Vec::new();
+        let mut failed = 0usize;
+        let mut first_reason: Option<String> = None;
+        for input in &request.inputs {
+            let result = self.redact_video_one(
+                input,
+                &manifest,
+                runner,
+                &request.settings,
+            );
+            match result {
+                Ok(path) => outputs.push(path),
+                Err(reason) => {
+                    failed += 1;
+                    let name = reason.name();
+                    diagnostics::log(Level::Warn, "action", &format!("a file was not processed: {name}"));
+                    if first_reason.is_none() {
+                        first_reason = Some(name.to_string());
+                    }
+                }
+            }
+        }
+
+        if failed == 0 {
+            Outcome::Succeeded { outputs }
+        } else {
+            let because = match first_reason {
+                Some(reason) => format!(": {reason}"),
+                None => String::new(),
+            };
+            Outcome::Failed {
+                reason: Failure::Error(format!(
+                    "{failed} of the files could not be processed{because}"
+                )),
+            }
+        }
+    }
+
+    /// Covers the drawn rectangles of one video.
+    fn redact_video_one(
+        &self,
+        input: &Path,
+        manifest: &Manifest,
+        runner: &dyn ProcessRunner,
+        settings: &crate::radial::execution::ToolSettings,
+    ) -> Result<PathBuf, ToolError> {
+        let source_ext = input
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        let source = manifest
+            .format_of_extension(&source_ext)
+            .or_else(|| manifest.format(&source_ext))
+            .ok_or(ToolError::UnsupportedKind)?;
+        if crate::media::probe::kind_of(&source.format) != Some(crate::media::probe::Kind::Video) {
+            return Err(ToolError::UnsupportedKind);
+        }
+
+        let (width, height, _fps) =
+            crate::media::frames::shape_of(&self.ffmpeg_tools, input).ok_or(ToolError::ReadError)?;
+        let graph = redact_video_filter(settings, width, height)?;
+        let stem = input
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "file".to_string());
+        let temporary = input.with_file_name(format!("{stem}.redact-part.{source_ext}"));
+        let arguments = redact_video_args(input, source, &temporary, &graph);
+
+        let finals = metadata_final_names(input, "redacted", &source_ext);
+        self.finish(&arguments, source, &temporary, &finals, runner)
+    }
+
     /// Splits, at the points the window carried, into a folder of
     /// numbered clips.
     ///
@@ -1036,6 +1128,173 @@ fn paste(
             buf.put_pixel(at_x + dx, at_y + dy, *patch.get_pixel(dx, dy));
         }
     }
+}
+
+/// A stretch of time long enough for anything one video covers: a day.
+///
+/// A rectangle given no end covers until the picture stops, and the
+/// program's `between` wants a number to stop at — this one is a day of
+/// seconds, longer than a file a person redacts ever stands.
+const ALWAYS_UNTIL_MS: u64 = 86_400_000;
+
+/// Says milliseconds the way the program reads seconds: always three
+/// decimals, so `1.5` can never be read as `1.05`.
+fn seconds_said(ms: u64) -> String {
+    format!("{}.{:03}", ms / 1000, ms % 1000)
+}
+
+/// The time rule one rectangle keeps to.
+///
+/// Nothing at all when the rectangle covers the whole way through;
+/// otherwise the program's own between, told where the covering starts
+/// and where it stops.
+fn redact_window(area: &crate::radial::execution::RedactArea) -> String {
+    match (area.start_ms, area.end_ms) {
+        (None, None) => String::new(),
+        _ => {
+            let start = seconds_said(area.start_ms.unwrap_or(0));
+            let end = seconds_said(area.end_ms.unwrap_or(ALWAYS_UNTIL_MS));
+            format!(":enable='between(t,{start},{end})'")
+        }
+    }
+}
+
+/// The filter graph that lays every covered rectangle on a video.
+///
+/// The rectangles land in pixels through their fractions, in the order
+/// they stand in the settings — an overlap shows the last one laid, the
+/// way the picture tool paints them. The program carries no blur of its
+/// own in this build, so a smeared part is the crop made small and laid
+/// back large, and a pixelated part is the same thing back in squares:
+/// laid large with the nearest-neighbor flag, which keeps hard edges.
+///
+/// The graph ends with `[vout]`, and only stages that cover something
+/// of the picture take part. With nothing left, it refuses — the same
+/// honesty the picture tool has.
+fn redact_video_filter(
+    settings: &crate::radial::execution::ToolSettings,
+    width: u32,
+    height: u32,
+) -> Result<String, ToolError> {
+    let mut parts: Vec<(
+        &crate::radial::execution::RedactArea,
+        u32,
+        u32,
+        u32,
+        u32,
+    )> = Vec::new();
+    for area in &settings.redact_areas {
+        let (x, y, w, h) = area.rect_on(width, height);
+        if w > 0 && h > 0 {
+            parts.push((area, x, y, w, h));
+        }
+    }
+    if parts.is_empty() {
+        return Err(ToolError::NothingToDo);
+    }
+
+    let color = settings.redaction_color();
+    let hex = format!("0x{:02x}{:02x}{:02x}@1", color[0], color[1], color[2]);
+    let effect = settings.redaction_effect(width.min(height));
+    let mut graph = String::new();
+    let mut flowing = String::from("0:v");
+    for (stage, part) in parts.iter().enumerate() {
+        let (area, x, y, w, h) = *part;
+        let window = redact_window(area);
+        let last = stage == parts.len() - 1;
+        let out = if last { "vout".to_string() } else { format!("r{stage}") };
+        match settings.redaction_style() {
+            RedactStyle::Solid => {
+                graph.push_str(&format!(
+                    "[{flowing}]drawbox=x={x}:y={y}:w={w}:h={h}:color={hex}:t=fill{window}[{out}];",
+                    flowing = flowing,
+                    out = out,
+                ));
+                if !last {
+                    flowing = format!("r{stage}");
+                }
+            }
+            RedactStyle::Blur => {
+                // the crop made small and laid back large: a smear by
+                // the program's scale, painted over for its own time
+                let small_w = (w as f64 / effect).round().max(1.0) as u32;
+                let small_h = (h as f64 / effect).round().max(1.0) as u32;
+                graph.push_str(&format!(
+                    "[{flowing}]split=2[m{stage}][b{stage}];",
+                    flowing = flowing,
+                ));
+                graph.push_str(&format!(
+                    "[b{stage}]crop=x={x}:y={y}:w={w}:h={h},scale={small_w}:{small_h},scale={w}:{h}[sm{stage}];"
+                ));
+                graph.push_str(&format!(
+                    "[m{stage}][sm{stage}]overlay=x={x}:y={y}{window}[{out}];",
+                    out = out,
+                ));
+                if !last {
+                    flowing = format!("r{stage}");
+                }
+            }
+            RedactStyle::Pixelate => {
+                let block = effect.max(2.0);
+                let small_w = ((w as f64 / block).ceil() as u32).max(1);
+                let small_h = ((h as f64 / block).ceil() as u32).max(1);
+                graph.push_str(&format!(
+                    "[{flowing}]split=2[m{stage}][b{stage}];",
+                    flowing = flowing,
+                ));
+                graph.push_str(&format!(
+                    "[b{stage}]crop=x={x}:y={y}:w={w}:h={h},scale={small_w}:{small_h},scale={w}:{h}:flags=neighbor[px{stage}];"
+                ));
+                graph.push_str(&format!(
+                    "[m{stage}][px{stage}]overlay=x={x}:y={y}{window}[{out}];",
+                    out = out,
+                ));
+                if !last {
+                    flowing = format!("r{stage}");
+                }
+            }
+        }
+    }
+    graph.pop(); // the last statement wants no semicolon after it
+    Ok(graph)
+}
+
+/// The arguments that make a covered video: the picture made again in
+/// its own container at a constant quality, sound carried as sound is
+/// carried when a conversion makes a video file.
+fn redact_video_args(
+    input: &Path,
+    source: &crate::media::manifest::FormatSupport,
+    output_path: &Path,
+    graph: &str,
+) -> Vec<OsString> {
+    let mut args = vec![
+        OsString::from("-hide_banner"),
+        OsString::from("-nostdin"),
+        OsString::from("-y"),
+        OsString::from("-f"),
+        OsString::from(&source.read.demuxer),
+        OsString::from("-i"),
+        input.as_os_str().to_os_string(),
+        OsString::from("-filter_complex"),
+        OsString::from(graph),
+        OsString::from("-map"),
+        OsString::from("[vout]"),
+        OsString::from("-map"),
+        OsString::from("0:a?"),
+        OsString::from("-c:v"),
+        OsString::from(&source.write.encoder),
+        OsString::from("-q:v"),
+        OsString::from("5"),
+        OsString::from("-c:a"),
+        OsString::from("aac"),
+        OsString::from("-b:a"),
+        OsString::from("128000"),
+        OsString::from("-f"),
+        OsString::from(&source.write.muxer),
+    ];
+    args.push(output_path.as_os_str().to_os_string());
+    args
 }
 
 /// The arguments that lift a stretch of a video out of its file.
@@ -1783,6 +2042,13 @@ impl<P: Publisher> Handler for Tools<P> {
         // program's own hands — no conversion program takes part.
         if request.operation == "tools.redact_image" {
             return self.run_redact_image(request);
+        }
+
+        // A video covered the same way, only through the conversion
+        // program: its filters draw the boxes and smear the parts on its
+        // own, and the copy is made again in the container it came in.
+        if request.operation == "tools.redact_video" {
+            return self.run_redact_video(request, &SystemRunner);
         }
 
         let manifest = Manifest::get();
@@ -3032,6 +3298,257 @@ mod tests {
             &image::Rgba([255, 255, 255, 255]),
             "outside the area nothing changed"
         );
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn the_redact_video_graph_draws_what_time_says() {
+        // Two solid boxes: one for its own stretch of time, one for the
+        // whole way through.
+        let settings = ToolSettings {
+            redact_style: Some(RedactStyle::Solid),
+            redact_color: Some("ff0000".to_string()),
+            redact_areas: vec![
+                RedactArea {
+                    x_mille: 0,
+                    y_mille: 0,
+                    w_mille: 500,
+                    h_mille: 500,
+                    start_ms: Some(1_000),
+                    end_ms: Some(2_000),
+                },
+                RedactArea {
+                    x_mille: 500,
+                    y_mille: 500,
+                    w_mille: 500,
+                    h_mille: 500,
+                    start_ms: None,
+                    end_ms: None,
+                },
+            ],
+            ..ToolSettings::default()
+        };
+        let graph = redact_video_filter(&settings, 80, 60).expect("the graph built");
+        // the first box stands from one second to two
+        assert!(
+            graph.contains(
+                "drawbox=x=0:y=0:w=40:h=30:color=0xff0000@1:t=fill:enable='between(t,1.000,2.000)'[r0];"
+            ),
+            "the ranged box is not drawn the way the program reads it: {graph}"
+        );
+        // the second covers the whole way through, so no time rule, and
+        // its stream is the one the graph hands out
+        assert!(
+            graph.contains("[r0]drawbox=x=40:y=30:w=40:h=30:color=0xff0000@1:t=fill[vout]"),
+            "the whole-way box is not drawn: {graph}"
+        );
+        assert!(!graph.contains("boxblur"), "no blur filter is borrowed: {graph}");
+    }
+
+    #[test]
+    fn the_redact_video_graph_smears_and_blocks_with_what_the_program_has() {
+        // This build of the program carries no blur filter at all (the
+        // real test of the program proves the parts), so the smear is
+        // the crop made small and laid back large, and the squares are
+        // the same thing lifted with the nearest-neighbor flag.
+        let settings = ToolSettings {
+            redact_style: Some(RedactStyle::Blur),
+            redact_areas: vec![RedactArea {
+                x_mille: 250,
+                y_mille: 250,
+                w_mille: 500,
+                h_mille: 500,
+                start_ms: None,
+                end_ms: None,
+            }],
+            ..ToolSettings::default()
+        };
+        let graph = redact_video_filter(&settings, 80, 60).expect("the graph built");
+        // the crop is the rectangle; the effect is 16% of the smaller
+        // side (9.6 of 60), so the small copy is four by three
+        assert!(
+            graph.contains(
+                "crop=x=20:y=15:w=40:h=30,scale=4:3,scale=40:30[sm0];"
+            ),
+            "the smear is not made the way it was decided: {graph}"
+        );
+        assert!(
+            graph.contains("[m0][sm0]overlay=x=20:y=15[vout]"),
+            "the smear is not laid back where it came from: {graph}"
+        );
+        assert!(!graph.contains("boxblur"), "no missing filter is asked for: {graph}");
+
+        let settings = ToolSettings {
+            redact_style: Some(RedactStyle::Pixelate),
+            ..settings
+        };
+        let graph = redact_video_filter(&settings, 80, 60).expect("the graph built");
+        assert!(
+            graph.contains(
+                "crop=x=20:y=15:w=40:h=30,scale=5:4,scale=40:30:flags=neighbor[px0];"
+            ),
+            "the squares are not cut: {graph}"
+        );
+        assert!(!graph.contains("pixelize"), "no missing filter is asked for: {graph}");
+    }
+
+    #[test]
+    fn a_video_covered_by_nothing_says_something() {
+        // A rectangle at the very edge covers no pixel of the picture.
+        let settings = ToolSettings {
+            redact_areas: vec![RedactArea {
+                x_mille: 1000,
+                y_mille: 1000,
+                w_mille: 500,
+                h_mille: 500,
+                start_ms: None,
+                end_ms: None,
+            }],
+            ..ToolSettings::default()
+        };
+        let outcome = redact_video_filter(&settings, 80, 60);
+        assert_eq!(outcome, Err(ToolError::NothingToDo));
+    }
+
+    #[test]
+    fn the_redact_video_args_carry_the_graph_and_the_maps() {
+        let source = crate::media::manifest::Manifest::get()
+            .format("mp4")
+            .expect("mp4 is in the manifest");
+        let arguments = redact_video_args(
+            Path::new("in.mp4"),
+            &source,
+            Path::new("in.redact-part.mp4"),
+            "[0:v]drawbox=x=0:y=0:w=1:h=1:color=0x000000@1:t=fill[vout]",
+        );
+        let words: Vec<String> = arguments
+            .iter()
+            .map(|word| word.to_string_lossy().into_owned())
+            .collect();
+        let graph_at = words
+            .iter()
+            .position(|w| w == "-filter_complex")
+            .expect("the graph was asked for");
+        assert!(
+            words[graph_at + 1].contains("drawbox"),
+            "the graph rides in one word: {}", words[graph_at + 1]
+        );
+        let out_at = words
+            .iter()
+            .position(|word| word == "[vout]")
+            .expect("the covered stream is mapped");
+        assert_eq!(words[out_at - 1], "-map", "the map names the stream");
+        assert!(
+            words.iter().any(|word| word == "0:a?"),
+            "the sound is mapped when it is there"
+        );
+        let quality_at = words
+            .iter()
+            .position(|word| word == "-q:v")
+            .expect("the picture quality was set");
+        assert_eq!(words[quality_at + 1], "5");
+    }
+
+    #[test]
+    fn a_video_redaction_without_areas_is_refused_and_said_so() {
+        let tools = Tools {
+            ffmpeg_tools: crate::media::locator::Tools {
+                ffmpeg: PathBuf::from("ffmpeg"),
+                ffprobe: PathBuf::from("ffprobe"),
+            },
+            publisher: CopyPublisher,
+        };
+        let request = Request {
+            operation: "tools.redact_video".to_string(),
+            inputs: vec![PathBuf::from("clip.mp4")],
+            settings: ToolSettings::default(),
+            ..Default::default()
+        };
+        let outcome = tools.run(&request, &Selection::inspect(&[PathBuf::from("clip.mp4")]));
+        match outcome {
+            Outcome::Failed {
+                reason: Failure::InvalidInput(message),
+            } => {
+                assert_eq!(message, "there are no redaction areas");
+            }
+            other => panic!("the redaction was not refused for saying nothing: {other:?}"),
+        }
+    }
+
+    #[test]
+    #[ignore = "needs the conversion program"]
+    fn a_video_is_redacted_the_way_the_styles_ask() {
+        let folder = Path::new("vendor").join("ffmpeg");
+        let ffmpeg = folder.join("ffmpeg.exe");
+        let ffprobe = folder.join("ffprobe.exe");
+        if !ffmpeg.is_file() || !ffprobe.is_file() {
+            eprintln!("the program is not there; this test needs it");
+            return;
+        }
+        let scratch = std::env::temp_dir().join("open-tangerine-redact-video-test");
+        std::fs::create_dir_all(&scratch).expect("the scratch folder was made");
+        let input = make_test_video(&scratch);
+
+        // A smear over the left half the whole way, over the right half
+        // the whole way, and over the middle strip for one second only —
+        // three covers in one graph, one style asked (the way the
+        // reference asks a style of the whole batch, not of each box).
+        let tools = Tools {
+            ffmpeg_tools: crate::media::locator::Tools {
+                ffmpeg: ffmpeg.clone(),
+                ffprobe: ffprobe.clone(),
+            },
+            publisher: CopyPublisher,
+        };
+        let request = Request {
+            operation: "tools.redact_video".to_string(),
+            inputs: vec![input.clone()],
+            settings: ToolSettings {
+                redact_style: Some(RedactStyle::Blur),
+                redact_areas: vec![
+                    RedactArea {
+                        x_mille: 0,
+                        y_mille: 0,
+                        w_mille: 500,
+                        h_mille: 1000,
+                        start_ms: None,
+                        end_ms: None,
+                    },
+                    RedactArea {
+                        x_mille: 500,
+                        y_mille: 0,
+                        w_mille: 500,
+                        h_mille: 1000,
+                        start_ms: None,
+                        end_ms: None,
+                    },
+                    RedactArea {
+                        x_mille: 300,
+                        y_mille: 400,
+                        w_mille: 400,
+                        h_mille: 200,
+                        start_ms: Some(1_000),
+                        end_ms: Some(2_000),
+                    },
+                ],
+                ..ToolSettings::default()
+            },
+            ..Default::default()
+        };
+        let outcome = tools.run(&request, &Selection::inspect(&[input.clone()]));
+        let outputs = match outcome {
+            Outcome::Succeeded { outputs } => outputs,
+            Outcome::Failed { reason } => panic!("the redaction failed: {reason:?}"),
+            Outcome::Cancelled => panic!("the redaction was not asked to stop"),
+        };
+        let made = outputs.first().expect("the redaction is there");
+        assert!(made.is_file(), "the covered copy exists");
+        assert_eq!(
+            made.file_name().and_then(|n| n.to_str()),
+            Some("clip redacted.mp4")
+        );
+        let size = video_size(&ffprobe, made);
+        assert_eq!(size, (160, 120), "the covered video keeps its shape");
         let _ = std::fs::remove_dir_all(&scratch);
     }
 
