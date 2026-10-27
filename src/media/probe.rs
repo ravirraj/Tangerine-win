@@ -42,13 +42,18 @@ pub(crate) enum Kind {
 
 /// The kind a format belongs to, when the conversion program is what works
 /// on it. The formats the program handles in Rust have no kind here.
+///
+/// The names said here are the manifest's own names and the extensions the
+/// manifest says a file of each format is called by — extensions included,
+/// because the windows and the runner ask about the file they were given,
+/// and the file is called by its extension, not by the manifest's name.
 pub(crate) fn kind_of(format: &str) -> Option<Kind> {
     match format {
-        "png" | "jpeg" | "bmp" | "tiff" | "gif" | "ico" | "webp" => Some(Kind::Image),
-        "mp4" | "mkv" | "avi" | "wmv" | "webm" => Some(Kind::Video),
-        "mp3" | "aac" | "flac" | "wav" | "ogg" | "opus" | "aiff" | "m4a" | "wma" => {
-            Some(Kind::Audio)
-        }
+        "png" | "jpeg" | "jpg" | "jpe" | "jfif" | "bmp" | "dib" | "tiff" | "tif" | "gif"
+        | "ico" | "webp" => Some(Kind::Image),
+        "mp4" | "m4v" | "mkv" | "avi" | "wmv" | "webm" => Some(Kind::Video),
+        "mp3" | "aac" | "flac" | "wav" | "ogg" | "oga" | "opus" | "aiff" | "aif" | "m4a"
+        | "wma" => Some(Kind::Audio),
         _ => None,
     }
 }
@@ -693,5 +698,38 @@ Output:
             .processor("image")
             .expect("there is a processor");
         assert!(!processor.can_read("png"));
+    }
+
+    #[test]
+    fn a_file_is_known_by_every_name_the_manifest_calls_it() {
+        // The kinds the manifest's own extension tables say: the same
+        // thing called .jpg, .jpeg, .jpe or .jfif is one picture.
+        for called in ["png", "jpeg", "jpg", "jpe", "jfif", "bmp", "dib", "tiff", "tif", "gif", "ico", "webp"] {
+            assert_eq!(
+                kind_of(called),
+                Some(Kind::Image),
+                "the file called {called} is a picture"
+            );
+        }
+        for called in ["mp4", "m4v", "mkv", "avi", "wmv", "webm"] {
+            assert_eq!(
+                kind_of(called),
+                Some(Kind::Video),
+                "the file called {called} is a video"
+            );
+        }
+        for called in ["mp3", "aac", "flac", "wav", "ogg", "oga", "opus", "aiff", "aif", "m4a", "wma"] {
+            assert_eq!(
+                kind_of(called),
+                Some(Kind::Audio),
+                "the file called {called} is a sound"
+            );
+        }
+        // A name the manifest does not carry is nothing here — the
+        // program honest-about-what-it-cannot-open.
+        assert_eq!(kind_of("mov"), None, "this build carries no mov of its own");
+        assert_eq!(kind_of("heic"), None, "the build's library reads no heic");
+        assert_eq!(kind_of("svg"), None, "a drawing is handled in Rust, not here");
+        assert_eq!(kind_of(""), None);
     }
 }

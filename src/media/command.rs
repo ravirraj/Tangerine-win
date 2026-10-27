@@ -35,6 +35,20 @@ pub fn composite_graph() -> String {
     )
 }
 
+/// The same graph, with a filter asked of the stream first.
+///
+/// A tool that asks a turn or a squeeze of the picture asks it of the
+/// same stream the matte graph paints on; a stream can be fed by one
+/// graph only, so the filter is put at the head of the complex one and
+/// no simple graph is said beside it — the program refuses both.
+pub fn composite_graph_with(filter: &str) -> String {
+    format!(
+        "[0:v]{filter},format=rgba,split=2[fg][bg];\
+         [bg]drawbox=color={BACKGROUND}:t=fill:replace=1[bgs];\
+         [bgs][fg]overlay=shortest=1:format=rgb"
+    )
+}
+
 /// Whether a muxer needs a seekable output file (cannot write to pipe).
 ///
 /// Some muxers (mov, matroska, avi, asf, ipod) need to seek back to write
@@ -67,9 +81,8 @@ pub fn is_audio_encoder(encoder: &str) -> bool {
 /// a picture sequence to it. By default the result is written to the
 /// program's standard output; when `output_path` is given, the result is
 /// written to that file instead (needed for muxers that require seekable
-/// output). When `video_filter` is given, it is inserted as a `-vf`
-/// filter before the encoder (used by tools like crop, trim, resize,
-/// rotate).
+/// output). When `video_filter` is given, it is put in the stream's way
+/// before the encoder (used by tools like crop, trim, resize, rotate).
 pub fn convert(
     input: &Path,
     source: &FormatSupport,
@@ -89,16 +102,25 @@ pub fn convert(
         input.as_os_str().to_os_string(),
     ];
 
-    if let Some(filter) = video_filter {
-        args.push(OsString::from("-vf"));
-        args.push(OsString::from(filter));
-    }
-
     let audio = is_audio_encoder(&target.write.encoder);
 
-    if target.alpha == Alpha::Matte && !audio {
+    // The matte graph belongs where the source holds a transparent area
+    // that the format written cannot. A source that cannot hold one is
+    // opaque already, and painting it onto white would be a whole graph
+    // spent for nothing — a spent graph that also leaves no room for a
+    // `-vf`, because a stream is fed by one filtergraph only.
+    if source.alpha == Alpha::Keep && target.alpha == Alpha::Matte && !audio {
         args.push(OsString::from("-filter_complex"));
-        args.push(OsString::from(composite_graph()));
+        match video_filter {
+            // A filter was asked as well: it is folded into the head of
+            // the graph, for the stream can be fed by the complex one
+            // only. The program refuses a simple graph beside it.
+            Some(filter) => args.push(OsString::from(composite_graph_with(filter))),
+            None => args.push(OsString::from(composite_graph())),
+        }
+    } else if let Some(filter) = video_filter {
+        args.push(OsString::from("-vf"));
+        args.push(OsString::from(filter));
     }
 
     if audio {
@@ -198,6 +220,85 @@ mod tests {
         let target = manifest.format("png").expect("png is in the manifest");
         let args = words(&convert(Path::new("photo.png"), source, target, None, None));
         assert!(!args.iter().any(|word| word == "-filter_complex"));
+    }
+
+    #[test]
+    fn a_source_that_cannot_hold_transparency_gets_no_graph() {
+        // A jpeg turned into a jpeg is opaque on both ends: the matte
+        // graph would be a whole graph spent on what is already opaque —
+        // and it would leave no room for a `-vf` beside it.
+        let manifest = Manifest::get();
+        let source = manifest.format("jpeg").expect("jpeg is in the manifest");
+        let target = manifest.format("jpeg").expect("jpeg is in the manifest");
+        let args = words(&convert(
+            Path::new("photo.jpg"),
+            source,
+            target,
+            None,
+            Some("transpose=1"),
+        ));
+        assert!(
+            !args.iter().any(|word| word == "-filter_complex"),
+            "no graph for an opaque pair"
+        );
+        let simple = args
+            .iter()
+            .position(|word| word == "-vf")
+            .expect("the filter is asked the simple way");
+        assert_eq!(args[simple + 1], "transpose=1");
+    }
+
+    #[test]
+    fn a_filter_asked_of_a_true_source_sits_at_the_head_of_the_graph() {
+        // A transparent picture turned into a matte one with a turn asked
+        // of it: the filter goes inside the one complex graph, for the
+        // program refuses a simple graph beside a complex one.
+        let manifest = Manifest::get();
+        let source = manifest.format("png").expect("png is in the manifest");
+        let target = manifest.format("jpeg").expect("jpeg is in the manifest");
+        let args = words(&convert(
+            Path::new("photo.png"),
+            source,
+            target,
+            None,
+            Some("transpose=1"),
+        ));
+        assert!(
+            !args.iter().any(|word| word == "-vf"),
+            "no simple graph beside the complex one"
+        );
+        let graph = args
+            .iter()
+            .position(|word| word == "-filter_complex")
+            .map(|at| args[at + 1].clone())
+            .expect("there is a graph");
+        assert!(
+            graph.starts_with("[0:v]transpose=1,format=rgba"),
+            "the filter is at the head of the graph: {graph}"
+        );
+        assert!(graph.contains("drawbox"), "the graph is {graph}");
+    }
+
+    #[test]
+    fn a_filter_asked_of_a_true_target_that_keeps_it_stays_simple() {
+        // A picture to the same format it came from has no matte to
+        // paint; the filter is a simple one, and no graph is said.
+        let manifest = Manifest::get();
+        let source = manifest.format("png").expect("png is in the manifest");
+        let target = manifest.format("png").expect("png is in the manifest");
+        let args = words(&convert(
+            Path::new("photo.png"),
+            source,
+            target,
+            None,
+            Some("transpose=1"),
+        ));
+        assert!(!args.iter().any(|word| word == "-filter_complex"));
+        let simple = args
+            .iter()
+            .position(|word| word == "-vf")
+            .expect("the filter is asked the simple way");
+        assert_eq!(args[simple + 1], "transpose=1");
     }
 
     #[test]

@@ -3411,7 +3411,10 @@ impl<P: Publisher> Handler for Tools<P> {
                 .and_then(|e| e.to_str())
                 .unwrap_or("")
                 .to_lowercase();
-            let Some(source) = manifest.format(&source_ext) else {
+            let Some(source) = manifest
+                .format_of_extension(&source_ext)
+                .or_else(|| manifest.format(&source_ext))
+            else {
                 failed += 1;
                 let name = ToolError::UnsupportedKind.name();
                 diagnostics::log(Level::Warn, "action", &format!("a file was not processed: {name}"));
@@ -3439,7 +3442,13 @@ impl<P: Publisher> Handler for Tools<P> {
                 }
             };
 
-            let Some(target) = manifest.format(extension) else {
+            // The written side is spoken in extensions too — the file's own
+            // name when the operation keeps it — so the extension is asked
+            // the same way the source was.
+            let Some(target) = manifest
+                .format_of_extension(extension)
+                .or_else(|| manifest.format(extension))
+            else {
                 failed += 1;
                 let name = ToolError::UnsupportedKind.name();
                 diagnostics::log(Level::Warn, "action", &format!("a file was not processed: {name}"));
@@ -4597,6 +4606,97 @@ mod tests {
         let made = outputs.first().expect("the crop is there");
         let picture = image::open(made).expect("the crop reads back");
         assert_eq!((picture.width(), picture.height()), (32, 24));
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    // The aliases are the point of these two: a file the wheel calls a
+    // picture has to be worked on because of what it is called — .jpg is
+    // the same file .jpeg is, and a tool that refuses it is a tool that
+    // never runs.
+
+    #[test]
+    #[ignore = "needs the picture library and nothing more"]
+    fn a_jpg_is_cropped_with_the_programs_own_hands() {
+        let scratch = std::env::temp_dir().join("open-tangerine-crop-jpg-test");
+        let _ = std::fs::remove_dir_all(&scratch);
+        std::fs::create_dir_all(&scratch).expect("the scratch folder was made");
+        let input = make_noisy_jpeg(&scratch, "photo.jpg", 90);
+
+        let tools = Tools {
+            ffmpeg_tools: crate::media::locator::Tools {
+                ffmpeg: PathBuf::from("ffmpeg"),
+                ffprobe: PathBuf::from("ffprobe"),
+            },
+            publisher: CopyPublisher,
+        };
+        let request = Request {
+            operation: "tools.crop".to_string(),
+            inputs: vec![input.clone()],
+            settings: ToolSettings {
+                crop_x: Some(80),
+                crop_y: Some(60),
+                crop_w: Some(160),
+                crop_h: Some(120),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let outcome = tools.run(&request, &Selection::inspect(&[input.clone()]));
+        let outputs = match outcome {
+            Outcome::Succeeded { outputs } => outputs,
+            Outcome::Failed { reason } => panic!("the jpg crop failed: {:?}", reason),
+            Outcome::Cancelled => panic!("the crop was not asked to stop"),
+        };
+        let made = outputs.first().expect("the crop is there");
+        let picture = image::open(made).expect("the crop reads back");
+        assert_eq!(
+            (picture.width(), picture.height()),
+            (160, 120),
+            "the quarter of the picture is standing"
+        );
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    #[ignore = "needs the conversion program"]
+    fn a_jpg_is_turned_a_quarter_at_the_wheel_path() {
+        let folder = Path::new("vendor").join("ffmpeg");
+        let ffmpeg = folder.join("ffmpeg.exe");
+        let ffprobe = folder.join("ffprobe.exe");
+        if !ffmpeg.is_file() || !ffprobe.is_file() {
+            eprintln!("the program is not there; this test needs it");
+            return;
+        }
+        let scratch = std::env::temp_dir().join("open-tangerine-rotate-jpg-test");
+        let _ = std::fs::remove_dir_all(&scratch);
+        std::fs::create_dir_all(&scratch).expect("the scratch folder was made");
+        let input = make_noisy_jpeg(&scratch, "photo.jpg", 90);
+
+        let tools = Tools {
+            ffmpeg_tools: crate::media::locator::Tools {
+                ffmpeg: ffmpeg.clone(),
+                ffprobe: ffprobe.clone(),
+            },
+            publisher: CopyPublisher,
+        };
+        let request = Request {
+            operation: "tools.rotate".to_string(),
+            inputs: vec![input.clone()],
+            ..Default::default()
+        };
+        let outcome = tools.run(&request, &Selection::inspect(&[input.clone()]));
+        let outputs = match outcome {
+            Outcome::Succeeded { outputs } => outputs,
+            Outcome::Failed { reason } => panic!("the jpg rotate failed: {:?}", reason),
+            Outcome::Cancelled => panic!("the turn was not asked to stop"),
+        };
+        let made = outputs.first().expect("the turned copy is there");
+        let picture = image::open(made).expect("the copy reads back");
+        assert_eq!(
+            (picture.width(), picture.height()),
+            (240, 320),
+            "the turn stood the sides the other way"
+        );
         let _ = std::fs::remove_dir_all(&scratch);
     }
 
