@@ -1457,6 +1457,63 @@ mod tests {
         );
     }
 
+    /// The wheels a pair of real PDFs are offered, with the programs this
+    /// machine really carries: the conversion program is asked for its
+    /// formats, and the PDF library beside the program is bound to.
+    ///
+    /// The hermetic tests above say what the wheels do with a made-up
+    /// answer; this one says what a person's two PDFs really get.
+    #[test]
+    #[ignore = "needs the conversion program and the PDF library"]
+    fn two_real_pdfs_get_the_convert_and_the_tool_wheels() {
+        let Some(tools) = crate::media::locator::find() else {
+            panic!("the conversion program is vendored with the tests");
+        };
+        let capabilities = crate::media::probe::Capabilities::probe(
+            &tools,
+            &crate::media::runner::SystemRunner,
+        )
+        .expect("the conversion program said what it can do");
+        let environment = capabilities.environment();
+
+        let folder = TempFolder::new("real-pdf-menu");
+        let paths = vec![folder.file("first.pdf"), folder.file("second.pdf")];
+        let selection = Selection::inspect(&paths);
+
+        let menu = menu_for(&selection, &environment);
+        let names = |segments: &[Segment]| -> Vec<String> {
+            segments.iter().map(|segment| segment.id.clone()).collect()
+        };
+
+        let convert = names(menu.segments(RadialMode::Convert));
+        assert!(
+            convert.contains(&"convert.pdf-png".to_string()),
+            "PDF to PNG is on the convert wheel: {convert:?}"
+        );
+        assert!(
+            convert.contains(&"convert.pdf-jpeg".to_string()),
+            "PDF to JPEG is on the convert wheel: {convert:?}"
+        );
+        assert!(
+            convert.contains(&"convert.pdf-txt".to_string()),
+            "PDF to Text is on the convert wheel: {convert:?}"
+        );
+
+        let tools = names(menu.segments(RadialMode::Tools));
+        assert!(
+            tools.contains(&"tools.merge".to_string()),
+            "Merge is on the tools wheel for two PDFs: {tools:?}"
+        );
+        assert!(
+            tools.contains(&"tools.metadata".to_string()),
+            "Metadata is on the tools wheel for PDFs: {tools:?}"
+        );
+        assert!(
+            tools.contains(&"tools.organize_pdf".to_string()),
+            "Organize is on the tools wheel for PDFs: {tools:?}"
+        );
+    }
+
     #[test]
     fn one_operation_that_may_be_run_gives_one_segment() {
         let folder = TempFolder::new("one-segment");

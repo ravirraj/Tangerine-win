@@ -298,8 +298,10 @@ impl Capabilities {
 
         // The PDF reader is a library beside the program, not a part of the
         // conversion program, so it is not in the manifest. It reads PDF
-        // files and writes pictures and text, and it is only offered while
-        // the library is there to be bound to.
+        // files and writes pictures and text, and it writes documents of
+        // its own: pages that are put together or rearranged come out as
+        // PDFs again, and a metadata copy is a PDF. It is only offered
+        // while the library is there to be bound to.
         let mut processors = vec![
             Processor {
                 name: IMAGE_PROCESSOR.to_string(),
@@ -337,6 +339,10 @@ impl Capabilities {
                     "png".to_string(),
                     "jpeg".to_string(),
                     "txt".to_string(),
+                    // Pages put together or rearranged come out as PDFs,
+                    // and so does a metadata copy: the wheels that make a
+                    // PDF of a PDF are the library's own.
+                    "pdf".to_string(),
                 ],
             });
         }
