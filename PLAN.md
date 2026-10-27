@@ -209,7 +209,7 @@ todo.md for the per-tool traceability)
 | calamine (XLSX/XLS/ODS read) | ~1.5 MB | MIT | Native spreadsheet routes |
 | pdf-writer (images→PDF) | ~0.5 MB | Apache/MIT | Cheap win, fills "PDF export" |
 | office2pdf (DOCX/PPTX/XLSX→PDF) | ~20 MB | Apache-2.0 | Optional download for no-Office users, not bundled |
-| exif-rs | ~0.5 MB | MIT | Small |
+| exif-rs | ~0.5 MB | BSD-2-Clause | In use — photo tags (kamadak-exif 0.6.1) |
 | ONNX Runtime (background removal) | ~50–100 MB | MIT | **Too heavy** — defer |
 | serde + serde_json | ~0 | MIT | For settings |
 
