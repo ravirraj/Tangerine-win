@@ -657,6 +657,19 @@ impl TimelineWindow {
             .map(crate::radial::selection::FileKind::from_extension)
             == Some(crate::radial::selection::FileKind::Audio);
 
+        // The window is titled as the reference designs title their
+        // cards: a trim says what it trims, a split and a snapshots
+        // card say the film they work on.
+        let label = if operation == "tools.trim" {
+            if is_audio { "Trim Audio" } else { "Trim Video" }
+        } else if operation == "tools.split" {
+            "Split Video"
+        } else if operation == "tools.snapshots" {
+            "Video Snapshots"
+        } else {
+            label
+        };
+
         let said = if inputs.len() == 1 {
             inputs[0]
                 .file_name()
