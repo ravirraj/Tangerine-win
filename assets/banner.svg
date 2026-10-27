@@ -1,0 +1,178 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 300" width="100%" height="300" style="background: transparent; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+  <defs>
+    <!-- Background Gradient -->
+    <linearGradient id="bg-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#141416" />
+      <stop offset="50%" stop-color="#1C1B1F" />
+      <stop offset="100%" stop-color="#121114" />
+    </linearGradient>
+
+    <!-- Tangerine Accent Gradient -->
+    <linearGradient id="orange-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FF7A30" />
+      <stop offset="50%" stop-color="#FF5A1F" />
+      <stop offset="100%" stop-color="#D9430D" />
+    </linearGradient>
+
+    <!-- Subtle Glow Filter -->
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="16" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+    <filter id="ring-glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="6" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+
+    <style>
+      .pulsing-ring {
+        transform-origin: 780px 150px;
+        animation: pulseRing 4s ease-in-out infinite;
+      }
+      .pulsing-ring-delayed {
+        transform-origin: 780px 150px;
+        animation: pulseRing 4s ease-in-out infinite;
+        animation-delay: 2s;
+      }
+      .rotating-wheel {
+        transform-origin: 780px 150px;
+        animation: rotateWheel 30s linear infinite;
+      }
+      .shimmer-text {
+        background: linear-gradient(90deg, #FFFFFF 0%, #FFA270 50%, #FFFFFF 100%);
+        background-size: 200% auto;
+        color: #fff;
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        animation: shimmer 5s linear infinite;
+      }
+      .badge-glow {
+        animation: badgePulse 3s ease-in-out infinite alternate;
+      }
+      .tagline-fade {
+        animation: fadeIn 1.2s ease-out;
+      }
+
+      @keyframes pulseRing {
+        0% { transform: scale(0.85); opacity: 0.6; }
+        50% { transform: scale(1.15); opacity: 0.15; }
+        100% { transform: scale(0.85); opacity: 0.6; }
+      }
+      @keyframes rotateWheel {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+      }
+      @keyframes shimmer {
+        0% { background-position: 0% 50%; }
+        100% { background-position: 200% 50%; }
+      }
+      @keyframes badgePulse {
+        0% { filter: drop-shadow(0 0 2px rgba(255, 90, 31, 0.4)); }
+        100% { filter: drop-shadow(0 0 10px rgba(255, 90, 31, 0.8)); }
+      }
+      @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(6px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+    </style>
+  </defs>
+
+  <!-- Container Box with Rounded Edges -->
+  <rect x="2" y="2" width="956" height="296" rx="20" ry="20" fill="url(#bg-grad)" stroke="#2D2B30" stroke-width="1.5" />
+
+  <!-- Background Grid Accent -->
+  <g opacity="0.04" stroke="#FFF" stroke-width="1">
+    <line x1="0" y1="50" x2="960" y2="50" />
+    <line x1="0" y1="100" x2="960" y2="100" />
+    <line x1="0" y1="150" x2="960" y2="150" />
+    <line x1="0" y1="200" x2="960" y2="200" />
+    <line x1="0" y1="250" x2="960" y2="250" />
+    <line x1="160" y1="0" x2="160" y2="300" />
+    <line x1="320" y1="0" x2="320" y2="300" />
+    <line x1="480" y1="0" x2="480" y2="300" />
+    <line x1="640" y1="0" x2="640" y2="300" />
+    <line x1="800" y1="0" x2="800" y2="300" />
+  </g>
+
+  <!-- Left Accent Warm Ambient Glow -->
+  <circle cx="120" cy="80" r="140" fill="#FF5A1F" opacity="0.12" filter="url(#glow)" />
+  <!-- Right Wheel Ambient Glow -->
+  <circle cx="780" cy="150" r="160" fill="#FF5A1F" opacity="0.16" filter="url(#glow)" />
+
+  <!-- Animated Outer Pulsing Rings on Radial Wheel -->
+  <circle class="pulsing-ring" cx="780" cy="150" r="110" fill="none" stroke="#FF5A1F" stroke-width="1.5" opacity="0.4" filter="url(#ring-glow)" />
+  <circle class="pulsing-ring-delayed" cx="780" cy="150" r="125" fill="none" stroke="#FF7A30" stroke-width="1" opacity="0.25" />
+
+  <!-- Interactive Rotating Wheel Segments Graphic -->
+  <g class="rotating-wheel">
+    <!-- Outer Rim Track -->
+    <circle cx="780" cy="150" r="92" fill="none" stroke="#3D3A42" stroke-width="20" stroke-opacity="0.6" stroke-dasharray="32 4" />
+    <!-- Highlighted Active Wedge -->
+    <circle cx="780" cy="150" r="92" fill="none" stroke="url(#orange-grad)" stroke-width="22" stroke-dasharray="72 216" stroke-dashoffset="30" filter="url(#ring-glow)" />
+    <!-- Inner Track -->
+    <circle cx="780" cy="150" r="66" fill="none" stroke="#2B2830" stroke-width="3" />
+    <!-- Wheel Spokes / Pointers -->
+    <line x1="780" y1="60" x2="780" y2="76" stroke="#FF9254" stroke-width="3" stroke-linecap="round" />
+    <line x1="780" y1="224" x2="780" y2="240" stroke="#FF9254" stroke-width="3" stroke-linecap="round" />
+    <line x1="690" y1="150" x2="706" y2="150" stroke="#FF9254" stroke-width="3" stroke-linecap="round" />
+    <line x1="854" y1="150" x2="870" y2="150" stroke="#FF9254" stroke-width="3" stroke-linecap="round" />
+  </g>
+
+  <!-- Central Wheel Hub Graphic -->
+  <circle cx="780" cy="150" r="48" fill="#1E1C22" stroke="#443F4D" stroke-width="2.5" />
+  <circle cx="780" cy="150" r="44" fill="url(#orange-grad)" opacity="0.15" />
+  
+  <!-- Stylized Tangerine Slice in Hub -->
+  <g transform="translate(764, 134) scale(0.031)">
+    <!-- Tangerine icon path -->
+    <path fill="url(#orange-grad)" d="M512 85C276.2 85 85 276.2 85 512s191.2 427 427 427 427-191.2 427-427S747.8 85 512 85zm0 774c-191.6 0-347-155.4-347-347S320.4 165 512 165s347 155.4 347 347-155.4 347-347 347z"/>
+    <path fill="#FFA270" d="M512 230c-155.8 0-282 126.2-282 282s126.2 282 282 282 282-126.2 282-282-126.2-282-282-282zm0 80c44.8 0 86.8 13.9 121.7 37.6L512 473.3V310zm-40 0v163.3L350.3 347.6C385.2 323.9 427.2 310 472 310zm-152 79.4l125.7 125.7H282.4c6.2-46.3 22.8-88.7 49.6-125.7zm-39.6 162.6h163.3L320 677.7c-26.8-37-43.4-79.4-49.6-125.7zm81.9 162.3L472 550.7V714c-44.8 0-86.8-13.9-121.7-37.6zm199.7 0C487.2 700.1 445.2 714 400.4 714v-163.3l121.7 121.7z" opacity="0.9" />
+  </g>
+
+  <!-- Left Content Area: Branding & Titles -->
+  <g transform="translate(60, 64)">
+    
+    <!-- Top Pill / Badge -->
+    <g class="badge-glow">
+      <rect x="0" y="0" width="186" height="26" rx="13" ry="13" fill="#2A2220" stroke="#FF5A1F" stroke-width="1.2" />
+      <circle cx="12" cy="13" r="4" fill="#34D399" />
+      <text x="24" y="17" fill="#FFA77B" font-size="11" font-weight="700" letter-spacing="0.5">WINDOWS 10 &amp; 11 NATIVE</text>
+    </g>
+
+    <!-- Main Title -->
+    <text x="0" y="72" fill="#FFFFFF" font-size="44" font-weight="900" letter-spacing="-1">
+      Open Tangerine
+    </text>
+    <text x="360" y="72" fill="#FF5A1F" font-size="44" font-weight="900" letter-spacing="-1">.</text>
+
+    <!-- Tagline -->
+    <text class="tagline-fade" x="0" y="106" fill="#A8A5B2" font-size="16" font-weight="450" letter-spacing="-0.2">
+      Fluid radial wheel &amp; instant power toolbox for the files you drag.
+    </text>
+
+    <!-- Feature Highlights / Chips -->
+    <g transform="translate(0, 134)">
+      <!-- Chip 1 -->
+      <g>
+        <rect x="0" y="0" width="118" height="28" rx="6" ry="6" fill="#1F1E24" stroke="#323038" stroke-width="1" />
+        <text x="14" y="18" fill="#E2E0E8" font-size="12" font-weight="600">18+ Tools</text>
+      </g>
+      <!-- Chip 2 -->
+      <g transform="translate(126, 0)">
+        <rect x="0" y="0" width="138" height="28" rx="6" ry="6" fill="#1F1E24" stroke="#323038" stroke-width="1" />
+        <text x="14" y="18" fill="#E2E0E8" font-size="12" font-weight="600">Zero Latency</text>
+      </g>
+      <!-- Chip 3 -->
+      <g transform="translate(272, 0)">
+        <rect x="0" y="0" width="126" height="28" rx="6" ry="6" fill="#1F1E24" stroke="#323038" stroke-width="1" />
+        <text x="14" y="18" fill="#E2E0E8" font-size="12" font-weight="600">100% Offline</text>
+      </g>
+      <!-- Chip 4 -->
+      <g transform="translate(406, 0)">
+        <rect x="0" y="0" width="110" height="28" rx="6" ry="6" fill="#1F1E24" stroke="#323038" stroke-width="1" />
+        <text x="14" y="18" fill="#FF8D54" font-size="12" font-weight="600">Pure Rust</text>
+      </g>
+    </g>
+
+  </g>
+</svg>
