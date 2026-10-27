@@ -534,6 +534,16 @@ impl EditImageWindow {
                     unsafe { let _ = ShowWindow(hwnd, SW_HIDE); }
                     return LRESULT(0);
                 }
+                if wparam.0 == 0x09 { // Tab -> toggle compare original
+                    HOST_RC.with(|cell| {
+                        if let Some(host_rc) = cell.borrow().as_ref() {
+                            let mut host = host_rc.borrow_mut();
+                            host.show_original = !host.show_original;
+                            host.sync_card();
+                        }
+                    });
+                    return LRESULT(0);
+                }
                 if wparam.0 == 0x0D { // Enter
                     HOST_RC.with(|cell| {
                         if let Some(host_rc) = cell.borrow().as_ref() {

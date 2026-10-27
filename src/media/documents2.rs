@@ -146,21 +146,47 @@ pub fn to_pdf(source: &Path, target: &Path) -> Result<(), DocError> {
     Err(DocError::OfficeMissing)
 }
 
+/// Runs a command with a timeout, killing the process tree if it hangs.
+fn run_with_timeout(mut cmd: Command, timeout_secs: u64) -> Result<std::process::ExitStatus, DocError> {
+    let mut child = cmd.spawn().map_err(|_| DocError::OfficeFailed)?;
+    let start = std::time::Instant::now();
+    let timeout = std::time::Duration::from_secs(timeout_secs);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok(status),
+            Ok(None) => {
+                if start.elapsed() >= timeout {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(DocError::OfficeFailed);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(DocError::OfficeFailed);
+            }
+        }
+    }
+}
+
 /// Exports with the installed Office program.
 fn office_export(app: App, source: &Path, target: &Path) -> Result<(), DocError> {
-    let result = Command::new("powershell")
-        .arg("-NoProfile")
+    let mut cmd = Command::new("powershell");
+    cmd.arg("-NoProfile")
         .arg("-NonInteractive")
         .arg("-Command")
         .arg(script(app))
         .env("OT_SOURCE", source)
         .env("OT_TARGET", target)
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .output();
-    match result {
-        Ok(output) if output.status.success() && target.is_file() => Ok(()),
-        _ => Err(DocError::OfficeFailed),
+        .stderr(Stdio::null());
+    let status = run_with_timeout(cmd, 60)?;
+    if status.success() && target.is_file() {
+        Ok(())
+    } else {
+        Err(DocError::OfficeFailed)
     }
 }
 
@@ -183,22 +209,23 @@ fn libreoffice_export(program: &Path, source: &Path, target: &Path) -> Result<()
         source.file_stem().and_then(|stem| stem.to_str()).unwrap_or("converted")
     ));
 
-    let result = Command::new(program)
-        .arg("--headless")
+    let mut cmd = Command::new(program);
+    cmd.arg("--headless")
         .arg("--convert-to")
         .arg("pdf")
         .arg("--outdir")
         .arg(&staging)
         .arg(source)
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .output();
+        .stderr(Stdio::null());
+
+    let result = run_with_timeout(cmd, 60);
 
     // The file is taken out of the staging folder before the folder is
     // swept away. The check has to be said while the file is still there:
     // a staging folder removed first would make every export look like an
     // export that never happened, however well it went.
-    let exported = matches!(&result, Ok(output) if output.status.success());
+    let exported = matches!(&result, Ok(status) if status.success());
     if exported && made.is_file() {
         let moved = std::fs::rename(&made, target);
         let _ = std::fs::remove_dir_all(&staging);

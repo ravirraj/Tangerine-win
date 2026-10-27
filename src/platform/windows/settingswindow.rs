@@ -10,16 +10,18 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use slint::platform::software_renderer::MinimalSoftwareWindow;
-use slint::PhysicalSize;
+use slint::platform::{PointerEventButton, WindowAdapter, WindowEvent};
+use slint::{LogicalPosition, PhysicalSize};
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, EndPaint, PAINTSTRUCT,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    DefWindowProcW, PostQuitMessage,
+    DefWindowProcW,
     SetForegroundWindow, SetLayeredWindowAttributes, SetWindowPos, ShowWindow,
-    LWA_ALPHA, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER, SW_HIDE,
-    SW_SHOW, WM_DESTROY, WM_DPICHANGED, WM_ERASEBKGND, WM_KEYDOWN, WM_PAINT,
+    LWA_ALPHA, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE,
+    SW_SHOW, WM_CLOSE, WM_DESTROY, WM_DPICHANGED, WM_ERASEBKGND, WM_KEYDOWN,
+    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_PAINT,
 };
 
 use crate::platform::windows::windowhost::scale_factor;
@@ -237,7 +239,11 @@ impl Layout {
     }
 }
 
-pub struct SettingsWindow {
+thread_local! {
+    static HOST: RefCell<Option<Rc<RefCell<SettingsWindowInner>>>> = const { RefCell::new(None) };
+}
+
+struct SettingsWindowInner {
     window: HWND,
     renderer_window: Rc<MinimalSoftwareWindow>,
     card: SettingsCard,
@@ -247,92 +253,7 @@ pub struct SettingsWindow {
     buffer: Vec<Bgra8>,
 }
 
-impl SettingsWindow {
-    pub fn new() -> Result<Self, String> {
-        let (window, renderer_window, card, settings, layout, scale, buffer) =
-            Self::create_window(CARD_W, CARD_H)?;
-        let mut sw = Self {
-            window,
-            renderer_window,
-            card,
-            settings,
-            layout,
-            scale,
-            buffer,
-        };
-        sw.sync_card();
-        Ok(sw)
-    }
-
-    fn create_window(
-        width_units: i32,
-        height_units: i32,
-    ) -> Result<
-        (
-            HWND,
-            Rc<MinimalSoftwareWindow>,
-            SettingsCard,
-            Rc<RefCell<AppSettings>>,
-            Layout,
-            f32,
-            Vec<Bgra8>,
-        ),
-        String,
-    > {
-        let scale = scale_factor(HWND(std::ptr::null_mut()));
-        let client_w = ((width_units as f32) * scale).round() as i32;
-        let client_h = ((height_units as f32) * scale).round() as i32;
-        let layout = Layout::of(client_w, client_h);
-
-        let hwnd = crate::platform::windows::windowhost::create_layered_window(
-            "OpenTangerineSettingsWindow",
-            "Settings — Open Tangerine",
-            Some(Self::wnd_proc),
-            client_w,
-            client_h,
-        )?;
-
-        let renderer_window = window_for_next_component();
-        let card = SettingsCard::new().map_err(|e| e.to_string())?;
-        renderer_window.set_size(PhysicalSize::new(client_w as u32, client_h as u32));
-
-        let settings = Rc::new(RefCell::new(AppSettings::load()));
-        let buffer = vec![Bgra8::default(); (client_w * client_h) as usize];
-
-        Ok((
-            hwnd,
-            renderer_window,
-            card,
-            settings,
-            layout,
-            scale,
-            buffer,
-        ))
-    }
-
-    pub fn show(&self) {
-        unsafe {
-            let _ = SetLayeredWindowAttributes(self.window, COLORREF(0), 255, LWA_ALPHA);
-            let _ = SetWindowPos(
-                self.window,
-                None,
-                0,
-                0,
-                0,
-                0,
-                SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | windows::Win32::UI::WindowsAndMessaging::SWP_SHOWWINDOW,
-            );
-            let _ = ShowWindow(self.window, SW_SHOW);
-            let _ = SetForegroundWindow(self.window);
-        }
-    }
-
-    pub fn hide(&self) {
-        unsafe {
-            let _ = ShowWindow(self.window, SW_HIDE);
-        }
-    }
-
+impl SettingsWindowInner {
     pub fn sync_card(&mut self) {
         let s = self.settings.borrow();
         let layout = Layout::of(self.layout.client_width, self.layout.client_height);
@@ -405,9 +326,229 @@ impl SettingsWindow {
         (w, h)
     }
 
-    pub fn save_capture(&mut self, path: &std::path::Path) -> Result<(), String> {
+    pub fn draw(&mut self) {
         let (w, h) = self.render_to_buffer();
-        crate::platform::windows::windowhost::save_buffer_as_png(&self.buffer, w as u32, h as u32, path)
+        crate::platform::windows::windowhost::blit_card_buffer(
+            self.window,
+            &self.buffer,
+            w as u32,
+            h as u32,
+        );
+    }
+}
+
+pub struct SettingsWindow {
+    inner: Rc<RefCell<SettingsWindowInner>>,
+}
+
+unsafe impl Send for SettingsWindow {}
+
+impl SettingsWindow {
+    pub fn new() -> Result<Self, String> {
+        let (window, renderer_window, card, settings, layout, scale, buffer) =
+            Self::create_window(CARD_W, CARD_H)?;
+        let inner = Rc::new(RefCell::new(SettingsWindowInner {
+            window,
+            renderer_window,
+            card,
+            settings,
+            layout,
+            scale,
+            buffer,
+        }));
+        inner.borrow_mut().sync_card();
+        Self::wire_callbacks(&inner);
+        HOST.with(|cell| {
+            *cell.borrow_mut() = Some(Rc::clone(&inner));
+        });
+        Ok(Self { inner })
+    }
+
+    fn wire_callbacks(inner_rc: &Rc<RefCell<SettingsWindowInner>>) {
+        let card = &inner_rc.borrow().card;
+
+        let weak = Rc::downgrade(inner_rc);
+        card.on_close_clicked(move || {
+            if let Some(inner) = weak.upgrade() {
+                unsafe {
+                    let _ = ShowWindow(inner.borrow().window, SW_HIDE);
+                }
+            }
+        });
+
+        let weak = Rc::downgrade(inner_rc);
+        card.on_theme_selected(move |idx| {
+            if let Some(inner) = weak.upgrade() {
+                let mut host = inner.borrow_mut();
+                let theme = match idx {
+                    1 => ThemeMode::Dark,
+                    2 => ThemeMode::Light,
+                    _ => ThemeMode::System,
+                };
+                host.settings.borrow_mut().theme = theme;
+                let _ = host.settings.borrow().save();
+                host.sync_card();
+                host.draw();
+            }
+        });
+
+        let weak = Rc::downgrade(inner_rc);
+        card.on_accent_selected(move |idx| {
+            if let Some(inner) = weak.upgrade() {
+                let mut host = inner.borrow_mut();
+                let idx = (idx as usize).min(ACCENT_PRESETS.len() - 1);
+                host.settings.borrow_mut().accent = ACCENT_PRESETS[idx].to_string();
+                let _ = host.settings.borrow().save();
+                host.sync_card();
+                host.draw();
+            }
+        });
+
+        let weak = Rc::downgrade(inner_rc);
+        card.on_output_selected(move |idx| {
+            if let Some(inner) = weak.upgrade() {
+                let mut host = inner.borrow_mut();
+                host.settings.borrow_mut().output_beside_original = idx == 0;
+                let _ = host.settings.borrow().save();
+                host.sync_card();
+                host.draw();
+            }
+        });
+
+        let weak = Rc::downgrade(inner_rc);
+        card.on_sound_toggled(move || {
+            if let Some(inner) = weak.upgrade() {
+                let mut host = inner.borrow_mut();
+                let current = host.settings.borrow().sound_enabled;
+                host.settings.borrow_mut().sound_enabled = !current;
+                let _ = host.settings.borrow().save();
+                host.sync_card();
+                host.draw();
+            }
+        });
+
+        let weak = Rc::downgrade(inner_rc);
+        card.on_startup_toggled(move || {
+            if let Some(inner) = weak.upgrade() {
+                let mut host = inner.borrow_mut();
+                let current = host.settings.borrow().launch_at_startup;
+                host.settings.borrow_mut().launch_at_startup = !current;
+                let _ = host.settings.borrow().save();
+                host.sync_card();
+                host.draw();
+            }
+        });
+
+        let weak = Rc::downgrade(inner_rc);
+        card.on_tray_toggled(move || {
+            if let Some(inner) = weak.upgrade() {
+                let mut host = inner.borrow_mut();
+                let current = host.settings.borrow().show_tray_icon;
+                host.settings.borrow_mut().show_tray_icon = !current;
+                let _ = host.settings.borrow().save();
+                host.sync_card();
+                host.draw();
+            }
+        });
+
+        let weak = Rc::downgrade(inner_rc);
+        card.on_shell_toggled(move || {
+            if let Some(inner) = weak.upgrade() {
+                let mut host = inner.borrow_mut();
+                let current = host.settings.borrow().shell_menu_enabled;
+                let new_val = !current;
+                host.settings.borrow_mut().shell_menu_enabled = new_val;
+                if new_val {
+                    let _ = crate::platform::windows::shell_menu::register_shell_menu();
+                } else {
+                    let _ = crate::platform::windows::shell_menu::unregister_shell_menu();
+                }
+                let _ = host.settings.borrow().save();
+                host.sync_card();
+                host.draw();
+            }
+        });
+    }
+
+    fn create_window(
+        width_units: i32,
+        height_units: i32,
+    ) -> Result<
+        (
+            HWND,
+            Rc<MinimalSoftwareWindow>,
+            SettingsCard,
+            Rc<RefCell<AppSettings>>,
+            Layout,
+            f32,
+            Vec<Bgra8>,
+        ),
+        String,
+    > {
+        let scale = scale_factor(HWND(std::ptr::null_mut()));
+        let client_w = ((width_units as f32) * scale).round() as i32;
+        let client_h = ((height_units as f32) * scale).round() as i32;
+        let layout = Layout::of(client_w, client_h);
+
+        let hwnd = crate::platform::windows::windowhost::create_layered_window(
+            "OpenTangerineSettingsWindow",
+            "Settings — Open Tangerine",
+            Some(Self::wnd_proc),
+            client_w,
+            client_h,
+        )?;
+
+        let renderer_window = window_for_next_component();
+        let card = SettingsCard::new().map_err(|e| e.to_string())?;
+        renderer_window.set_size(PhysicalSize::new(client_w as u32, client_h as u32));
+
+        let settings = Rc::new(RefCell::new(AppSettings::load()));
+        let buffer = vec![Bgra8::default(); (client_w * client_h) as usize];
+
+        Ok((
+            hwnd,
+            renderer_window,
+            card,
+            settings,
+            layout,
+            scale,
+            buffer,
+        ))
+    }
+
+    pub fn show(&self) {
+        self.inner.borrow_mut().draw();
+        let hwnd = self.inner.borrow().window;
+        unsafe {
+            let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 255, LWA_ALPHA);
+            let _ = SetWindowPos(
+                hwnd,
+                None,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | windows::Win32::UI::WindowsAndMessaging::SWP_SHOWWINDOW,
+            );
+            let _ = ShowWindow(hwnd, SW_SHOW);
+            let _ = SetForegroundWindow(hwnd);
+        }
+    }
+
+    pub fn hide(&self) {
+        unsafe {
+            let _ = ShowWindow(self.inner.borrow().window, SW_HIDE);
+        }
+    }
+
+    pub fn save_capture(&mut self, path: &std::path::Path) -> Result<(), String> {
+        let (w, h) = self.inner.borrow_mut().render_to_buffer();
+        crate::platform::windows::windowhost::save_buffer_as_png(
+            &self.inner.borrow().buffer,
+            w as u32,
+            h as u32,
+            path,
+        )
     }
 
     unsafe extern "system" fn wnd_proc(
@@ -426,6 +567,36 @@ impl SettingsWindow {
                 }
                 LRESULT(0)
             }
+            WM_LBUTTONDOWN | WM_LBUTTONUP | WM_MOUSEMOVE => {
+                let x = (lparam.0 & 0xFFFF) as i16 as f32;
+                let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as f32;
+                let position = LogicalPosition::new(x, y);
+                let event = match msg {
+                    WM_LBUTTONDOWN => WindowEvent::PointerPressed {
+                        position,
+                        button: PointerEventButton::Left,
+                    },
+                    WM_LBUTTONUP => WindowEvent::PointerReleased {
+                        position,
+                        button: PointerEventButton::Left,
+                    },
+                    _ => WindowEvent::PointerMoved { position },
+                };
+
+                let renderer = HOST.with(|cell| {
+                    cell.borrow().as_ref().map(|inner| inner.borrow().renderer_window.clone())
+                });
+                if let Some(renderer) = renderer {
+                    renderer.window().dispatch_event(event);
+                    renderer.request_redraw();
+                }
+                HOST.with(|cell| {
+                    if let Some(inner) = cell.borrow().as_ref() {
+                        inner.borrow_mut().draw();
+                    }
+                });
+                LRESULT(0)
+            }
             WM_KEYDOWN => {
                 if wparam.0 == 0x1B { // Esc
                     unsafe { let _ = ShowWindow(hwnd, SW_HIDE); }
@@ -433,8 +604,11 @@ impl SettingsWindow {
                 }
                 unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
             }
+            WM_CLOSE => {
+                unsafe { let _ = ShowWindow(hwnd, SW_HIDE); }
+                LRESULT(0)
+            }
             WM_DESTROY => {
-                unsafe { PostQuitMessage(0); }
                 LRESULT(0)
             }
             WM_DPICHANGED => {

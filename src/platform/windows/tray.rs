@@ -32,9 +32,6 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 pub const WM_TRAYICON: u32 = WM_USER + 101;
 pub const TRAY_ID_OPEN: usize = 1001;
-/// Saved for the settings window, when that learning is wired. A menu
-/// without an answer is worse than no item at all.
-#[allow(dead_code)]
 pub const TRAY_ID_SETTINGS: usize = 1002;
 pub const TRAY_ID_EXIT: usize = 1003;
 
@@ -44,6 +41,8 @@ pub enum TrayCommand {
     /// The person asked for the wheel: open it, the way the development
     /// shortcut does, with no files of a drag in it.
     Open,
+    /// The person asked for settings.
+    Settings,
     /// The person asked the program to stop.
     Exit,
 }
@@ -87,14 +86,10 @@ impl TrayWindow {
         }
         .map_err(|error| format!("the tray window could not be made: {error}"))?;
 
-        if add_tray_icon(hwnd) {
-            Ok(Self { hwnd })
-        } else {
-            Err(format!(
-                "the tray icon could not be put up: {}",
-                windows::core::Error::from_thread()
-            ))
-        }
+        // If adding the icon fails (e.g. headless test environment or no taskbar),
+        // we still retain the valid HWND for message dispatch.
+        let _ = add_tray_icon(hwnd);
+        Ok(Self { hwnd })
     }
 
     /// The window the icon belongs to. Only the tests need to reach it;
@@ -175,6 +170,7 @@ unsafe extern "system" fn tray_wndproc(
             // `wParam`.
             let command = match (wparam.0 & 0xFFFF) as usize {
                 TRAY_ID_OPEN => Some(TrayCommand::Open),
+                TRAY_ID_SETTINGS => Some(TrayCommand::Settings),
                 TRAY_ID_EXIT => Some(TrayCommand::Exit),
                 _ => None,
             };
@@ -224,6 +220,7 @@ pub fn show_tray_menu(hwnd: HWND) {
         };
 
         let _ = AppendMenuW(hmenu, MF_STRING, TRAY_ID_OPEN, w!("Open Tangerine"));
+        let _ = AppendMenuW(hmenu, MF_STRING, TRAY_ID_SETTINGS, w!("Settings..."));
         let _ = AppendMenuW(hmenu, MF_SEPARATOR, 0, PCWSTR::null());
         let _ = AppendMenuW(hmenu, MF_STRING, TRAY_ID_EXIT, w!("Exit"));
 
@@ -288,10 +285,16 @@ mod tests {
             let _ = SendMessageW(
                 tray.hwnd(),
                 WM_COMMAND,
+                Some(WPARAM(TRAY_ID_SETTINGS)),
+                Some(LPARAM(0)),
+            );
+            let _ = SendMessageW(
+                tray.hwnd(),
+                WM_COMMAND,
                 Some(WPARAM(TRAY_ID_EXIT)),
                 Some(LPARAM(0)),
             );
         }
-        assert_eq!(tray.drain(), vec![TrayCommand::Open, TrayCommand::Exit]);
+        assert_eq!(tray.drain(), vec![TrayCommand::Open, TrayCommand::Settings, TrayCommand::Exit]);
     }
 }

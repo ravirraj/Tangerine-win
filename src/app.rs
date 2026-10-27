@@ -124,7 +124,7 @@ enum Message {
     /// of it.
     Finished(String, execution::Outcome),
     /// What the tool window was asked, when its buttons were pressed.
-    ToolWindow(crate::platform::windows::toolwindow::ToolEvent),
+    ToolWindow(Box<crate::platform::windows::toolwindow::ToolEvent>),
 }
 
 /// Asks the programs what they can do.
@@ -303,6 +303,8 @@ struct App {
     annotate_window: crate::platform::windows::annotatewindow::AnnotateWindow,
     /// The window a photo's adjustments are configured in, hidden until edit photo is picked.
     edit_image_window: crate::platform::windows::editimagewindow::EditImageWindow,
+    /// The settings window, shown when chosen from tray.
+    settings_window: Option<crate::platform::windows::settingswindow::SettingsWindow>,
     /// The tray icon and its hidden window, when the tray could be had.
     ///
     /// The icon is the one part of the program a person can see while it
@@ -384,289 +386,62 @@ impl App {
             let sender = sender.clone();
             std::thread::spawn(move || {
                 while let Ok(event) = tool_messages.recv() {
-                    if sender.send(Message::ToolWindow(event)).is_err() {
+                    if sender.send(Message::ToolWindow(Box::new(event))).is_err() {
                         break;
                     }
                 }
             });
         }
-        let tool_window =
-            crate::platform::windows::toolwindow::ToolWindow::new(tool_sender)
-                .map_err(|reason| reason)?;
-
-        // The window a trim is asked in, with the video's own timeline.
-        // What its buttons say comes back the same way, into the same
-        // message: the trim is only another tool that was asked of a
-        // window.
-        let (timeline_sender, timeline_messages) =
-            std::sync::mpsc::channel::<crate::platform::windows::toolwindow::ToolEvent>();
-        {
-            let sender = sender.clone();
-            std::thread::spawn(move || {
-                while let Ok(event) = timeline_messages.recv() {
-                    if sender.send(Message::ToolWindow(event)).is_err() {
-                        break;
-                    }
-                }
-            });
-        }
+        let tool_window = crate::platform::windows::toolwindow::ToolWindow::new(tool_sender.clone())
+            .map_err(|reason| reason)?;
         let timeline_window =
-            crate::platform::windows::timelinewindow::TimelineWindow::new(timeline_sender)
+            crate::platform::windows::timelinewindow::TimelineWindow::new(tool_sender.clone())
                 .map_err(|reason| reason)?;
-
-        // The window a crop is asked in, with the media's own picture and
-        // the rectangle standing over it. What its buttons say comes back
-        // the same way, into the same message: the crop is only another
-        // tool that was asked of a window.
-        let (crop_sender, crop_messages) =
-            std::sync::mpsc::channel::<crate::platform::windows::toolwindow::ToolEvent>();
-        {
-            let sender = sender.clone();
-            std::thread::spawn(move || {
-                while let Ok(event) = crop_messages.recv() {
-                    if sender.send(Message::ToolWindow(event)).is_err() {
-                        break;
-                    }
-                }
-            });
-        }
-        let crop_window = crate::platform::windows::cropwindow::CropWindow::new(crop_sender)
+        let crop_window = crate::platform::windows::cropwindow::CropWindow::new(tool_sender.clone())
             .map_err(|reason| reason)?;
-
-        // The window a picture is covered in, with the rectangles of
-        // cover standing over it. What its buttons say comes back the
-        // same way, into the same message.
-        let (redact_sender, redact_messages) =
-            std::sync::mpsc::channel::<crate::platform::windows::toolwindow::ToolEvent>();
-        {
-            let sender = sender.clone();
-            std::thread::spawn(move || {
-                while let Ok(event) = redact_messages.recv() {
-                    if sender.send(Message::ToolWindow(event)).is_err() {
-                        break;
-                    }
-                }
-            });
-        }
         let redact_image_window =
-            crate::platform::windows::redactimagewindow::RedactImageWindow::new(redact_sender)
+            crate::platform::windows::redactimagewindow::RedactImageWindow::new(tool_sender.clone())
                 .map_err(|reason| reason)?;
-
-        // The window a video is covered in, with the rectangles of
-        // cover standing over it and a row for every cover's stretch.
-        // What its buttons say comes back the same way, into the same
-        // message.
-        let (redact_video_sender, redact_video_messages) =
-            std::sync::mpsc::channel::<crate::platform::windows::toolwindow::ToolEvent>();
-        {
-            let sender = sender.clone();
-            std::thread::spawn(move || {
-                while let Ok(event) = redact_video_messages.recv() {
-                    if sender.send(Message::ToolWindow(event)).is_err() {
-                        break;
-                    }
-                }
-            });
-        }
         let redact_video_window =
-            crate::platform::windows::redactvideowindow::RedactVideoWindow::new(redact_video_sender)
+            crate::platform::windows::redactvideowindow::RedactVideoWindow::new(tool_sender.clone())
                 .map_err(|reason| reason)?;
-
-        // The window a sound is covered in, with a stretch for every
-        // part of it the tone takes over. What its buttons say comes
-        // back the same way, into the same message.
-        let (redact_audio_sender, redact_audio_messages) =
-            std::sync::mpsc::channel::<crate::platform::windows::toolwindow::ToolEvent>();
-        {
-            let sender = sender.clone();
-            std::thread::spawn(move || {
-                while let Ok(event) = redact_audio_messages.recv() {
-                    if sender.send(Message::ToolWindow(event)).is_err() {
-                        break;
-                    }
-                }
-            });
-        }
         let redact_audio_window =
-            crate::platform::windows::redactaudiowindow::RedactAudioWindow::new(
-                redact_audio_sender,
-            )
+            crate::platform::windows::redactaudiowindow::RedactAudioWindow::new(tool_sender.clone())
+                .map_err(|reason| reason)?;
+        let compress_window =
+            crate::platform::windows::compresswindow::CompressWindow::new(tool_sender.clone())
+                .map_err(|reason| reason)?;
+        let metadata_window =
+            crate::platform::windows::metadatawindow::MetadataWindow::new(tool_sender.clone())
+                .map_err(|reason| reason)?;
+        let normalize_window =
+            crate::platform::windows::normalizewindow::NormalizeWindow::new(tool_sender.clone())
+                .map_err(|reason| reason)?;
+        let channels_window =
+            crate::platform::windows::channelswindow::ChannelsWindow::new(tool_sender.clone())
+                .map_err(|reason| reason)?;
+        let speed_window =
+            crate::platform::windows::speedwindow::SpeedWindow::new(tool_sender.clone())
+                .map_err(|reason| reason)?;
+        let merge_window = crate::platform::windows::mergewindow::MergeWindow::new(tool_sender.clone())
             .map_err(|reason| reason)?;
-
-        // The window a compress is asked in.
-        let (compress_sender, compress_messages) =
-            std::sync::mpsc::channel::<crate::platform::windows::toolwindow::ToolEvent>();
-        {
-            let sender = sender.clone();
-            std::thread::spawn(move || {
-                while let Ok(event) = compress_messages.recv() {
-                    if sender.send(Message::ToolWindow(event)).is_err() {
-                        break;
-                    }
-                }
-            });
-        }
-        let compress_window = crate::platform::windows::compresswindow::CompressWindow::new(compress_sender)
-            .map_err(|reason| reason)?;
-
-        let (metadata_sender, metadata_messages) = std::sync::mpsc::channel();
-        {
-            let sender = sender.clone();
-            std::thread::spawn(move || {
-                while let Ok(event) = metadata_messages.recv() {
-                    if sender.send(Message::ToolWindow(event)).is_err() {
-                        break;
-                    }
-                }
-            });
-        }
-        let metadata_window = crate::platform::windows::metadatawindow::MetadataWindow::new(metadata_sender)
-            .map_err(|reason| reason)?;
-
-        let (normalize_sender, normalize_messages) = std::sync::mpsc::channel();
-        {
-            let sender = sender.clone();
-            std::thread::spawn(move || {
-                while let Ok(event) = normalize_messages.recv() {
-                    if sender.send(Message::ToolWindow(event)).is_err() {
-                        break;
-                    }
-                }
-            });
-        }
-        let normalize_window = crate::platform::windows::normalizewindow::NormalizeWindow::new(normalize_sender)
-            .map_err(|reason| reason)?;
-
-        let (channels_sender, channels_receiver) = std::sync::mpsc::channel();
-        {
-            let sender = sender.clone();
-            std::thread::spawn(move || {
-                while let Ok(event) = channels_receiver.recv() {
-                    if sender.send(Message::ToolWindow(event)).is_err() {
-                        break;
-                    }
-                }
-            });
-        }
-        let channels_window = crate::platform::windows::channelswindow::ChannelsWindow::new(channels_sender)
-            .map_err(|reason| reason)?;
-
-        let (speed_sender, speed_receiver) = std::sync::mpsc::channel();
-        {
-            let sender = sender.clone();
-            std::thread::spawn(move || {
-                while let Ok(event) = speed_receiver.recv() {
-                    if sender.send(Message::ToolWindow(event)).is_err() {
-                        break;
-                    }
-                }
-            });
-        }
-        let speed_window = crate::platform::windows::speedwindow::SpeedWindow::new(speed_sender)
-            .map_err(|reason| reason)?;
-
-        let (merge_sender, merge_receiver) = std::sync::mpsc::channel();
-        {
-            let sender = sender.clone();
-            std::thread::spawn(move || {
-                while let Ok(event) = merge_receiver.recv() {
-                    if sender.send(Message::ToolWindow(event)).is_err() {
-                        break;
-                    }
-                }
-            });
-        }
-        let merge_window = crate::platform::windows::mergewindow::MergeWindow::new(merge_sender)
-            .map_err(|reason| reason)?;
-
-        let (organize_sender, organize_receiver) = std::sync::mpsc::channel();
-        {
-            let sender = sender.clone();
-            std::thread::spawn(move || {
-                while let Ok(event) = organize_receiver.recv() {
-                    if sender.send(Message::ToolWindow(event)).is_err() {
-                        break;
-                    }
-                }
-            });
-        }
         let organize_pdf_window =
-            crate::platform::windows::organizepdfwindow::OrganizePdfWindow::new(organize_sender)
+            crate::platform::windows::organizepdfwindow::OrganizePdfWindow::new(tool_sender.clone())
                 .map_err(|reason| reason)?;
-
-        let (frame_sender, frame_receiver) = std::sync::mpsc::channel();
-        {
-            let sender = sender.clone();
-            std::thread::spawn(move || {
-                while let Ok(event) = frame_receiver.recv() {
-                    if sender.send(Message::ToolWindow(event)).is_err() {
-                        break;
-                    }
-                }
-            });
-        }
         let frame_image_window =
-            crate::platform::windows::frameimagewindow::FrameImageWindow::new(frame_sender)
+            crate::platform::windows::frameimagewindow::FrameImageWindow::new(tool_sender.clone())
                 .map_err(|reason| reason)?;
-
-        let (visualizer_sender, visualizer_receiver) = std::sync::mpsc::channel();
-        {
-            let sender = sender.clone();
-            std::thread::spawn(move || {
-                while let Ok(event) = visualizer_receiver.recv() {
-                    if sender.send(Message::ToolWindow(event)).is_err() {
-                        break;
-                    }
-                }
-            });
-        }
         let visualizer_window =
-            crate::platform::windows::visualizerwindow::VisualizerWindow::new(visualizer_sender)
+            crate::platform::windows::visualizerwindow::VisualizerWindow::new(tool_sender.clone())
                 .map_err(|reason| reason)?;
-
-        let (collage_sender, collage_receiver) = std::sync::mpsc::channel();
-        {
-            let sender = sender.clone();
-            std::thread::spawn(move || {
-                while let Ok(event) = collage_receiver.recv() {
-                    if sender.send(Message::ToolWindow(event)).is_err() {
-                        break;
-                    }
-                }
-            });
-        }
         let collage_window =
-            crate::platform::windows::collagewindow::CollageWindow::new(collage_sender)
+            crate::platform::windows::collagewindow::CollageWindow::new(tool_sender.clone())
                 .map_err(|reason| reason)?;
-
-        let (annotate_sender, annotate_receiver) = std::sync::mpsc::channel();
-        {
-            let sender = sender.clone();
-            std::thread::spawn(move || {
-                while let Ok(event) = annotate_receiver.recv() {
-                    if sender.send(Message::ToolWindow(event)).is_err() {
-                        break;
-                    }
-                }
-            });
-        }
         let annotate_window =
-            crate::platform::windows::annotatewindow::AnnotateWindow::new(annotate_sender)
+            crate::platform::windows::annotatewindow::AnnotateWindow::new(tool_sender.clone())
                 .map_err(|reason| reason)?;
-
-        let (edit_image_sender, edit_image_receiver) = std::sync::mpsc::channel();
-        {
-            let sender = sender.clone();
-            std::thread::spawn(move || {
-                while let Ok(event) = edit_image_receiver.recv() {
-                    if sender.send(Message::ToolWindow(event)).is_err() {
-                        break;
-                    }
-                }
-            });
-        }
         let edit_image_window =
-            crate::platform::windows::editimagewindow::EditImageWindow::new(edit_image_sender)
+            crate::platform::windows::editimagewindow::EditImageWindow::new(tool_sender)
                 .map_err(|reason| reason)?;
 
         // The tray icon is the one part of the program a person can see
@@ -742,6 +517,7 @@ impl App {
             collage_window,
             annotate_window,
             edit_image_window,
+            settings_window: None,
             tray,
         })
     }
@@ -1125,7 +901,20 @@ impl App {
         let is_tools = operation.as_str().starts_with("tools.");
         // File actions (copy path, duplicate, rename, reveal) run with the FileActions handler.
         let is_file_actions = operation.as_str().starts_with("actions.");
+        static ACTIVE_WORKERS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        const MAX_CONCURRENT_WORKERS: usize = 4;
         std::thread::spawn(move || {
+            while ACTIVE_WORKERS.load(std::sync::atomic::Ordering::Relaxed) >= MAX_CONCURRENT_WORKERS {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            ACTIVE_WORKERS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            struct WorkerGuard;
+            impl Drop for WorkerGuard {
+                fn drop(&mut self) {
+                    ACTIVE_WORKERS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+                }
+            }
+            let _guard = WorkerGuard;
             let outcome = if is_document {
                 let handler = documents::Documents {
                     publisher: crate::platform::windows::publish::WindowsPublisher,
@@ -1168,7 +957,7 @@ impl App {
                 Message::Finished(operation, outcome) => {
                     self.report_outcome(&operation, &outcome);
                 }
-                Message::ToolWindow(tool_event) => match tool_event {
+                Message::ToolWindow(tool_event) => match *tool_event {
                     crate::platform::windows::toolwindow::ToolEvent::Run {
                         operation,
                         inputs,
@@ -1214,6 +1003,9 @@ impl App {
                 let count = outputs.len();
                 let noun = if count == 1 { "file" } else { "files" };
                 self.show_notice(format!("{what}: {count} {noun} written"), false);
+                if crate::settings::AppSettings::load().sound_enabled {
+                    crate::platform::windows::notify::play_completion_chime();
+                }
             }
             execution::Outcome::Cancelled => {
                 diagnostics::log(
@@ -2029,6 +1821,15 @@ impl App {
             match choice {
                 crate::platform::windows::tray::TrayCommand::Open => {
                     self.open_development_wheel();
+                }
+                crate::platform::windows::tray::TrayCommand::Settings => {
+                    if self.settings_window.is_none() {
+                        self.settings_window =
+                            crate::platform::windows::settingswindow::SettingsWindow::new().ok();
+                    }
+                    if let Some(win) = &mut self.settings_window {
+                        win.show();
+                    }
                 }
                 crate::platform::windows::tray::TrayCommand::Exit => {
                     diagnostics::log(Level::Info, "tray", "the tray asked for the program to stop");

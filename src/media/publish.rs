@@ -40,26 +40,42 @@ pub trait Publisher: Send + Sync {
 /// becomes `photo.jpeg`. When that name is taken, a number is put in front
 /// of the extension, the way a file manager does it: `photo (2).jpeg`.
 pub fn name_for(original: &Path, extension: &str) -> std::path::PathBuf {
+    name_for_in(original, extension, None)
+}
+
+/// The name a file should have inside a specific destination directory.
+pub fn name_for_in(original: &Path, extension: &str, target_dir: Option<&Path>) -> std::path::PathBuf {
     let stem = original
         .file_stem()
         .map(|stem| stem.to_string_lossy().into_owned())
         .unwrap_or_else(|| "converted".to_string());
-    original.with_file_name(format!("{stem}.{extension}"))
+    match target_dir {
+        Some(dir) => dir.join(format!("{stem}.{extension}")),
+        None => original.with_file_name(format!("{stem}.{extension}")),
+    }
 }
 
 /// The names a file may have, in the order they are tried.
 ///
 /// The first is the plain name; the rest carry a number.
+/// Respects user configuration for destination folder if set.
 pub fn names_for(original: &Path, extension: &str) -> Vec<std::path::PathBuf> {
-    let first = name_for(original, extension);
+    let settings = crate::settings::AppSettings::load();
+    let target_parent = settings.destination_dir_for(original);
+    names_for_in(original, extension, target_parent)
+}
+
+/// The names a file may have in a specific parent directory.
+pub fn names_for_in(original: &Path, extension: &str, parent: Option<&Path>) -> Vec<std::path::PathBuf> {
+    let first = name_for_in(original, extension, parent);
     let mut names = vec![first.clone()];
     let stem = first
         .file_stem()
         .map(|stem| stem.to_string_lossy().into_owned())
         .unwrap_or_else(|| "converted".to_string());
-    let parent = first.parent().map(|parent| parent.to_path_buf());
+    let parent_buf = parent.map(|p| p.to_path_buf()).or_else(|| first.parent().map(|p| p.to_path_buf()));
     for number in 2..1000 {
-        let candidate = match &parent {
+        let candidate = match &parent_buf {
             Some(parent) => parent.join(format!("{stem} ({number}).{extension}")),
             None => std::path::PathBuf::from(format!("{stem} ({number}).{extension}")),
         };

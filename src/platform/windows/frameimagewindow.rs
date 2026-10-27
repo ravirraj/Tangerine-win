@@ -813,6 +813,17 @@ unsafe extern "system" fn frame_card_proc(
                         }
                     });
                 }
+                0x09 => {
+                    // Tab -> cycle presets
+                    CURRENT_HOST.with(|c| {
+                        if let Some(host_rc) = c.borrow().as_ref() {
+                            let mut host = host_rc.borrow_mut();
+                            host.selected_col = (host.selected_col + 1) % 6;
+                            host.apply_layout();
+                            host.render_preview();
+                        }
+                    });
+                }
                 _ => {}
             }
             LRESULT(0)

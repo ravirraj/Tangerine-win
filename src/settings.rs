@@ -64,6 +64,17 @@ impl Default for AppSettings {
 }
 
 impl AppSettings {
+    /// Returns the target destination directory for the output file based on settings.
+    pub fn destination_dir_for<'a>(&'a self, original: &'a Path) -> Option<&'a Path> {
+        if !self.output_beside_original {
+            if let Some(custom) = &self.custom_output_dir {
+                if custom.is_dir() {
+                    return Some(custom.as_path());
+                }
+            }
+        }
+        original.parent()
+    }
     /// Returns default path for settings file: `%APPDATA%\Open Tangerine\settings.json`.
     pub fn default_path() -> PathBuf {
         if let Ok(appdata) = std::env::var("APPDATA") {

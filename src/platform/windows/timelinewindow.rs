@@ -320,6 +320,14 @@ fn ask_for_strip(
             let tiles = ((width as f32 / PILLAR_UNITS).round() as u32).clamp(6, 30);
             let tile_w = (width / tiles).max(1);
             let tile_h = height.max(1);
+            if let Some(tiled) = crate::media::frames::filmstrip_tiled(&tools, &input, duration, tiles, tile_w, tile_h) {
+                if !cancel_thread.load(std::sync::atomic::Ordering::Relaxed) {
+                    let rgba = tiled.to_rgba8();
+                    let (wide, tall) = (rgba.width(), rgba.height());
+                    let _ = sender.send((rgba.into_raw(), wide, tall, None));
+                }
+                return;
+            }
             let step = (duration / tiles as f64).max(0.05);
             let mut strip = image::RgbaImage::new(tile_w * tiles, tile_h);
             for index in 0..tiles {
@@ -3010,7 +3018,7 @@ mod show_tests {
         std::fs::create_dir_all(&folder).expect("the play folder was made");
         let audio = make_test_audio(&folder);
         let (sender, _receiver) = std::sync::mpsc::channel();
-        let mut window = TimelineWindow::new(sender).expect("the window was made");
+        let window = TimelineWindow::new(sender).expect("the window was made");
         // The card's own saying: a sound of two seconds, a stretch said
         // from 0.4 to 1.2, and the conversion program found where it
         // stands. The stretch is said on the state the way a real open
@@ -3078,7 +3086,7 @@ mod show_tests {
         std::fs::create_dir_all(&folder).expect("the play folder was made");
         let audio = make_test_audio(&folder);
         let (sender, _receiver) = std::sync::mpsc::channel();
-        let mut window = TimelineWindow::new(sender).expect("the window was made");
+        let window = TimelineWindow::new(sender).expect("the window was made");
         STATE.with(|slot| {
             let mut state = slot.borrow_mut();
             state.audio = true;

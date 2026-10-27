@@ -157,6 +157,44 @@ pub fn frame_at(tools: &Tools, input: &Path, at_seconds: f64) -> Option<image::D
     image::load_from_memory(&run.stdout).ok()
 }
 
+/// Extracts a horizontal filmstrip of `tiles` frames tiled side-by-side in a single FFmpeg invocation.
+pub fn filmstrip_tiled(
+    tools: &Tools,
+    input: &Path,
+    duration: f64,
+    tiles: u32,
+    tile_w: u32,
+    tile_h: u32,
+) -> Option<image::DynamicImage> {
+    if tiles == 0 || duration <= 0.0 {
+        return None;
+    }
+    let fps = (tiles as f64) / duration;
+    let filter = format!(
+        "fps={fps},scale={tile_w}:{tile_h}:force_original_aspect_ratio=increase,crop={tile_w}:{tile_h},tile={tiles}x1"
+    );
+    let arguments = vec![
+        OsString::from("-v"),
+        OsString::from("error"),
+        OsString::from("-i"),
+        input.as_os_str().to_os_string(),
+        OsString::from("-vf"),
+        OsString::from(filter),
+        OsString::from("-frames:v"),
+        OsString::from("1"),
+        OsString::from("-f"),
+        OsString::from("image2pipe"),
+        OsString::from("-c:v"),
+        OsString::from("png"),
+        OsString::from("pipe:1"),
+    ];
+    let run = SystemRunner.run(&tools.ffmpeg, &arguments, None).ok()?;
+    if !run.succeeded() || run.stdout.is_empty() {
+        return None;
+    }
+    image::load_from_memory(&run.stdout).ok()
+}
+
 /// One narrow pillar of a picture: the middle of it, squeezed to the
 /// tile a filmstrip wants. The strip is made of these standing side by
 /// side, the way the reference runs its range over the video's own

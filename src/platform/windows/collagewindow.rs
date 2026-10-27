@@ -568,6 +568,17 @@ impl CollageWindow {
                     unsafe { let _ = ShowWindow(hwnd, SW_HIDE); }
                     return LRESULT(0);
                 }
+                if wparam.0 == 0x09 { // Tab
+                    HOST_RC.with(|cell| {
+                        if let Some(host_rc) = cell.borrow().as_ref() {
+                            let mut host = host_rc.borrow_mut();
+                            host.selected_layout = (host.selected_layout + 1) % 4;
+                            host.update_preview();
+                            host.sync_card();
+                        }
+                    });
+                    return LRESULT(0);
+                }
                 if wparam.0 == 0x0D { // Enter
                     HOST_RC.with(|cell| {
                         if let Some(host_rc) = cell.borrow().as_ref() {

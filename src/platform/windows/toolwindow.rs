@@ -459,13 +459,7 @@ impl Host {
         );
     }
 
-    /// Tells the card where the pointer is and what it did, and draws
-    /// what came of it.
-    fn pointer(&mut self, event: WindowEvent) {
-        self.software.window().dispatch_event(event);
-        self.software.request_redraw();
-        self.draw();
-    }
+
 }
 
 /// Where every part of the window is, in pixels of the screen.
@@ -681,12 +675,18 @@ unsafe extern "system" fn window_procedure(
                 },
                 _ => WindowEvent::PointerMoved { position },
             };
-            HOST.with(|slot| {
-                let mut borrowed = slot.borrow_mut();
-                if let Some(host) = borrowed.as_mut() {
-                    host.pointer(event);
-                }
+            let software = HOST.with(|slot| {
+                slot.borrow().as_ref().map(|host| host.software.clone())
             });
+            if let Some(software) = software {
+                software.window().dispatch_event(event);
+                software.request_redraw();
+                HOST.with(|slot| {
+                    if let Some(host) = slot.borrow_mut().as_mut() {
+                        host.draw();
+                    }
+                });
+            }
             LRESULT(0)
         }
         WM_COMMAND => {

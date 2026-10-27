@@ -432,6 +432,16 @@ impl VisualizerWindow {
                     unsafe { let _ = ShowWindow(hwnd, SW_HIDE); }
                     return LRESULT(0);
                 }
+                if wparam.0 == 0x09 { // Tab -> cycle shape
+                    HOST_RC.with(|cell| {
+                        if let Some(host_rc) = cell.borrow().as_ref() {
+                            let mut host = host_rc.borrow_mut();
+                            host.selected_shape = (host.selected_shape + 1) % 3;
+                            host.sync_card();
+                        }
+                    });
+                    return LRESULT(0);
+                }
                 if wparam.0 == 0x0D { // Enter
                     HOST_RC.with(|cell| {
                         if let Some(host_rc) = cell.borrow().as_ref() {
