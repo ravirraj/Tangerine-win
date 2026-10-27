@@ -108,15 +108,64 @@ impl Theme {
 
     /// Resolves the theme according to user settings and system preference.
     pub fn resolve() -> Self {
-        Self::for_mode(AppSettings::load().theme)
+        let settings = AppSettings::load();
+        let mut theme = Self::for_mode(settings.theme);
+        theme.apply_accent(&settings.accent);
+        theme
+    }
+
+    /// Updates the accent and derived hover/pressed states from a hex colour string.
+    pub fn apply_accent(&mut self, hex: &str) {
+        if let Some(rgba) = hex_to_rgba(hex) {
+            self.accent = rgba;
+            self.accent_hover = (
+                ((rgba.0 as f32 + (255.0 - rgba.0 as f32) * 0.15).round() as u8),
+                ((rgba.1 as f32 + (255.0 - rgba.1 as f32) * 0.15).round() as u8),
+                ((rgba.2 as f32 + (255.0 - rgba.2 as f32) * 0.15).round() as u8),
+                255,
+            );
+            self.accent_pressed = (
+                ((rgba.0 as f32 * 0.85).round() as u8),
+                ((rgba.1 as f32 * 0.85).round() as u8),
+                ((rgba.2 as f32 * 0.85).round() as u8),
+                255,
+            );
+        }
+    }
+
+    /// Returns a copy of the theme with the given accent hex colour applied.
+    pub fn with_accent(mut self, hex: &str) -> Self {
+        self.apply_accent(hex);
+        self
     }
 
     /// The colour of the words on a choice that has been made.
     ///
     /// The accent is dark enough in both themes for the words on it to be
-    /// white, and white is what the design shows.
+    /// white, and white is what the design shows. For bright accents like yellow,
+    /// dark text is used for readability.
     pub fn accent_text(&self) -> Rgba {
-        (0xff, 0xff, 0xff, 0xff)
+        let lum = 0.299 * (self.accent.0 as f32)
+            + 0.587 * (self.accent.1 as f32)
+            + 0.114 * (self.accent.2 as f32);
+        if lum > 180.0 {
+            (0x1d, 0x1d, 0x1f, 0xff)
+        } else {
+            (0xff, 0xff, 0xff, 0xff)
+        }
+    }
+}
+
+/// Converts a 6-digit hex color string (with or without '#') into an RGBA tuple with alpha=255.
+pub fn hex_to_rgba(hex: &str) -> Option<Rgba> {
+    let hex = hex.trim().trim_start_matches('#');
+    if hex.len() == 6 {
+        let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+        let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+        let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+        Some((r, g, b, 255))
+    } else {
+        None
     }
 }
 
@@ -190,5 +239,29 @@ mod tests {
         assert_eq!(Theme::for_mode(ThemeMode::Light), Theme::light());
         assert_eq!(Theme::for_mode(ThemeMode::Dark), Theme::dark());
         let _ = Theme::resolve();
+    }
+
+    #[test]
+    fn hex_to_rgba_parses_valid_hex() {
+        assert_eq!(hex_to_rgba("#FF5C00"), Some((0xff, 0x5c, 0x00, 0xff)));
+        assert_eq!(hex_to_rgba("007AFF"), Some((0x00, 0x7a, 0xff, 0xff)));
+        assert_eq!(hex_to_rgba("34C759"), Some((0x34, 0xc7, 0x59, 0xff)));
+        assert_eq!(hex_to_rgba("invalid"), None);
+        assert_eq!(hex_to_rgba("#1234"), None);
+    }
+
+    #[test]
+    fn theme_with_accent_updates_accent_and_derived_colors() {
+        let theme = Theme::light().with_accent("#007AFF");
+        assert_eq!(theme.accent, (0x00, 0x7a, 0xff, 0xff));
+        assert_ne!(theme.accent_hover, theme.accent);
+        assert_ne!(theme.accent_pressed, theme.accent);
+    }
+
+    #[test]
+    fn yellow_accent_uses_readable_text() {
+        let theme = Theme::light().with_accent("#FFCC00");
+        // For bright yellow, accent text should be dark for readability
+        assert_eq!(theme.accent_text(), (0x1d, 0x1d, 0x1f, 0xff));
     }
 }

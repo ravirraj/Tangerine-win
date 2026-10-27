@@ -5,12 +5,13 @@
 
 import { Tokens } from "tokens.slint";
 import { Panel } from "tokens.slint";
-import { CardHeader, Hairline, PillButton } from "shell.slint";
 
 component SettingsOptionChip {
     in property <Panel> box;
     in property <string> label;
     in property <bool> selected: false;
+    in property <bool> is-dark: false;
+    in property <color> accent-color: #FF5C00;
 
     callback clicked();
 
@@ -25,16 +26,16 @@ component SettingsOptionChip {
         width: parent.width;
         height: parent.height;
         border-radius: 6px;
-        background: root.selected ? Tokens.accent : Tokens.elevated;
+        background: root.selected ? root.accent-color : (root.is-dark ? #282828 : #ECECEA);
         border-width: root.selected ? 0px : 1px;
-        border-color: Tokens.hairline;
+        border-color: root.is-dark ? #383838 : #E3E3E1;
 
         Text {
             text: root.label;
             font-size: 11px;
             font-weight: root.selected ? 600 : 500;
             font-family: "Segoe UI";
-            color: root.selected ? white : Tokens.text;
+            color: root.selected ? white : (root.is-dark ? #F5F5F5 : #1D1D1F);
             horizontal-alignment: center;
             vertical-alignment: center;
         }
@@ -49,6 +50,7 @@ component SettingsSwatch {
     in property <Panel> box;
     in property <color> fill-color;
     in property <bool> selected: false;
+    in property <color> accent-color: #FF5C00;
 
     callback clicked();
 
@@ -79,7 +81,7 @@ component SettingsSwatch {
         height: parent.height + 6px;
         border-radius: (parent.width + 6px) / 2;
         border-width: 2px;
-        border-color: Tokens.accent;
+        border-color: root.accent-color;
     }
 }
 
@@ -87,6 +89,8 @@ component ToggleRow {
     in property <Panel> box;
     in property <string> label;
     in property <bool> checked: false;
+    in property <bool> is-dark: false;
+    in property <color> accent-color: #FF5C00;
 
     callback toggled();
 
@@ -103,7 +107,7 @@ component ToggleRow {
         font-size: 12px;
         font-weight: 500;
         font-family: "Segoe UI";
-        color: Tokens.text;
+        color: root.is-dark ? #F5F5F5 : #1D1D1F;
         vertical-alignment: center;
     }
 
@@ -113,9 +117,9 @@ component ToggleRow {
         width: 44px;
         height: 22px;
         border-radius: 11px;
-        background: root.checked ? Tokens.accent : Tokens.elevated;
+        background: root.checked ? root.accent-color : (root.is-dark ? #282828 : #ECECEA);
         border-width: 1px;
-        border-color: Tokens.hairline;
+        border-color: root.is-dark ? #383838 : #E3E3E1;
 
         Rectangle {
             x: root.checked ? 24px : 2px;
@@ -131,6 +135,19 @@ component ToggleRow {
         TouchArea {
             clicked => { root.toggled(); }
         }
+    }
+}
+
+component SettingsHairline {
+    in property <Panel> box;
+    in property <bool> is-dark: false;
+
+    Rectangle {
+        x: root.box.x;
+        y: root.box.y;
+        width: root.box.width;
+        height: 1px;
+        background: root.is-dark ? #383838 : #E3E3E1;
     }
 }
 
@@ -174,6 +191,9 @@ export component SettingsCard inherits Window {
     in property <bool> tray-enabled: true;
     in property <bool> shell-enabled: true;
 
+    in property <bool> is-dark: false;
+    in property <color> accent-color: #FF5C00;
+
     callback theme-selected(int);
     callback accent-selected(int);
     callback output-selected(int);
@@ -184,7 +204,7 @@ export component SettingsCard inherits Window {
     callback shell-toggled();
     callback close-clicked();
 
-    background: Tokens.window-bg;
+    background: root.is-dark ? #1E1E1E : #F7F6F4;
 
     Text {
         x: root.header-box.x;
@@ -195,12 +215,13 @@ export component SettingsCard inherits Window {
         font-size: 15px;
         font-weight: 600;
         font-family: "Segoe UI";
-        color: Tokens.text;
+        color: root.is-dark ? #F5F5F5 : #1D1D1F;
         vertical-alignment: center;
     }
 
-    Hairline {
+    SettingsHairline {
         box: root.hairline-top;
+        is-dark: root.is-dark;
     }
 
     // Appearance: Theme
@@ -213,7 +234,7 @@ export component SettingsCard inherits Window {
         font-size: 13px;
         font-weight: 600;
         font-family: "Segoe UI";
-        color: Tokens.text;
+        color: root.is-dark ? #F5F5F5 : #1D1D1F;
         vertical-alignment: center;
     }
 
@@ -221,6 +242,8 @@ export component SettingsCard inherits Window {
         box: root.theme-chips[0];
         label: "System";
         selected: root.selected-theme == 0;
+        is-dark: root.is-dark;
+        accent-color: root.accent-color;
         clicked => { root.theme-selected(0); }
     }
 
@@ -228,6 +251,8 @@ export component SettingsCard inherits Window {
         box: root.theme-chips[1];
         label: "Dark";
         selected: root.selected-theme == 1;
+        is-dark: root.is-dark;
+        accent-color: root.accent-color;
         clicked => { root.theme-selected(1); }
     }
 
@@ -235,6 +260,8 @@ export component SettingsCard inherits Window {
         box: root.theme-chips[2];
         label: "Light";
         selected: root.selected-theme == 2;
+        is-dark: root.is-dark;
+        accent-color: root.accent-color;
         clicked => { root.theme-selected(2); }
     }
 
@@ -248,7 +275,7 @@ export component SettingsCard inherits Window {
         font-size: 13px;
         font-weight: 600;
         font-family: "Segoe UI";
-        color: Tokens.text;
+        color: root.is-dark ? #F5F5F5 : #1D1D1F;
         vertical-alignment: center;
     }
 
@@ -256,6 +283,7 @@ export component SettingsCard inherits Window {
         box: root.accent-swatches[0];
         fill-color: #FF5C00;
         selected: root.selected-accent == 0;
+        accent-color: root.accent-color;
         clicked => { root.accent-selected(0); }
     }
 
@@ -263,6 +291,7 @@ export component SettingsCard inherits Window {
         box: root.accent-swatches[1];
         fill-color: #007AFF;
         selected: root.selected-accent == 1;
+        accent-color: root.accent-color;
         clicked => { root.accent-selected(1); }
     }
 
@@ -270,6 +299,7 @@ export component SettingsCard inherits Window {
         box: root.accent-swatches[2];
         fill-color: #34C759;
         selected: root.selected-accent == 2;
+        accent-color: root.accent-color;
         clicked => { root.accent-selected(2); }
     }
 
@@ -277,6 +307,7 @@ export component SettingsCard inherits Window {
         box: root.accent-swatches[3];
         fill-color: #FF2D55;
         selected: root.selected-accent == 3;
+        accent-color: root.accent-color;
         clicked => { root.accent-selected(3); }
     }
 
@@ -284,6 +315,7 @@ export component SettingsCard inherits Window {
         box: root.accent-swatches[4];
         fill-color: #FFCC00;
         selected: root.selected-accent == 4;
+        accent-color: root.accent-color;
         clicked => { root.accent-selected(4); }
     }
 
@@ -291,11 +323,13 @@ export component SettingsCard inherits Window {
         box: root.accent-swatches[5];
         fill-color: #5856D6;
         selected: root.selected-accent == 5;
+        accent-color: root.accent-color;
         clicked => { root.accent-selected(5); }
     }
 
-    Hairline {
+    SettingsHairline {
         box: root.hairline-mid1;
+        is-dark: root.is-dark;
     }
 
     // Output Destination
@@ -308,7 +342,7 @@ export component SettingsCard inherits Window {
         font-size: 13px;
         font-weight: 600;
         font-family: "Segoe UI";
-        color: Tokens.text;
+        color: root.is-dark ? #F5F5F5 : #1D1D1F;
         vertical-alignment: center;
     }
 
@@ -316,6 +350,8 @@ export component SettingsCard inherits Window {
         box: root.output-chips[0];
         label: "Beside original";
         selected: root.selected-output == 0;
+        is-dark: root.is-dark;
+        accent-color: root.accent-color;
         clicked => { root.output-selected(0); }
     }
 
@@ -323,6 +359,8 @@ export component SettingsCard inherits Window {
         box: root.output-chips[1];
         label: "Custom folder";
         selected: root.selected-output == 1;
+        is-dark: root.is-dark;
+        accent-color: root.accent-color;
         clicked => { root.output-selected(1); }
     }
 
@@ -332,9 +370,9 @@ export component SettingsCard inherits Window {
         width: root.output-path-box.width;
         height: root.output-path-box.height;
         border-radius: 6px;
-        background: Tokens.elevated;
+        background: root.is-dark ? #282828 : #ECECEA;
         border-width: 1px;
-        border-color: Tokens.hairline;
+        border-color: root.is-dark ? #383838 : #E3E3E1;
 
         Text {
             x: 10px;
@@ -343,7 +381,7 @@ export component SettingsCard inherits Window {
             text: root.custom-path;
             font-size: 11px;
             font-family: "Segoe UI";
-            color: Tokens.text;
+            color: root.is-dark ? #F5F5F5 : #1D1D1F;
             overflow: elide;
             vertical-alignment: center;
         }
@@ -354,16 +392,16 @@ export component SettingsCard inherits Window {
             width: 70px;
             height: parent.height - 8px;
             border-radius: 4px;
-            background: Tokens.window-bg;
+            background: root.is-dark ? #1E1E1E : #F7F6F4;
             border-width: 1px;
-            border-color: Tokens.hairline;
+            border-color: root.is-dark ? #383838 : #E3E3E1;
 
             Text {
                 text: "Browse…";
                 font-size: 11px;
                 font-weight: 600;
                 font-family: "Segoe UI";
-                color: Tokens.text;
+                color: root.is-dark ? #F5F5F5 : #1D1D1F;
                 horizontal-alignment: center;
                 vertical-alignment: center;
             }
@@ -374,8 +412,9 @@ export component SettingsCard inherits Window {
         }
     }
 
-    Hairline {
+    SettingsHairline {
         box: root.hairline-mid2;
+        is-dark: root.is-dark;
     }
 
     // Toggles
@@ -383,6 +422,8 @@ export component SettingsCard inherits Window {
         box: root.sound-toggle-box;
         label: "Play completion chime";
         checked: root.sound-enabled;
+        is-dark: root.is-dark;
+        accent-color: root.accent-color;
         toggled => { root.sound-toggled(); }
     }
 
@@ -390,6 +431,8 @@ export component SettingsCard inherits Window {
         box: root.startup-toggle-box;
         label: "Launch at Windows startup";
         checked: root.startup-enabled;
+        is-dark: root.is-dark;
+        accent-color: root.accent-color;
         toggled => { root.startup-toggled(); }
     }
 
@@ -397,6 +440,8 @@ export component SettingsCard inherits Window {
         box: root.tray-toggle-box;
         label: "Keep in system tray";
         checked: root.tray-enabled;
+        is-dark: root.is-dark;
+        accent-color: root.accent-color;
         toggled => { root.tray-toggled(); }
     }
 
@@ -404,11 +449,14 @@ export component SettingsCard inherits Window {
         box: root.shell-toggle-box;
         label: "Show in Explorer right-click menu";
         checked: root.shell-enabled;
+        is-dark: root.is-dark;
+        accent-color: root.accent-color;
         toggled => { root.shell-toggled(); }
     }
 
-    Hairline {
+    SettingsHairline {
         box: root.hairline-bot;
+        is-dark: root.is-dark;
     }
 
     // Footer
@@ -420,7 +468,7 @@ export component SettingsCard inherits Window {
         text: "Changes apply immediately";
         font-size: 11px;
         font-family: "Segoe UI";
-        color: Tokens.text-muted;
+        color: root.is-dark ? #A0A0A0 : #828782;
         vertical-alignment: center;
     }
 
@@ -430,7 +478,7 @@ export component SettingsCard inherits Window {
         width: root.close-button-box.width;
         height: root.close-button-box.height;
         border-radius: 6px;
-        background: Tokens.accent;
+        background: root.accent-color;
 
         Text {
             text: "Done";

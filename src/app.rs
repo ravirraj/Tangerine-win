@@ -529,6 +529,7 @@ impl App {
                     }
                     return;
                 }
+                self.theme = Theme::resolve();
                 self.wheel_open = true;
                 diagnostics::log(
                     Level::Info,
@@ -1908,6 +1909,7 @@ impl App {
 
     /// Opens the wheel for the development shortcut.
     fn open_development_wheel(&mut self) {
+        self.theme = Theme::resolve();
         let cursor = input::cursor_position().unwrap_or(Point::new(960.0, 540.0));
         let effects = self.controller.open_development_wheel(cursor);
         diagnostics::log(

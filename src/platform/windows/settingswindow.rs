@@ -296,6 +296,28 @@ impl SettingsWindowInner {
         };
         self.card.set_selected_theme(theme_idx);
 
+        let is_dark = match s.theme {
+            ThemeMode::Dark => true,
+            ThemeMode::Light => false,
+            ThemeMode::System => {
+                #[cfg(windows)]
+                {
+                    crate::platform::windows::appearance::prefers_dark()
+                }
+                #[cfg(not(windows))]
+                {
+                    false
+                }
+            }
+        };
+        self.card.set_is_dark(is_dark);
+
+        if let Some(rgba) = crate::ui::theme::hex_to_rgba(&s.accent) {
+            self.card.set_accent_color(slint::Color::from_argb_u8(rgba.3, rgba.0, rgba.1, rgba.2));
+        } else {
+            self.card.set_accent_color(slint::Color::from_argb_u8(255, 0xFF, 0x5C, 0x00));
+        }
+
         let accent_idx = ACCENT_PRESETS
             .iter()
             .position(|&a| a.eq_ignore_ascii_case(&s.accent))
@@ -320,6 +342,7 @@ impl SettingsWindowInner {
             self.buffer.resize((w * h) as usize, Bgra8::default());
         }
         self.sync_card();
+        self.renderer_window.request_redraw();
         self.renderer_window.draw_if_needed(|renderer| {
             renderer.render(&mut self.buffer, w as usize);
         });
@@ -663,5 +686,39 @@ pub mod show_tests {
         let shot_path = std::path::Path::new("target").join("shots").join("settings-window.png");
         window.save_capture(&shot_path).expect("settings window captured");
         assert!(shot_path.is_file(), "settings-window.png was written");
+    }
+
+    #[test]
+    fn sync_card_updates_dark_and_light_theme() {
+        crate::ui::wheel::install_platform();
+        let window = SettingsWindow::new().expect("settings window can be made");
+        {
+            let mut inner = window.inner.borrow_mut();
+            inner.settings.borrow_mut().theme = ThemeMode::Dark;
+            inner.sync_card();
+            assert!(inner.card.get_is_dark());
+            assert_eq!(inner.card.get_selected_theme(), 1);
+
+            inner.settings.borrow_mut().theme = ThemeMode::Light;
+            inner.sync_card();
+            assert!(!inner.card.get_is_dark());
+            assert_eq!(inner.card.get_selected_theme(), 2);
+        }
+    }
+
+    #[test]
+    fn sync_card_updates_accent_color() {
+        crate::ui::wheel::install_platform();
+        let window = SettingsWindow::new().expect("settings window can be made");
+        {
+            let mut inner = window.inner.borrow_mut();
+            inner.settings.borrow_mut().accent = "#007AFF".to_string();
+            inner.sync_card();
+            assert_eq!(inner.card.get_selected_accent(), 1);
+            let color = inner.card.get_accent_color();
+            assert_eq!(color.red(), 0);
+            assert_eq!(color.green(), 122);
+            assert_eq!(color.blue(), 255);
+        }
     }
 }
