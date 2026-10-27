@@ -95,6 +95,13 @@ impl SystemRunner {
         // The program must never wait for anything typed at it.
         command.stdin(Stdio::null());
 
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+            command.creation_flags(CREATE_NO_WINDOW);
+        }
+
         match stdout_to {
             Some(file) => {
                 // The child writes into the file the caller made. The

@@ -49,10 +49,14 @@ fn prog_id(app: App) -> &'static str {
 
 /// Whether a program is registered on this machine.
 fn registered(name: &str) -> bool {
-    Command::new("reg")
-        .arg("query")
-        .arg(format!("HKCR\\{name}"))
-        .stdout(Stdio::null())
+    let mut cmd = Command::new("reg");
+    cmd.arg("query").arg(format!("HKCR\\{name}"));
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
+    cmd.stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
         .map(|status| status.success())
@@ -174,6 +178,11 @@ fn run_with_timeout(mut cmd: Command, timeout_secs: u64) -> Result<std::process:
 /// Exports with the installed Office program.
 fn office_export(app: App, source: &Path, target: &Path) -> Result<(), DocError> {
     let mut cmd = Command::new("powershell");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
     cmd.arg("-NoProfile")
         .arg("-NonInteractive")
         .arg("-Command")
@@ -210,6 +219,11 @@ fn libreoffice_export(program: &Path, source: &Path, target: &Path) -> Result<()
     ));
 
     let mut cmd = Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
     cmd.arg("--headless")
         .arg("--convert-to")
         .arg("pdf")

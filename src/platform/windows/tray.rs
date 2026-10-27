@@ -40,6 +40,7 @@ pub const TRAY_ID_EXIT: usize = 1003;
 pub enum TrayCommand {
     /// The person asked for the wheel: open it, the way the development
     /// shortcut does, with no files of a drag in it.
+    #[allow(dead_code)]
     Open,
     /// The person asked for settings.
     Settings,
@@ -161,7 +162,7 @@ unsafe extern "system" fn tray_wndproc(
             if heard == WM_RBUTTONUP {
                 show_tray_menu(hwnd);
             } else if heard == WM_LBUTTONUP {
-                push_command(TrayCommand::Open);
+                push_command(TrayCommand::Settings);
             }
             LRESULT(0)
         }
@@ -169,8 +170,7 @@ unsafe extern "system" fn tray_wndproc(
             // The menu was used. What was chosen is in the low word of
             // `wParam`.
             let command = match (wparam.0 & 0xFFFF) as usize {
-                TRAY_ID_OPEN => Some(TrayCommand::Open),
-                TRAY_ID_SETTINGS => Some(TrayCommand::Settings),
+                TRAY_ID_OPEN | TRAY_ID_SETTINGS => Some(TrayCommand::Settings),
                 TRAY_ID_EXIT => Some(TrayCommand::Exit),
                 _ => None,
             };
@@ -219,7 +219,6 @@ pub fn show_tray_menu(hwnd: HWND) {
             Err(_) => return,
         };
 
-        let _ = AppendMenuW(hmenu, MF_STRING, TRAY_ID_OPEN, w!("Open Tangerine"));
         let _ = AppendMenuW(hmenu, MF_STRING, TRAY_ID_SETTINGS, w!("Settings..."));
         let _ = AppendMenuW(hmenu, MF_SEPARATOR, 0, PCWSTR::null());
         let _ = AppendMenuW(hmenu, MF_STRING, TRAY_ID_EXIT, w!("Exit"));
@@ -259,7 +258,7 @@ mod tests {
     fn the_tray_hands_what_was_chosen_over_to_the_queue() {
         let tray = TrayWindow::create().expect("the tray window was made");
 
-        // A click of the left button of the icon asks for the wheel. That
+        // A click of the left button of the icon asks for Settings. That
         // part of the icon is imitated here, because a click of the right
         // button would open a real menu and wait for a hand.
         unsafe {
@@ -270,18 +269,12 @@ mod tests {
                 Some(LPARAM(WM_LBUTTONUP as isize)),
             );
         }
-        assert_eq!(tray.drain(), vec![TrayCommand::Open]);
+        assert_eq!(tray.drain(), vec![TrayCommand::Settings]);
         assert!(tray.drain().is_empty(), "nothing is said twice");
 
         // The menu asks by numbers through `WM_COMMAND`: this is the
         // message `TrackPopupMenu` sends for the item that was chosen.
         unsafe {
-            let _ = SendMessageW(
-                tray.hwnd(),
-                WM_COMMAND,
-                Some(WPARAM(TRAY_ID_OPEN)),
-                Some(LPARAM(0)),
-            );
             let _ = SendMessageW(
                 tray.hwnd(),
                 WM_COMMAND,
@@ -295,6 +288,6 @@ mod tests {
                 Some(LPARAM(0)),
             );
         }
-        assert_eq!(tray.drain(), vec![TrayCommand::Open, TrayCommand::Settings, TrayCommand::Exit]);
+        assert_eq!(tray.drain(), vec![TrayCommand::Settings, TrayCommand::Exit]);
     }
 }
