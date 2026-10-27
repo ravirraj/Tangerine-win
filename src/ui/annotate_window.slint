@@ -86,7 +86,7 @@ export component AnnotateCard inherits Window {
         width: root.stage-box.width;
         height: root.stage-box.height;
         border-radius: Tokens.radius-preview;
-        background: #18181A;
+        background: Tokens.preview-black;
         clip: true;
 
         if root.has-preview : Image {
@@ -136,7 +136,7 @@ export component AnnotateCard inherits Window {
             width: 100%;
             height: 100%;
             text: i == 0 ? "Arrow" : (i == 1 ? "Box" : (i == 2 ? "Text" : (i == 3 ? "Pen" : "Blur")));
-            color: root.selected-tool == i ? #FFFFFF : Tokens.text;
+            color: root.selected-tool == i ? Tokens.content : Tokens.text;
             font-size: 11px;
             font-weight: root.selected-tool == i ? 700 : 500;
             horizontal-alignment: center;
@@ -203,7 +203,7 @@ export component AnnotateCard inherits Window {
             width: 100%;
             height: 100%;
             text: i == 0 ? "2 px" : (i == 1 ? "4 px" : (i == 2 ? "8 px" : "12 px"));
-            color: root.selected-thickness == i ? #FFFFFF : Tokens.text;
+            color: root.selected-thickness == i ? Tokens.content : Tokens.text;
             font-size: 11px;
             font-weight: root.selected-thickness == i ? 700 : 500;
             horizontal-alignment: center;
@@ -323,7 +323,7 @@ export component AnnotateCard inherits Window {
             text: root.run-label;
             font-size: 12px;
             font-weight: 600;
-            color: root.run-enabled ? #FFFFFF : Tokens.text-muted;
+            color: root.run-enabled ? Tokens.content : Tokens.text-muted;
             horizontal-alignment: center;
             vertical-alignment: center;
         }

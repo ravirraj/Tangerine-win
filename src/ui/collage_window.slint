@@ -90,7 +90,7 @@ export component CollageCard inherits Window {
         width: root.stage-box.width;
         height: root.stage-box.height;
         border-radius: Tokens.radius-preview;
-        background: #18181A;
+        background: Tokens.preview-black;
         clip: true;
 
         if root.has-preview : Image {
@@ -140,7 +140,7 @@ export component CollageCard inherits Window {
             width: 100%;
             height: 100%;
             text: i == 0 ? "Grid" : (i == 1 ? "Columns" : (i == 2 ? "Rows" : "Featured"));
-            color: root.selected-layout == i ? #FFFFFF : Tokens.text;
+            color: root.selected-layout == i ? Tokens.content : Tokens.text;
             font-size: 11px;
             font-weight: root.selected-layout == i ? 700 : 500;
             horizontal-alignment: center;
@@ -185,7 +185,7 @@ export component CollageCard inherits Window {
         width: root.spacing-thumb-box.width;
         height: root.spacing-thumb-box.height;
         border-radius: root.spacing-thumb-box.width / 2;
-        background: #FFFFFF;
+        background: Tokens.content;
         border-width: 1px;
         border-color: #00000030;
         drop-shadow-blur: 4px;
@@ -229,7 +229,7 @@ export component CollageCard inherits Window {
         width: root.corner-thumb-box.width;
         height: root.corner-thumb-box.height;
         border-radius: root.corner-thumb-box.width / 2;
-        background: #FFFFFF;
+        background: Tokens.content;
         border-width: 1px;
         border-color: #00000030;
         drop-shadow-blur: 4px;
@@ -267,7 +267,7 @@ export component CollageCard inherits Window {
             width: 100%;
             height: 100%;
             text: i == 0 ? "Square 1:1" : (i == 1 ? "Landscape 3:2" : "Portrait 2:3");
-            color: root.selected-aspect == i ? #FFFFFF : Tokens.text;
+            color: root.selected-aspect == i ? Tokens.content : Tokens.text;
             font-size: 11px;
             font-weight: root.selected-aspect == i ? 700 : 500;
             horizontal-alignment: center;
@@ -380,7 +380,7 @@ export component CollageCard inherits Window {
             text: root.run-label;
             font-size: 12px;
             font-weight: 600;
-            color: root.run-enabled ? #FFFFFF : Tokens.text-muted;
+            color: root.run-enabled ? Tokens.content : Tokens.text-muted;
             horizontal-alignment: center;
             vertical-alignment: center;
         }

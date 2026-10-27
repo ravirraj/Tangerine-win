@@ -103,7 +103,7 @@ export component EditImageCard inherits Window {
         width: root.stage-box.width;
         height: root.stage-box.height;
         border-radius: Tokens.radius-preview;
-        background: #18181A;
+        background: Tokens.preview-black;
         clip: true;
 
         if root.has-preview : Image {
@@ -132,7 +132,7 @@ export component EditImageCard inherits Window {
 
             Text {
                 text: root.show-original ? "Original" : "Hold to compare";
-                color: #FFFFFF;
+                color: Tokens.content;
                 font-size: 10px;
                 font-weight: 600;
                 horizontal-alignment: center;
@@ -181,7 +181,7 @@ export component EditImageCard inherits Window {
         width: root.exposure-thumb-box.width;
         height: root.exposure-thumb-box.height;
         border-radius: root.exposure-thumb-box.width / 2;
-        background: #FFFFFF;
+        background: Tokens.content;
         border-width: 1px;
         border-color: #00000030;
         drop-shadow-blur: 4px;
@@ -216,7 +216,7 @@ export component EditImageCard inherits Window {
         width: root.brightness-thumb-box.width;
         height: root.brightness-thumb-box.height;
         border-radius: root.brightness-thumb-box.width / 2;
-        background: #FFFFFF;
+        background: Tokens.content;
         border-width: 1px;
         border-color: #00000030;
         drop-shadow-blur: 4px;
@@ -251,7 +251,7 @@ export component EditImageCard inherits Window {
         width: root.contrast-thumb-box.width;
         height: root.contrast-thumb-box.height;
         border-radius: root.contrast-thumb-box.width / 2;
-        background: #FFFFFF;
+        background: Tokens.content;
         border-width: 1px;
         border-color: #00000030;
         drop-shadow-blur: 4px;
@@ -286,7 +286,7 @@ export component EditImageCard inherits Window {
         width: root.saturation-thumb-box.width;
         height: root.saturation-thumb-box.height;
         border-radius: root.saturation-thumb-box.width / 2;
-        background: #FFFFFF;
+        background: Tokens.content;
         border-width: 1px;
         border-color: #00000030;
         drop-shadow-blur: 4px;
@@ -321,7 +321,7 @@ export component EditImageCard inherits Window {
         width: root.warmth-thumb-box.width;
         height: root.warmth-thumb-box.height;
         border-radius: root.warmth-thumb-box.width / 2;
-        background: #FFFFFF;
+        background: Tokens.content;
         border-width: 1px;
         border-color: #00000030;
         drop-shadow-blur: 4px;
@@ -356,7 +356,7 @@ export component EditImageCard inherits Window {
         width: root.vignette-thumb-box.width;
         height: root.vignette-thumb-box.height;
         border-radius: root.vignette-thumb-box.width / 2;
-        background: #FFFFFF;
+        background: Tokens.content;
         border-width: 1px;
         border-color: #00000030;
         drop-shadow-blur: 4px;
@@ -440,7 +440,7 @@ export component EditImageCard inherits Window {
             text: root.run-label;
             font-size: 12px;
             font-weight: 600;
-            color: root.run-enabled ? #FFFFFF : Tokens.text-muted;
+            color: root.run-enabled ? Tokens.content : Tokens.text-muted;
             horizontal-alignment: center;
             vertical-alignment: center;
         }

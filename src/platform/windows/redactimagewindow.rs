@@ -1113,10 +1113,10 @@ fn settings_from(
 ) -> ToolSettings {
     ToolSettings {
         redact_areas: areas_of(rects, media_w, media_h),
-        redact_style: Some(if style == 0 {
-            RedactStyle::Solid
-        } else {
-            RedactStyle::Blur
+        redact_style: Some(match style {
+            0 => RedactStyle::Solid,
+            1 => RedactStyle::Blur,
+            _ => RedactStyle::Pixelate,
         }),
         redact_color: Some(color_hex(color).to_string()),
         ..Default::default()

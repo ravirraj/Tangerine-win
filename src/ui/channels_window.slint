@@ -109,7 +109,7 @@ export component ChannelsCard inherits Window {
             y: 0;
             width: 2px;
             height: parent.height;
-            background: #FFFFFF;
+            background: Tokens.content;
 
             Rectangle {
                 x: -3px;
@@ -117,7 +117,7 @@ export component ChannelsCard inherits Window {
                 width: 8px;
                 height: 8px;
                 border-radius: 4px;
-                background: #FFFFFF;
+                background: Tokens.content;
             }
         }
     }
@@ -193,7 +193,7 @@ export component ChannelsCard inherits Window {
             width: parent.pill-w - 2px;
             height: parent.height - 4px;
             border-radius: 4px;
-            background: root.selected-mode == 0 ? Tokens.accent : (p0-touch.has-hover ? Tokens.quiet-hover : #00000000);
+            background: root.selected-mode == 0 ? Tokens.accent : (p0-touch.has-hover ? Tokens.quiet-hover : transparent);
 
             p0-touch := TouchArea {
                 clicked => { root.mode-chosen(0); }
@@ -202,7 +202,7 @@ export component ChannelsCard inherits Window {
             Text {
                 width: parent.width; height: parent.height;
                 text: "Stereo";
-                color: root.selected-mode == 0 ? #FFFFFF : Tokens.text;
+                color: root.selected-mode == 0 ? Tokens.content : Tokens.text;
                 font-size: root.ui-scale * 11px;
                 font-weight: root.selected-mode == 0 ? 600 : 500;
                 font-family: "Segoe UI";
@@ -217,7 +217,7 @@ export component ChannelsCard inherits Window {
             width: parent.pill-w - 2px;
             height: parent.height - 4px;
             border-radius: 4px;
-            background: root.selected-mode == 1 ? Tokens.accent : (p1-touch.has-hover ? Tokens.quiet-hover : #00000000);
+            background: root.selected-mode == 1 ? Tokens.accent : (p1-touch.has-hover ? Tokens.quiet-hover : transparent);
 
             p1-touch := TouchArea {
                 clicked => { root.mode-chosen(1); }
@@ -226,7 +226,7 @@ export component ChannelsCard inherits Window {
             Text {
                 width: parent.width; height: parent.height;
                 text: "Mono";
-                color: root.selected-mode == 1 ? #FFFFFF : Tokens.text;
+                color: root.selected-mode == 1 ? Tokens.content : Tokens.text;
                 font-size: root.ui-scale * 11px;
                 font-weight: root.selected-mode == 1 ? 600 : 500;
                 font-family: "Segoe UI";
@@ -241,7 +241,7 @@ export component ChannelsCard inherits Window {
             width: parent.pill-w - 2px;
             height: parent.height - 4px;
             border-radius: 4px;
-            background: root.selected-mode == 2 ? Tokens.accent : (p2-touch.has-hover ? Tokens.quiet-hover : #00000000);
+            background: root.selected-mode == 2 ? Tokens.accent : (p2-touch.has-hover ? Tokens.quiet-hover : transparent);
 
             p2-touch := TouchArea {
                 clicked => { root.mode-chosen(2); }
@@ -250,7 +250,7 @@ export component ChannelsCard inherits Window {
             Text {
                 width: parent.width; height: parent.height;
                 text: "Left";
-                color: root.selected-mode == 2 ? #FFFFFF : Tokens.text;
+                color: root.selected-mode == 2 ? Tokens.content : Tokens.text;
                 font-size: root.ui-scale * 11px;
                 font-weight: root.selected-mode == 2 ? 600 : 500;
                 font-family: "Segoe UI";
@@ -265,7 +265,7 @@ export component ChannelsCard inherits Window {
             width: parent.pill-w - 2px;
             height: parent.height - 4px;
             border-radius: 4px;
-            background: root.selected-mode == 3 ? Tokens.accent : (p3-touch.has-hover ? Tokens.quiet-hover : #00000000);
+            background: root.selected-mode == 3 ? Tokens.accent : (p3-touch.has-hover ? Tokens.quiet-hover : transparent);
 
             p3-touch := TouchArea {
                 clicked => { root.mode-chosen(3); }
@@ -274,7 +274,7 @@ export component ChannelsCard inherits Window {
             Text {
                 width: parent.width; height: parent.height;
                 text: "Right";
-                color: root.selected-mode == 3 ? #FFFFFF : Tokens.text;
+                color: root.selected-mode == 3 ? Tokens.content : Tokens.text;
                 font-size: root.ui-scale * 11px;
                 font-weight: root.selected-mode == 3 ? 600 : 500;
                 font-family: "Segoe UI";
@@ -289,7 +289,7 @@ export component ChannelsCard inherits Window {
             width: parent.pill-w - 2px;
             height: parent.height - 4px;
             border-radius: 4px;
-            background: root.selected-mode == 4 ? Tokens.accent : (p4-touch.has-hover ? Tokens.quiet-hover : #00000000);
+            background: root.selected-mode == 4 ? Tokens.accent : (p4-touch.has-hover ? Tokens.quiet-hover : transparent);
 
             p4-touch := TouchArea {
                 clicked => { root.mode-chosen(4); }
@@ -298,7 +298,7 @@ export component ChannelsCard inherits Window {
             Text {
                 width: parent.width; height: parent.height;
                 text: "Swap";
-                color: root.selected-mode == 4 ? #FFFFFF : Tokens.text;
+                color: root.selected-mode == 4 ? Tokens.content : Tokens.text;
                 font-size: root.ui-scale * 11px;
                 font-weight: root.selected-mode == 4 ? 600 : 500;
                 font-family: "Segoe UI";

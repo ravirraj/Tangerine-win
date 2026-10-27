@@ -265,44 +265,46 @@ struct App {
     messages: std::sync::mpsc::Receiver<Message>,
     /// The end of the channel the workers are given.
     sender: std::sync::mpsc::Sender<Message>,
+    /// The channel tools send their events to.
+    tool_sender: std::sync::mpsc::Sender<crate::platform::windows::toolwindow::ToolEvent>,
     /// The window a tool is asked in, hidden until a tool is picked.
-    tool_window: crate::platform::windows::toolwindow::ToolWindow,
+    tool_window: Option<crate::platform::windows::toolwindow::ToolWindow>,
     /// The window a video is trimmed in, hidden until a trim is picked.
-    timeline_window: crate::platform::windows::timelinewindow::TimelineWindow,
+    timeline_window: Option<crate::platform::windows::timelinewindow::TimelineWindow>,
     /// The window a video or a picture is cropped in, hidden until a crop
     /// is picked.
-    crop_window: crate::platform::windows::cropwindow::CropWindow,
+    crop_window: Option<crate::platform::windows::cropwindow::CropWindow>,
     /// The window a file is compressed in, hidden until compress is picked.
-    compress_window: crate::platform::windows::compresswindow::CompressWindow,
+    compress_window: Option<crate::platform::windows::compresswindow::CompressWindow>,
     /// The window a file's metadata is inspected and edited in, hidden until metadata is picked.
-    metadata_window: crate::platform::windows::metadatawindow::MetadataWindow,
+    metadata_window: Option<crate::platform::windows::metadatawindow::MetadataWindow>,
     /// The window audio volume is normalized in, hidden until normalize is picked.
-    normalize_window: crate::platform::windows::normalizewindow::NormalizeWindow,
+    normalize_window: Option<crate::platform::windows::normalizewindow::NormalizeWindow>,
     /// The window audio channels are converted in, hidden until channels is picked.
-    channels_window: crate::platform::windows::channelswindow::ChannelsWindow,
+    channels_window: Option<crate::platform::windows::channelswindow::ChannelsWindow>,
     /// The window a video speed is chosen in, hidden until speed is picked.
-    speed_window: crate::platform::windows::speedwindow::SpeedWindow,
+    speed_window: Option<crate::platform::windows::speedwindow::SpeedWindow>,
     /// The window a picture is covered in, hidden until a redact is picked.
-    redact_image_window: crate::platform::windows::redactimagewindow::RedactImageWindow,
+    redact_image_window: Option<crate::platform::windows::redactimagewindow::RedactImageWindow>,
     /// The window a video is covered in, with a row for every cover's
     /// stretch, hidden until a redact is picked.
-    redact_video_window: crate::platform::windows::redactvideowindow::RedactVideoWindow,
+    redact_video_window: Option<crate::platform::windows::redactvideowindow::RedactVideoWindow>,
     /// The window a sound is covered in, hidden until a bleep is picked.
-    redact_audio_window: crate::platform::windows::redactaudiowindow::RedactAudioWindow,
+    redact_audio_window: Option<crate::platform::windows::redactaudiowindow::RedactAudioWindow>,
     /// The window videos or PDFs are reordered and merged in, hidden until merge is picked.
-    merge_window: crate::platform::windows::mergewindow::MergeWindow,
+    merge_window: Option<crate::platform::windows::mergewindow::MergeWindow>,
     /// The window PDF pages are inspected, reordered, rotated and removed in, hidden until organize is picked.
-    organize_pdf_window: crate::platform::windows::organizepdfwindow::OrganizePdfWindow,
+    organize_pdf_window: Option<crate::platform::windows::organizepdfwindow::OrganizePdfWindow>,
     /// The window a photo is framed on a background in, hidden until add background is picked.
-    frame_image_window: crate::platform::windows::frameimagewindow::FrameImageWindow,
+    frame_image_window: Option<crate::platform::windows::frameimagewindow::FrameImageWindow>,
     /// The window an audio visualizer video is configured in, hidden until visualize is picked.
-    visualizer_window: crate::platform::windows::visualizerwindow::VisualizerWindow,
+    visualizer_window: Option<crate::platform::windows::visualizerwindow::VisualizerWindow>,
     /// The window a photo collage is configured in, hidden until collage is picked.
-    collage_window: crate::platform::windows::collagewindow::CollageWindow,
+    collage_window: Option<crate::platform::windows::collagewindow::CollageWindow>,
     /// The window a photo is annotated in, hidden until annotate is picked.
-    annotate_window: crate::platform::windows::annotatewindow::AnnotateWindow,
+    annotate_window: Option<crate::platform::windows::annotatewindow::AnnotateWindow>,
     /// The window a photo's adjustments are configured in, hidden until edit photo is picked.
-    edit_image_window: crate::platform::windows::editimagewindow::EditImageWindow,
+    edit_image_window: Option<crate::platform::windows::editimagewindow::EditImageWindow>,
     /// The settings window, shown when chosen from tray.
     settings_window: Option<crate::platform::windows::settingswindow::SettingsWindow>,
     /// The tray icon and its hidden window, when the tray could be had.
@@ -392,57 +394,6 @@ impl App {
                 }
             });
         }
-        let tool_window = crate::platform::windows::toolwindow::ToolWindow::new(tool_sender.clone())
-            .map_err(|reason| reason)?;
-        let timeline_window =
-            crate::platform::windows::timelinewindow::TimelineWindow::new(tool_sender.clone())
-                .map_err(|reason| reason)?;
-        let crop_window = crate::platform::windows::cropwindow::CropWindow::new(tool_sender.clone())
-            .map_err(|reason| reason)?;
-        let redact_image_window =
-            crate::platform::windows::redactimagewindow::RedactImageWindow::new(tool_sender.clone())
-                .map_err(|reason| reason)?;
-        let redact_video_window =
-            crate::platform::windows::redactvideowindow::RedactVideoWindow::new(tool_sender.clone())
-                .map_err(|reason| reason)?;
-        let redact_audio_window =
-            crate::platform::windows::redactaudiowindow::RedactAudioWindow::new(tool_sender.clone())
-                .map_err(|reason| reason)?;
-        let compress_window =
-            crate::platform::windows::compresswindow::CompressWindow::new(tool_sender.clone())
-                .map_err(|reason| reason)?;
-        let metadata_window =
-            crate::platform::windows::metadatawindow::MetadataWindow::new(tool_sender.clone())
-                .map_err(|reason| reason)?;
-        let normalize_window =
-            crate::platform::windows::normalizewindow::NormalizeWindow::new(tool_sender.clone())
-                .map_err(|reason| reason)?;
-        let channels_window =
-            crate::platform::windows::channelswindow::ChannelsWindow::new(tool_sender.clone())
-                .map_err(|reason| reason)?;
-        let speed_window =
-            crate::platform::windows::speedwindow::SpeedWindow::new(tool_sender.clone())
-                .map_err(|reason| reason)?;
-        let merge_window = crate::platform::windows::mergewindow::MergeWindow::new(tool_sender.clone())
-            .map_err(|reason| reason)?;
-        let organize_pdf_window =
-            crate::platform::windows::organizepdfwindow::OrganizePdfWindow::new(tool_sender.clone())
-                .map_err(|reason| reason)?;
-        let frame_image_window =
-            crate::platform::windows::frameimagewindow::FrameImageWindow::new(tool_sender.clone())
-                .map_err(|reason| reason)?;
-        let visualizer_window =
-            crate::platform::windows::visualizerwindow::VisualizerWindow::new(tool_sender.clone())
-                .map_err(|reason| reason)?;
-        let collage_window =
-            crate::platform::windows::collagewindow::CollageWindow::new(tool_sender.clone())
-                .map_err(|reason| reason)?;
-        let annotate_window =
-            crate::platform::windows::annotatewindow::AnnotateWindow::new(tool_sender.clone())
-                .map_err(|reason| reason)?;
-        let edit_image_window =
-            crate::platform::windows::editimagewindow::EditImageWindow::new(tool_sender)
-                .map_err(|reason| reason)?;
 
         // The tray icon is the one part of the program a person can see
         // while it waits, and its menu is the way the program is opened
@@ -499,24 +450,25 @@ impl App {
             capabilities: None,
             messages,
             sender: sender.clone(),
-            tool_window,
-            timeline_window,
-            crop_window,
-            compress_window,
-            metadata_window,
-            normalize_window,
-            channels_window,
-            speed_window,
-            redact_image_window,
-            redact_video_window,
-            redact_audio_window,
-            merge_window,
-            organize_pdf_window,
-            frame_image_window,
-            visualizer_window,
-            collage_window,
-            annotate_window,
-            edit_image_window,
+            tool_sender,
+            tool_window: None,
+            timeline_window: None,
+            crop_window: None,
+            compress_window: None,
+            metadata_window: None,
+            normalize_window: None,
+            channels_window: None,
+            speed_window: None,
+            redact_image_window: None,
+            redact_video_window: None,
+            redact_audio_window: None,
+            merge_window: None,
+            organize_pdf_window: None,
+            frame_image_window: None,
+            visualizer_window: None,
+            collage_window: None,
+            annotate_window: None,
+            edit_image_window: None,
             settings_window: None,
             tray,
         })
@@ -720,107 +672,155 @@ impl App {
     fn open_tool_window(&mut self, segment: &Segment, files: &[std::path::PathBuf]) {
         // A compress asks for its own card: presets, video options and target size.
         if segment.id == "tools.compress" {
-            self.compress_window
-                .show_for(&segment.id, &segment.label, &segment.detail, files);
+            let win = self.compress_window.get_or_insert_with(|| {
+                crate::platform::windows::compresswindow::CompressWindow::new(self.tool_sender.clone())
+                    .expect("compress window could be created")
+            });
+            win.show_for(&segment.id, &segment.label, &segment.detail, files);
             return;
         }
         // A metadata operation asks for its own card: inspect/edit tags, remove metadata.
         if segment.id == "tools.metadata" {
-            self.metadata_window
-                .show_for(&segment.id, &segment.label, &segment.detail, files);
+            let win = self.metadata_window.get_or_insert_with(|| {
+                crate::platform::windows::metadatawindow::MetadataWindow::new(self.tool_sender.clone())
+                    .expect("metadata window could be created")
+            });
+            win.show_for(&segment.id, &segment.label, &segment.detail, files);
             return;
         }
         // A normalize operation asks for its own card: waveform, loudness and peak limit sliders.
         if segment.id == "tools.normalize" {
-            self.normalize_window
-                .show_for(&segment.id, &segment.label, &segment.detail, files);
+            let win = self.normalize_window.get_or_insert_with(|| {
+                crate::platform::windows::normalizewindow::NormalizeWindow::new(self.tool_sender.clone())
+                    .expect("normalize window could be created")
+            });
+            win.show_for(&segment.id, &segment.label, &segment.detail, files);
             return;
         }
         // A channels operation asks for its own card: waveform, mode pills, and volume sliders.
         if segment.id == "tools.channels" {
-            self.channels_window
-                .show_for(&segment.id, &segment.label, &segment.detail, files);
+            let win = self.channels_window.get_or_insert_with(|| {
+                crate::platform::windows::channelswindow::ChannelsWindow::new(self.tool_sender.clone())
+                    .expect("channels window could be created")
+            });
+            win.show_for(&segment.id, &segment.label, &segment.detail, files);
             return;
         }
         // A speed asks for its own card the video stands on: the video's
         // own beginning, and the six stops the pace is chosen of.
         if segment.id == "tools.speed" {
-            self.speed_window
-                .show_for(&segment.id, &segment.label, &segment.detail, files);
+            let win = self.speed_window.get_or_insert_with(|| {
+                crate::platform::windows::speedwindow::SpeedWindow::new(self.tool_sender.clone())
+                    .expect("speed window could be created")
+            });
+            win.show_for(&segment.id, &segment.label, &segment.detail, files);
             return;
         }
         // A merge asks for its own card: file list reorder for videos or PDFs.
         if segment.id == "tools.merge" {
-            self.merge_window
-                .show_for(&segment.id, &segment.label, &segment.detail, files);
+            let win = self.merge_window.get_or_insert_with(|| {
+                crate::platform::windows::mergewindow::MergeWindow::new(self.tool_sender.clone())
+                    .expect("merge window could be created")
+            });
+            win.show_for(&segment.id, &segment.label, &segment.detail, files);
             return;
         }
         // An organize asks for its own card: PDF page grid reordering, rotation and removal.
         if segment.id == "tools.organize_pdf" {
-            self.organize_pdf_window
-                .show_for(&segment.id, &segment.label, &segment.detail, files);
+            let win = self.organize_pdf_window.get_or_insert_with(|| {
+                crate::platform::windows::organizepdfwindow::OrganizePdfWindow::new(self.tool_sender.clone())
+                    .expect("organize pdf window could be created")
+            });
+            win.show_for(&segment.id, &segment.label, &segment.detail, files);
             return;
         }
         // An image framing asks for its own card: preview canvas, swatches, sliders, and ratio.
         if segment.id == "tools.frame_image" {
-            self.frame_image_window
-                .show_for(&segment.id, &segment.label, &segment.detail, files);
+            let win = self.frame_image_window.get_or_insert_with(|| {
+                crate::platform::windows::frameimagewindow::FrameImageWindow::new(self.tool_sender.clone())
+                    .expect("frame image window could be created")
+            });
+            win.show_for(&segment.id, &segment.label, &segment.detail, files);
             return;
         }
         // An audio visualizer asks for its own card: live preview, shape chips, style chips, color swatches.
         if segment.id == "tools.audio_to_video" {
-            self.visualizer_window
-                .show_for(&segment.id, &segment.label, &segment.detail, files);
+            let win = self.visualizer_window.get_or_insert_with(|| {
+                crate::platform::windows::visualizerwindow::VisualizerWindow::new(self.tool_sender.clone())
+                    .expect("visualizer window could be created")
+            });
+            win.show_for(&segment.id, &segment.label, &segment.detail, files);
             return;
         }
         // A collage asks for its own card: layout chips, spacing, corner radius, canvas shape, and background.
         if segment.id == "tools.collage" {
-            self.collage_window
-                .show_for(&segment.id, &segment.label, &segment.detail, files);
+            let win = self.collage_window.get_or_insert_with(|| {
+                crate::platform::windows::collagewindow::CollageWindow::new(self.tool_sender.clone())
+                    .expect("collage window could be created")
+            });
+            win.show_for(&segment.id, &segment.label, &segment.detail, files);
             return;
         }
         // An annotation asks for its own card: tool chips, color swatches, thickness, and callout text.
         if segment.id == "tools.annotate" {
-            self.annotate_window
-                .show_for(&segment.id, &segment.label, &segment.detail, files);
+            let win = self.annotate_window.get_or_insert_with(|| {
+                crate::platform::windows::annotatewindow::AnnotateWindow::new(self.tool_sender.clone())
+                    .expect("annotate window could be created")
+            });
+            win.show_for(&segment.id, &segment.label, &segment.detail, files);
             return;
         }
         // A photo adjustment asks for its own card: preview canvas, sliders, compare toggle.
         if segment.id == "tools.edit_image" {
-            self.edit_image_window
-                .show_for(&segment.id, &segment.label, &segment.detail, files);
+            let win = self.edit_image_window.get_or_insert_with(|| {
+                crate::platform::windows::editimagewindow::EditImageWindow::new(self.tool_sender.clone())
+                    .expect("edit image window could be created")
+            });
+            win.show_for(&segment.id, &segment.label, &segment.detail, files);
             return;
         }
         // A crop asks for its own card the media stands on: the rectangle
         // that is kept, and the ratio it wears. It is not the plain
         // window's form of typed fields.
         if segment.id == "tools.crop" {
-            self.crop_window
-                .show_for(&segment.id, &segment.label, &segment.detail, files);
+            let win = self.crop_window.get_or_insert_with(|| {
+                crate::platform::windows::cropwindow::CropWindow::new(self.tool_sender.clone())
+                    .expect("crop window could be created")
+            });
+            win.show_for(&segment.id, &segment.label, &segment.detail, files);
             return;
         }
         // A redact of a picture asks for its own card the picture stands
         // on: the rectangles of cover over it, and the look they take. It
         // is not the plain window's form of typed fields.
         if segment.id == "tools.redact_image" {
-            self.redact_image_window
-                .show_for(&segment.id, &segment.label, &segment.detail, files);
+            let win = self.redact_image_window.get_or_insert_with(|| {
+                crate::platform::windows::redactimagewindow::RedactImageWindow::new(self.tool_sender.clone())
+                    .expect("redact image window could be created")
+            });
+            win.show_for(&segment.id, &segment.label, &segment.detail, files);
             return;
         }
         // A redact of a video asks for the same card's video skin: the
         // rectangles of cover over the frame, and a row for every one of
         // them with the stretch it stands over.
         if segment.id == "tools.redact_video" {
-            self.redact_video_window
-                .show_for(&segment.id, &segment.label, &segment.detail, files);
+            let win = self.redact_video_window.get_or_insert_with(|| {
+                crate::platform::windows::redactvideowindow::RedactVideoWindow::new(self.tool_sender.clone())
+                    .expect("redact video window could be created")
+            });
+            win.show_for(&segment.id, &segment.label, &segment.detail, files);
             return;
         }
         // A bleep asks for the sound's own card: the stretches the tone
         // takes over, the peaks they stand over, and the hearing of
         // both. It is not the plain window's form of typed fields.
         if segment.id == "tools.bleep" {
-            self.redact_audio_window
-                .show_for(&segment.id, &segment.label, &segment.detail, files);
+            let win = self.redact_audio_window.get_or_insert_with(|| {
+                crate::platform::windows::redactaudiowindow::RedactAudioWindow::new(self.tool_sender.clone())
+                    .expect("redact audio window could be created")
+            });
+            win.show_for(&segment.id, &segment.label, &segment.detail, files);
             return;
         }
         // A trim asks for a timeline, not a form: the video is shown at
@@ -833,8 +833,11 @@ impl App {
             || segment.id == "tools.split"
             || segment.id == "tools.snapshots"
         {
-            self.timeline_window
-                .show_for(&segment.id, &segment.label, &segment.detail, files);
+            let win = self.timeline_window.get_or_insert_with(|| {
+                crate::platform::windows::timelinewindow::TimelineWindow::new(self.tool_sender.clone())
+                    .expect("timeline window could be created")
+            });
+            win.show_for(&segment.id, &segment.label, &segment.detail, files);
             return;
         }
         let preview = files.iter().find_map(|path| {
@@ -850,8 +853,11 @@ impl App {
                 image::open(path).ok()
             }
         });
-        self.tool_window
-            .show_for(&segment.id, &segment.label, &segment.detail, files, preview.as_ref());
+        let win = self.tool_window.get_or_insert_with(|| {
+            crate::platform::windows::toolwindow::ToolWindow::new(self.tool_sender.clone())
+                .expect("tool window could be created")
+        });
+        win.show_for(&segment.id, &segment.label, &segment.detail, files, preview.as_ref());
     }
 
     /// Starts the work of an operation.
