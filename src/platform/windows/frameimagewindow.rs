@@ -516,6 +516,7 @@ impl FrameImageWindow {
             hInstance: instance.into(),
             lpszClassName: class_name,
             hCursor: unsafe { LoadCursorW(None, IDC_ARROW) }.unwrap_or_default(),
+            hIcon: crate::platform::windows::windowhost::get_app_icon(),
             hbrBackground: unsafe { CreateSolidBrush(COLORREF(0x00FF_FFFF)) },
             ..Default::default()
         };
@@ -526,8 +527,9 @@ impl FrameImageWindow {
         let software = window_for_next_component();
         let card = FrameImageCard::new().map_err(|e| e.to_string())?;
 
+        let owner = crate::platform::windows::windowhost::root_owner_window();
         let hwnd = unsafe {
-            CreateWindowExW(
+            let win = CreateWindowExW(
                 WS_EX_LAYERED,
                 class_name,
                 w!("Add Background"),
@@ -536,12 +538,14 @@ impl FrameImageWindow {
                 CW_USEDEFAULT,
                 CARD_W,
                 CARD_H,
-                None,
+                if owner.0.is_null() { None } else { Some(owner) },
                 None,
                 Some(instance.into()),
                 None,
             )
-            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())?;
+            crate::platform::windows::windowhost::prepare_tool_window(win);
+            win
         };
 
         unsafe {
@@ -626,6 +630,7 @@ impl FrameImageWindow {
                 SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
             );
             let _ = ShowWindow(self.window, SW_SHOW);
+            crate::platform::windows::windowhost::hide_from_taskbar(self.window);
             let _ = SetForegroundWindow(self.window);
             let _ = InvalidateRect(Some(self.window), None, true);
         }

@@ -373,6 +373,7 @@ impl VisualizerWindow {
                 SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | windows::Win32::UI::WindowsAndMessaging::SWP_SHOWWINDOW,
             );
             let _ = ShowWindow(self.window, SW_SHOW);
+            crate::platform::windows::windowhost::hide_from_taskbar(self.window);
             let _ = SetForegroundWindow(self.window);
         }
     }

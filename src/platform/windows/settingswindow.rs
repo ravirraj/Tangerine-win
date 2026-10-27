@@ -554,6 +554,7 @@ impl SettingsWindow {
                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | windows::Win32::UI::WindowsAndMessaging::SWP_SHOWWINDOW,
             );
             let _ = ShowWindow(hwnd, SW_SHOW);
+            crate::platform::windows::windowhost::hide_from_taskbar(hwnd);
             let _ = SetForegroundWindow(hwnd);
         }
     }

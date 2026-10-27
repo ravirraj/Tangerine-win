@@ -789,6 +789,7 @@ impl MetadataWindow {
             hInstance: instance.into(),
             lpszClassName: PCWSTR(class_name.as_ptr()),
             hCursor: unsafe { LoadCursorW(None, IDC_ARROW).unwrap_or_default() },
+            hIcon: crate::platform::windows::windowhost::get_app_icon(),
             hbrBackground: bg_brush,
             ..Default::default()
         };
@@ -799,8 +800,9 @@ impl MetadataWindow {
         let software = window_for_next_component();
         let card = MetadataCard::new().map_err(|e| e.to_string())?;
 
+        let owner = crate::platform::windows::windowhost::root_owner_window();
         let window = unsafe {
-            CreateWindowExW(
+            let win = CreateWindowExW(
                 WS_EX_LAYERED,
                 PCWSTR(class_name.as_ptr()),
                 PCWSTR(to_wide("Edit metadata").as_ptr()),
@@ -809,12 +811,14 @@ impl MetadataWindow {
                 CW_USEDEFAULT,
                 CARD_W,
                 CARD_H,
-                None,
+                if owner.0.is_null() { None } else { Some(owner) },
                 None,
                 Some(instance.into()),
                 None,
             )
-            .map_err(|e| format!("CreateWindowExW failed: {e:?}"))?
+            .map_err(|e| format!("CreateWindowExW failed: {e:?}"))?;
+            crate::platform::windows::windowhost::prepare_tool_window(win);
+            win
         };
 
         let field_font = unsafe { interface_font(window) };
@@ -1075,6 +1079,7 @@ impl MetadataWindow {
             );
             let _ = SetLayeredWindowAttributes(self.window, COLORREF(0), 0, LWA_ALPHA);
             let _ = ShowWindow(self.window, SW_SHOW);
+            crate::platform::windows::windowhost::hide_from_taskbar(self.window);
             let _ = SetForegroundWindow(self.window);
             let _ = SetTimer(Some(self.window), FADE_TIMER_ID, 16, None);
         }

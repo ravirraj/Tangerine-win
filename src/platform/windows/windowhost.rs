@@ -8,13 +8,165 @@
 //! the face where the times are said. The tests' way of taking a
 //! screenshot is here too, so every window is checked the same way.
 
-use windows::Win32::Foundation::HWND;
+use std::sync::atomic::{AtomicIsize, Ordering};
+use windows::core::{w, PCWSTR};
+use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     GetDC, GetDeviceCaps, LOGPIXELSY, ReleaseDC,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    WINDOW_STYLE, WS_MAXIMIZEBOX, WS_OVERLAPPEDWINDOW, WS_THICKFRAME,
+    CreateWindowExW, DefWindowProcW, LoadImageW, RegisterClassW, SendMessageW,
+    HICON, ICON_BIG, ICON_SMALL, IMAGE_ICON, LR_DEFAULTCOLOR, LR_LOADFROMFILE, LR_SHARED,
+    WINDOW_STYLE, WM_SETICON, WNDCLASSW, WS_MAXIMIZEBOX, WS_OVERLAPPEDWINDOW, WS_POPUP,
+    WS_THICKFRAME,
 };
+
+static APP_ICON_BIG: AtomicIsize = AtomicIsize::new(0);
+static APP_ICON_SMALL: AtomicIsize = AtomicIsize::new(0);
+
+pub(crate) fn get_app_icon() -> HICON {
+    let val = APP_ICON_BIG.load(Ordering::Relaxed);
+    if val != 0 {
+        return HICON(val as *mut _);
+    }
+    let icon = load_icon_of_size(32);
+    APP_ICON_BIG.store(icon.0 as isize, Ordering::Relaxed);
+    icon
+}
+
+pub(crate) fn get_app_icon_small() -> HICON {
+    let val = APP_ICON_SMALL.load(Ordering::Relaxed);
+    if val != 0 {
+        return HICON(val as *mut _);
+    }
+    let icon = load_icon_of_size(16);
+    APP_ICON_SMALL.store(icon.0 as isize, Ordering::Relaxed);
+    icon
+}
+
+fn load_icon_of_size(size: i32) -> HICON {
+    unsafe {
+        let hinstance = windows::Win32::System::LibraryLoader::GetModuleHandleW(None).unwrap_or_default();
+        if let Ok(handle) = LoadImageW(
+            Some(hinstance.into()),
+            PCWSTR(1 as _),
+            IMAGE_ICON,
+            size,
+            size,
+            LR_DEFAULTCOLOR | LR_SHARED,
+        ) {
+            if !handle.0.is_null() {
+                return HICON(handle.0);
+            }
+        }
+        if let Ok(handle) = LoadImageW(
+            None,
+            w!("assets\\icon.ico"),
+            IMAGE_ICON,
+            size,
+            size,
+            LR_LOADFROMFILE | LR_SHARED,
+        ) {
+            if !handle.0.is_null() {
+                return HICON(handle.0);
+            }
+        }
+        HICON(std::ptr::null_mut())
+    }
+}
+
+thread_local! {
+    static ROOT_OWNER: std::cell::Cell<isize> = const { std::cell::Cell::new(0) };
+}
+
+unsafe extern "system" fn owner_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+}
+
+pub(crate) fn root_owner_window() -> HWND {
+    ROOT_OWNER.with(|cell| {
+        let val = cell.get();
+        if val != 0 {
+            let hwnd = HWND(val as *mut _);
+            unsafe {
+                if windows::Win32::UI::WindowsAndMessaging::IsWindow(Some(hwnd)).as_bool() {
+                    return hwnd;
+                }
+            }
+        }
+        unsafe {
+            let hinstance = windows::Win32::System::LibraryLoader::GetModuleHandleW(None).unwrap_or_default();
+            let class_name = w!("OpenTangerineOwner");
+            let wc = WNDCLASSW {
+                lpfnWndProc: Some(owner_wnd_proc),
+                hInstance: hinstance.into(),
+                lpszClassName: class_name,
+                ..Default::default()
+            };
+            let _ = RegisterClassW(&wc);
+            let hwnd = CreateWindowExW(
+                Default::default(),
+                class_name,
+                w!("Open Tangerine"),
+                WS_POPUP,
+                0,
+                0,
+                0,
+                0,
+                None,
+                None,
+                Some(hinstance.into()),
+                None,
+            )
+            .unwrap_or(HWND(std::ptr::null_mut()));
+
+            cell.set(hwnd.0 as isize);
+            hwnd
+        }
+    })
+}
+
+pub(crate) fn hide_from_taskbar(window: HWND) {
+    if window.0.is_null() {
+        return;
+    }
+    unsafe {
+        use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
+        use windows::Win32::UI::Shell::{ITaskbarList, TaskbarList};
+
+        if let Ok(taskbar) = CoCreateInstance::<_, ITaskbarList>(&TaskbarList, None, CLSCTX_INPROC_SERVER) {
+            let _ = taskbar.HrInit();
+            let _ = taskbar.DeleteTab(window);
+        }
+    }
+}
+
+pub(crate) fn prepare_tool_window(window: HWND) {
+    if window.0.is_null() {
+        return;
+    }
+    unsafe {
+        let icon_big = get_app_icon();
+        let icon_sm = get_app_icon_small();
+        if !icon_big.0.is_null() {
+            let _ = SendMessageW(
+                window,
+                WM_SETICON,
+                Some(WPARAM(ICON_BIG as _)),
+                Some(LPARAM(icon_big.0 as _)),
+            );
+        }
+        if !icon_sm.0.is_null() {
+            let _ = SendMessageW(
+                window,
+                WM_SETICON,
+                Some(WPARAM(ICON_SMALL as _)),
+                Some(LPARAM(icon_sm.0 as _)),
+            );
+        }
+    }
+    hide_from_taskbar(window);
+}
 
 /// How much the display stretches a named window: the dots it paints
 /// with for every 96 the design asks, taken from the window's own DC.
@@ -144,6 +296,7 @@ pub(crate) fn create_layered_window(
                 windows::Win32::UI::WindowsAndMessaging::IDC_ARROW,
             )
             .unwrap_or_default(),
+            hIcon: get_app_icon(),
             hbrBackground: windows::Win32::Graphics::Gdi::HBRUSH(std::ptr::null_mut()),
             ..Default::default()
         };
@@ -151,6 +304,7 @@ pub(crate) fn create_layered_window(
 
         let (outer_w, outer_h) = outer_size_for(HWND(std::ptr::null_mut()), client_w, client_h);
         let wide_title = to_wide(title);
+        let owner = root_owner_window();
         let window = windows::Win32::UI::WindowsAndMessaging::CreateWindowExW(
             windows::Win32::UI::WindowsAndMessaging::WS_EX_LAYERED,
             windows::core::PCWSTR(wide_class.as_ptr()),
@@ -160,12 +314,14 @@ pub(crate) fn create_layered_window(
             windows::Win32::UI::WindowsAndMessaging::CW_USEDEFAULT,
             outer_w,
             outer_h,
-            None,
+            if owner.0.is_null() { None } else { Some(owner) },
             None,
             Some(hinstance.into()),
             None,
         )
         .map_err(|e| e.to_string())?;
+
+        prepare_tool_window(window);
 
         Ok(window)
     }

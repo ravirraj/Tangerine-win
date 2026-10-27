@@ -544,11 +544,13 @@ impl CompressWindow {
             hInstance: instance.into(),
             lpszClassName: PCWSTR(class_name.as_ptr()),
             hCursor: unsafe { LoadCursorW(None, IDC_ARROW) }.unwrap_or_default(),
+            hIcon: crate::platform::windows::windowhost::get_app_icon(),
             hbrBackground: white_brush,
             ..Default::default()
         };
         unsafe { RegisterClassW(&wnd_class) };
 
+        let owner = crate::platform::windows::windowhost::root_owner_window();
         let window = unsafe {
             CreateWindowExW(
                 WS_EX_LAYERED,
@@ -559,13 +561,14 @@ impl CompressWindow {
                 CW_USEDEFAULT,
                 CARD_W,
                 480,
-                None,
+                if owner.0.is_null() { None } else { Some(owner) },
                 None,
                 Some(instance.into()),
                 None,
             )
         }
         .map_err(|e| e.to_string())?;
+        crate::platform::windows::windowhost::prepare_tool_window(window);
 
         unsafe {
             let _ = SetLayeredWindowAttributes(window, COLORREF(0), 0, LWA_ALPHA);
@@ -747,6 +750,7 @@ impl CompressWindow {
             );
             let _ = SetLayeredWindowAttributes(self.window, COLORREF(0), 0, LWA_ALPHA);
             let _ = ShowWindow(self.window, SW_SHOW);
+            crate::platform::windows::windowhost::hide_from_taskbar(self.window);
             let _ = SetForegroundWindow(self.window);
             let _ = SetTimer(Some(self.window), FADE_TIMER_ID, 20, None);
         }

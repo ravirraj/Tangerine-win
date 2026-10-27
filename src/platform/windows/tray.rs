@@ -193,10 +193,18 @@ pub fn add_tray_icon(hwnd: HWND) -> bool {
     nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     nid.uCallbackMessage = WM_TRAYICON;
 
-    unsafe {
-        if let Ok(icon) = LoadIconW(None, IDI_APPLICATION) {
-            nid.hIcon = icon;
+    let icon = crate::platform::windows::windowhost::get_app_icon_small();
+    if !icon.0.is_null() {
+        nid.hIcon = icon;
+    } else {
+        unsafe {
+            if let Ok(icon) = LoadIconW(None, IDI_APPLICATION) {
+                nid.hIcon = icon;
+            }
         }
+    }
+
+    unsafe {
         let tip = w!("Open Tangerine");
         let tip_slice = tip.as_wide();
         let len = tip_slice.len().min(nid.szTip.len() - 1);

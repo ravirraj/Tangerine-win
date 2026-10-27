@@ -150,11 +150,13 @@ impl ToolWindow {
         // dark theme's idea of "window colour" never shows through.
         let scale = screen_scale();
         let window = unsafe {
+            let owner = crate::platform::windows::windowhost::root_owner_window();
             let class = WNDCLASSW {
                 lpfnWndProc: Some(window_procedure),
                 hInstance: instance.into(),
                 lpszClassName: class_name,
                 hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
+                hIcon: crate::platform::windows::windowhost::get_app_icon(),
                 hbrBackground: CreateSolidBrush(COLORREF(0x00FF_FFFF)),
                 ..Default::default()
             };
@@ -169,13 +171,14 @@ impl ToolWindow {
                 CW_USEDEFAULT,
                 (CARD_W as f32 * scale) as i32,
                 (CARD_H as f32 * scale) as i32,
-                None,
+                if owner.0.is_null() { None } else { Some(owner) },
                 None,
                 Some(instance.into()),
                 None,
             )
         }
         .map_err(|error| error.to_string())?;
+        crate::platform::windows::windowhost::prepare_tool_window(window);
 
         // The corners of the window are round on a system that rounds its
         // windows; on one that does not, they stay as they are.
@@ -344,6 +347,7 @@ impl ToolWindow {
             let _ = SetLayeredWindowAttributes(card_window, COLORREF(0), 0, LWA_ALPHA);
             let _ = SetForegroundWindow(card_window);
             let _ = ShowWindow(card_window, SW_SHOW);
+            crate::platform::windows::windowhost::hide_from_taskbar(card_window);
             let _ = SetTimer(Some(card_window), FADE_TIMER_ID, 16, None);
             // The keyboard starts where the tool has something to take:
             // the first field when there are fields, the go button when

@@ -47,7 +47,64 @@ println!("cargo:rerun-if-changed=src/ui/redact_audio_window.slint");
     // script asks for a program of the tree it is packaging.
     println!("cargo:rerun-if-env-changed=OPEN_TANGERINE_REVISION");
     println!("cargo:rustc-env=OPEN_TANGERINE_REVISION={}", revision());
+    compile_windows_resources();
     slint_build::compile(path).expect("the wheel markup could not be compiled");
+}
+
+fn compile_windows_resources() {
+    println!("cargo:rerun-if-changed=app.rc");
+    println!("cargo:rerun-if-changed=assets/icon.ico");
+    let out_dir = match std::env::var("OUT_DIR") {
+        Ok(dir) => PathBuf::from(dir),
+        Err(_) => return,
+    };
+    let res_path = out_dir.join("app.res");
+    let rc_path = PathBuf::from("app.rc");
+
+    if let Some(rc_exe) = find_rc_exe() {
+        let status = Command::new(rc_exe)
+            .args(["/nologo", "/fo"])
+            .arg(&res_path)
+            .arg(&rc_path)
+            .status();
+        if let Ok(s) = status && s.success() {
+            println!("cargo:rustc-link-arg={}", res_path.display());
+        }
+    }
+}
+
+fn find_rc_exe() -> Option<PathBuf> {
+    if let Ok(out) = Command::new("where.exe").arg("rc.exe").output() {
+        if out.status.success() {
+            let line = String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .next()
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            if !line.is_empty() {
+                return Some(PathBuf::from(line));
+            }
+        }
+    }
+    let kit_root = PathBuf::from(r"C:\Program Files (x86)\Windows Kits\10\bin");
+    if kit_root.is_dir() {
+        if let Ok(entries) = std::fs::read_dir(&kit_root) {
+            let mut versions: Vec<PathBuf> = entries
+                .filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| p.is_dir())
+                .collect();
+            versions.sort_by(|a, b| b.cmp(a));
+            for ver in versions {
+                let candidate = ver.join("x64").join("rc.exe");
+                if candidate.is_file() {
+                    return Some(candidate);
+                }
+            }
+        }
+    }
+    None
 }
 
 /// The revision the tree is at, and whether anything has been changed since.
