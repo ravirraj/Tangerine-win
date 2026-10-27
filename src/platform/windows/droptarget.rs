@@ -43,8 +43,10 @@ pub struct DropState {
     ///
     /// The points that the drag hands over are in screen coordinates, the
     /// same coordinates the pointer is read in, so both can be used without
-    /// being converted.
-    pub point: Cell<(i32, i32)>,
+    /// being converted. There is nothing here until the drag itself says
+    /// where it is: a point of (0, 0) is a corner of the screen as real as
+    /// any other, so it is not asked to stand for "no point".
+    pub point: Cell<Option<(i32, i32)>>,
     /// The drag the files belong to.
     ///
     /// The files are told to the application while the drag is over the
@@ -62,12 +64,8 @@ impl DropState {
 
     /// Where the pointer is, in screen pixels.
     pub fn screen_point(&self) -> Option<crate::radial::geometry::Point> {
-        let (x, y) = self.point.get();
-        if x == 0 && y == 0 {
-            None
-        } else {
-            Some(crate::radial::geometry::Point::new(x as f32, y as f32))
-        }
+        let (x, y) = self.point.get()?;
+        Some(crate::radial::geometry::Point::new(x as f32, y as f32))
     }
 }
 
@@ -96,7 +94,7 @@ impl IDropTarget_Impl for DropTargetImpl_Impl {
         };
         self.state.over.set(true);
         self.state.left.set(false);
-        self.state.point.set((point.x, point.y));
+        self.state.point.set(Some((point.x, point.y)));
         // SAFETY: the pointer is given by the system and is valid.
         unsafe { *effect = DROPEFFECT_COPY };
         Ok(())
@@ -110,7 +108,7 @@ impl IDropTarget_Impl for DropTargetImpl_Impl {
     ) -> windows::core::Result<()> {
         // The pointer is over the window: it is not outside any more.
         self.state.left.set(false);
-        self.state.point.set((point.x, point.y));
+        self.state.point.set(Some((point.x, point.y)));
         // SAFETY: the pointer is given by the system and is valid.
         unsafe { *effect = DROPEFFECT_COPY };
         Ok(())
@@ -140,7 +138,7 @@ impl IDropTarget_Impl for DropTargetImpl_Impl {
         };
         self.state.over.set(false);
         self.state.dropped.set(true);
-        self.state.point.set((point.x, point.y));
+        self.state.point.set(Some((point.x, point.y)));
         // SAFETY: the pointer is given by the system and is valid.
         unsafe { *effect = DROPEFFECT_COPY };
         Ok(())
@@ -150,6 +148,37 @@ impl IDropTarget_Impl for DropTargetImpl_Impl {
 /// Makes a drop target for the given state.
 pub fn make_drop_target(state: Rc<DropState>) -> IDropTarget {
     DropTargetImpl { state }.into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A point of (0, 0) is the corner of the screen, as real a place as
+    /// any other, and it is not asked to stand for "the drag never said
+    /// where it is". Until the drag speaks there is no point at all.
+    #[test]
+    fn the_drop_point_is_whatever_the_drag_said_and_nothing_until_it_does() {
+        let state = DropState::default();
+        assert!(
+            state.screen_point().is_none(),
+            "a drag that never entered has no point"
+        );
+
+        state.point.set(Some((0, 0)));
+        let point = state
+            .screen_point()
+            .expect("the corner of the screen is a real point");
+        assert_eq!(
+            (point.x, point.y),
+            (0.0, 0.0),
+            "the corner of the screen is not mistaken for nothing"
+        );
+
+        state.point.set(Some((123, 456)));
+        let point = state.screen_point().expect("a point over the screen");
+        assert_eq!((point.x, point.y), (123.0, 456.0));
+    }
 }
 
 /// The files in the data object of a drag.

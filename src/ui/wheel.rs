@@ -419,6 +419,27 @@ impl WheelUi {
         })
     }
 
+    /// Gives the window and its buffer the size of a wheel drawn at
+    /// `scale`.
+    ///
+    /// The scale is read again every time the wheel opens. When it opens
+    /// on a display scaled differently from the one the wheel was made
+    /// for, the window keeps the size it was made with and the wheel is
+    /// drawn stretched or shrunken, whatever the first display asked for.
+    /// This hands both the window and its own buffer the new size, so
+    /// the next drawing is drawn, and last seen, at the display's own
+    /// scale.
+    pub fn resize_for(&mut self, scale: f32) {
+        let width = (DISC_SIZE * scale).round().max(64.0) as u32;
+        if self.width == width {
+            return;
+        }
+        self.window.set_size(PhysicalSize::new(width, width));
+        self.buffer = vec![Bgra8::default(); (width as usize) * (width as usize)];
+        self.width = width;
+        self.height = width;
+    }
+
     /// Hands the view model to the Slint component.
     pub fn apply(&self, model: &ViewModel) {
         let items: Vec<SegmentData> = model.segments.clone();
@@ -825,5 +846,30 @@ mod tests {
         let shot_dark = std::path::Path::new("target").join("shots").join("wheel-dark.png");
         ui_dark.save_capture(&shot_dark).expect("wheel dark captured");
         assert!(shot_dark.is_file(), "wheel-dark.png written");
+    }
+
+    /// The wheel is made at the scale of the display the program started
+    /// on, and re-shaped for the display it later opens on: the window and
+    /// its buffer both take the new size, and the size the display already
+    /// had is kept when it is asked for again.
+    #[test]
+    fn the_window_and_buffer_take_the_size_of_the_display_asked() {
+        let mut ui = WheelUi::new(1.0).expect("wheel ui can be created");
+        let square_at_1 = ui.width();
+        let square_full = ui.pixels().len();
+        assert_eq!(square_full, (square_at_1 * square_at_1) as usize);
+
+        ui.resize_for(2.0);
+        assert_eq!(ui.width(), (crate::ui::wheel::DISC_SIZE * 2.0).round() as u32);
+        assert_eq!(ui.height(), ui.width());
+        assert_eq!(
+            ui.pixels().len(),
+            (ui.width() as usize) * (ui.height() as usize),
+            "the buffer holds a pixel for every pixel of the window"
+        );
+
+        ui.resize_for(2.0);
+        assert_eq!(ui.width(), (crate::ui::wheel::DISC_SIZE * 2.0).round() as u32);
+        assert_ne!(square_at_1, ui.width(), "the wheel really changed size");
     }
 }

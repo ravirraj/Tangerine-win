@@ -284,8 +284,8 @@ impl Overlay {
     /// appear in the wrong place.
     pub fn place(&self, x: i32, y: i32, width: u32, height: u32) {
         // SAFETY: the window handle is ours.
-        unsafe {
-            let _ = SetWindowPos(
+        let moved = unsafe {
+            SetWindowPos(
                 self.hwnd,
                 Some(HWND_TOPMOST),
                 x,
@@ -295,7 +295,18 @@ impl Overlay {
                 // The window is moved without being shown: it is shown once
                 // there is something to show.
                 SWP_NOACTIVATE,
+            )
+        };
+        // The wheel is only ever said to have been placed when the placing
+        // really happened. A window whose move was refused is not where the
+        // wheel belongs, and the next frame has to be able to try again,
+        // instead of believing the work was done the first time.
+        if moved.is_err() {
+            crate::diagnostics::error(
+                "overlay",
+                &format!("the wheel could not be moved to ({x}, {y}): Windows said no"),
             );
+            return;
         }
         self.placed.set(true);
         crate::diagnostics::log(
@@ -306,6 +317,13 @@ impl Overlay {
                 self.window_rect()
             ),
         );
+    }
+
+    /// Whether the window has been placed at least once. The moving is
+    /// believed only when Windows took it: a refused move leaves the
+    /// wheel nowhere.
+    pub fn is_placed(&self) -> bool {
+        self.placed.get()
     }
 
     /// Shows the window without giving it the focus.

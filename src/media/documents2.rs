@@ -178,6 +178,11 @@ fn libreoffice_export(program: &Path, source: &Path, target: &Path) -> Result<()
     ));
     std::fs::create_dir_all(&staging).map_err(|_| DocError::WriteError)?;
 
+    let made = staging.join(format!(
+        "{}.pdf",
+        source.file_stem().and_then(|stem| stem.to_str()).unwrap_or("converted")
+    ));
+
     let result = Command::new(program)
         .arg("--headless")
         .arg("--convert-to")
@@ -188,16 +193,19 @@ fn libreoffice_export(program: &Path, source: &Path, target: &Path) -> Result<()
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .output();
-    let made = staging.join(format!(
-        "{}.pdf",
-        source.file_stem().and_then(|stem| stem.to_str()).unwrap_or("converted")
-    ));
-    let _ = std::fs::remove_dir_all(&staging);
-    match result {
-        Ok(output) if output.status.success() && made.is_file() => {
-            std::fs::rename(&made, target).map_err(|_| DocError::WriteError)
-        }
-        _ => Err(DocError::OfficeFailed),
+
+    // The file is taken out of the staging folder before the folder is
+    // swept away. The check has to be said while the file is still there:
+    // a staging folder removed first would make every export look like an
+    // export that never happened, however well it went.
+    let exported = matches!(&result, Ok(output) if output.status.success());
+    if exported && made.is_file() {
+        let moved = std::fs::rename(&made, target);
+        let _ = std::fs::remove_dir_all(&staging);
+        moved.map_err(|_| DocError::WriteError)
+    } else {
+        let _ = std::fs::remove_dir_all(&staging);
+        Err(DocError::OfficeFailed)
     }
 }
 
@@ -243,6 +251,28 @@ mod tests {
         // nothing installed says false rather than pretending.
         let _ = registered("Word.Application");
         let _ = registered("Excel.Application");
+    }
+
+    /// A program of the test's own that behaves the way LibreOffice does:
+    /// it is asked headlessly for a pdf of its source, it writes the pdf
+    /// into the folder of the `--outdir` argument, and it says whether it
+    /// made it. The tests drive the real chain with it, since LibreOffice
+    /// itself is not asked to be installed on every machine.
+    fn a_libreoffice(kind: &str) -> PathBuf {
+        let script = if kind == "making" {
+            "@echo off\r\nfor %%I in (\"%~6\") do (\r\n  echo %%PDF-1.4 fake> \"%~5\\%%~nI.pdf\"\r\n)\r\nexit /b 0\r\n"
+        } else {
+            "@echo off\r\nexit /b 1\r\n"
+        };
+        let folder = std::env::temp_dir().join(format!(
+            "open-tangerine-documents2-{}-{kind}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).expect("the stub folder could be made");
+        let program = folder.join("fake-soffice.cmd");
+        std::fs::write(&program, script).expect("the stub could be written");
+        program
     }
 
     /// A folder of its own for a test, removed when the test is over.
@@ -370,5 +400,54 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
         to_pdf(&xlsx, &pdf).expect("Excel exported the pdf");
         let made = std::fs::read(&pdf).expect("the pdf is there");
         assert!(made.starts_with(b"%PDF"), "the result is a PDF");
+    }
+
+    /// An export that the program said it made is taken out of its
+    /// staging folder before the folder is swept away, and the file is
+    /// at its name, whole. An export is never said to have failed
+    /// because its staging folder was tidied before its result was
+    /// looked at.
+    #[test]
+    fn a_libreoffice_export_is_taken_out_of_its_staging_before_the_staging_falls_away() {
+        let program = a_libreoffice("making");
+        let folder = TempFolder::new("libre-making");
+        let source = folder.path.join("letter.docx");
+        office_file(&source, &[("word/document.xml", "<doc/>")]);
+        let target = folder.path.join("letter.pdf");
+
+        let made = libreoffice_export(&program, &source, &target);
+        assert!(made.is_ok(), "the export was made whole: {made:?}");
+
+        let pdf = std::fs::read(&target).expect("the pdf is at its name");
+        assert!(pdf.starts_with(b"%PDF"), "the exported file is the pdf");
+
+        // Nothing of the staging is left where the person's file is.
+        let leftovers = std::fs::read_dir(&folder.path)
+            .expect("the folder is there")
+            .filter_map(|entry| entry.ok())
+            .any(|entry| entry.file_name().to_string_lossy().starts_with('.'));
+        assert!(!leftovers, "no staging folder was left behind");
+    }
+
+    /// When the program says it made nothing, that is said, and the
+    /// staging goes with it: no half-made result and no staging folder
+    /// left behind.
+    #[test]
+    fn a_libreoffice_export_that_made_nothing_takes_its_staging_with_it() {
+        let program = a_libreoffice("failing");
+        let folder = TempFolder::new("libre-failing");
+        let source = folder.path.join("letter.docx");
+        office_file(&source, &[("word/document.xml", "<doc/>")]);
+        let target = folder.path.join("letter.pdf");
+
+        let made = libreoffice_export(&program, &source, &target);
+        assert_eq!(made, Err(DocError::OfficeFailed));
+
+        assert!(!target.exists(), "no half-made result was left at the name");
+        let leftovers = std::fs::read_dir(&folder.path)
+            .expect("the folder is there")
+            .filter_map(|entry| entry.ok())
+            .any(|entry| entry.file_name().to_string_lossy().starts_with('.'));
+        assert!(!leftovers, "no staging folder was left behind");
     }
 }

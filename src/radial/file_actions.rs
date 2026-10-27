@@ -6,7 +6,7 @@
 //! The work happens on a worker, never on the thread that draws.
 
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -15,6 +15,15 @@ use crate::media::publish::Publisher;
 use crate::radial::execution::{Failure, Handler, Outcome, Request};
 use crate::radial::registry::operation_by_id;
 use crate::radial::selection::Selection;
+
+/// The most an extraction may take out of an archive, in bytes.
+///
+/// An archive of the user's own is asked to come out whole. A dishonest
+/// one — the famous zip bomb — says it is small and comes out endless,
+/// and an extraction that pours such a thing onto the disk takes the
+/// whole of it with it. What would come out beyond this is refused, with
+/// an error that says why, and nothing is left beside the original.
+const ARCHIVE_EXTRACT_LIMIT: u64 = 512 * 1024 * 1024;
 
 /// The handler for file actions.
 pub struct FileActions<P: Publisher> {
@@ -144,16 +153,31 @@ impl<P: Publisher> FileActions<P> {
         }
         fs::create_dir_all(&target_dir).map_err(|_| FileActionError::WriteError)?;
 
-        let file = fs::File::open(input).map_err(|_| FileActionError::ReadError)?;
+        let file = match fs::File::open(input) {
+            Ok(file) => file,
+            Err(_) => {
+                // Nothing could be read, so nothing is left behind either.
+                let _ = fs::remove_dir_all(&target_dir);
+                return Err(FileActionError::ReadError);
+            }
+        };
 
-        match ext.as_str() {
-            "zip" => extract_zip(file, &target_dir)?,
-            "tar" => extract_tar(file, &target_dir)?,
-            "gz" => extract_gz(file, &target_dir)?,
-            _ => return Err(FileActionError::UnsupportedKind),
+        let outcome = match ext.as_str() {
+            "zip" => extract_zip(file, &target_dir, ARCHIVE_EXTRACT_LIMIT),
+            "tar" => extract_tar(file, &target_dir, ARCHIVE_EXTRACT_LIMIT),
+            "gz" => extract_gz(file, &target_dir, ARCHIVE_EXTRACT_LIMIT),
+            _ => Err(FileActionError::UnsupportedKind),
+        };
+        match outcome {
+            Ok(()) => Ok(target_dir),
+            Err(reason) => {
+                // An extraction that did not come whole leaves nothing: the
+                // folder beside the original goes with the refusal, so what
+                // is left behind is never mistaken for what was made.
+                let _ = fs::remove_dir_all(&target_dir);
+                Err(reason)
+            }
         }
-
-        Ok(target_dir)
     }
 }
 
@@ -165,6 +189,8 @@ pub enum FileActionError {
     WriteError,
     UnsupportedKind,
     ReadError,
+    /// The archive comes out much bigger than an honest one would.
+    ArchiveTooLarge,
 }
 
 impl FileActionError {
@@ -175,13 +201,39 @@ impl FileActionError {
             FileActionError::WriteError => "the result could not be written",
             FileActionError::UnsupportedKind => "this action does not work on this kind of file",
             FileActionError::ReadError => "the source file could not be read",
+            FileActionError::ArchiveTooLarge => {
+                "the archive comes out bigger than an extraction may take"
+            }
         }
     }
 }
 
+/// Copies no more than `remaining` bytes of a stream into a file, and
+/// looks one byte further afterwards.
+///
+/// A stream that still has something after the share is bigger than was
+/// allowed, whatever its header said: the whole extraction is refused,
+/// because taking only the part that fits would leave a false file
+/// behind.
+fn copy_capped<R: Read, W: Write>(
+    from: &mut R,
+    to: &mut W,
+    remaining: u64,
+) -> Result<u64, FileActionError> {
+    let mut limited = from.take(remaining);
+    let copied = std::io::copy(&mut limited, to).map_err(|_| FileActionError::WriteError)?;
+    let mut one_more = [0u8; 1];
+    let more = from.read(&mut one_more).map_err(|_| FileActionError::ReadError)?;
+    if more > 0 {
+        return Err(FileActionError::ArchiveTooLarge);
+    }
+    Ok(copied)
+}
+
 /// Extract a ZIP archive into a directory.
-fn extract_zip(file: fs::File, target_dir: &Path) -> Result<(), FileActionError> {
+fn extract_zip(file: fs::File, target_dir: &Path, limit: u64) -> Result<(), FileActionError> {
     let mut archive = zip::ZipArchive::new(file).map_err(|_| FileActionError::UnsupportedKind)?;
+    let mut total = 0u64;
     for i in 0..archive.len() {
         let mut file = archive.by_index(i).map_err(|_| FileActionError::UnsupportedKind)?;
         if file.is_dir() {
@@ -191,19 +243,26 @@ fn extract_zip(file: fs::File, target_dir: &Path) -> Result<(), FileActionError>
         let Some(enclosed) = file.enclosed_name() else {
             continue;
         };
+        // The directory of the zip says how long the file is once it comes
+        // out. A claim beyond what still fits is refused before anything
+        // is poured, and the pour is cut as well, for a file whose
+        // header does not say the truth.
+        if total + file.size() > limit {
+            return Err(FileActionError::ArchiveTooLarge);
+        }
         let out_path = target_dir.join(enclosed);
         if let Some(parent) = out_path.parent() {
             fs::create_dir_all(parent).map_err(|_| FileActionError::WriteError)?;
         }
         let mut out_file = fs::File::create(&out_path).map_err(|_| FileActionError::WriteError)?;
-        std::io::copy(&mut file, &mut out_file).map_err(|_| FileActionError::WriteError)?;
+        total += copy_capped(&mut file, &mut out_file, limit - total)?;
     }
     Ok(())
 }
-
 /// Extract a TAR archive into a directory.
-fn extract_tar(file: fs::File, target_dir: &Path) -> Result<(), FileActionError> {
+fn extract_tar(file: fs::File, target_dir: &Path, limit: u64) -> Result<(), FileActionError> {
     let mut archive = tar::Archive::new(file);
+    let mut total = 0u64;
     for entry in archive.entries().map_err(|_| FileActionError::UnsupportedKind)? {
         let mut entry = entry.map_err(|_| FileActionError::UnsupportedKind)?;
         if entry.header().entry_type().is_dir() {
@@ -214,22 +273,30 @@ fn extract_tar(file: fs::File, target_dir: &Path) -> Result<(), FileActionError>
         if path.components().any(|c| matches!(c, std::path::Component::ParentDir | std::path::Component::Prefix(_) | std::path::Component::RootDir)) {
             continue;
         }
+        // The header of the entry says its length; the claim beyond what
+        // still fits is refused first, and the pour is cut as well, for a
+        // header that does not say the truth.
+        if total + entry.size() > limit {
+            return Err(FileActionError::ArchiveTooLarge);
+        }
         let out_path = target_dir.join(path);
         if let Some(parent) = out_path.parent() {
             fs::create_dir_all(parent).map_err(|_| FileActionError::WriteError)?;
         }
         let mut out_file = fs::File::create(&out_path).map_err(|_| FileActionError::WriteError)?;
-        std::io::copy(&mut entry, &mut out_file).map_err(|_| FileActionError::WriteError)?;
+        total += copy_capped(&mut entry, &mut out_file, limit - total)?;
     }
     Ok(())
 }
 
 /// Extract a GZ archive into a directory (single file).
-fn extract_gz(file: fs::File, target_dir: &Path) -> Result<(), FileActionError> {
+fn extract_gz(file: fs::File, target_dir: &Path, limit: u64) -> Result<(), FileActionError> {
     let mut decoder = flate2::read::GzDecoder::new(file);
     let out_path = target_dir.join("extracted");
     let mut out_file = fs::File::create(&out_path).map_err(|_| FileActionError::WriteError)?;
-    std::io::copy(&mut decoder, &mut out_file).map_err(|_| FileActionError::WriteError)?;
+    // A gz says nothing of how long it comes out: the pour is cut at the
+    // share itself, and one byte further is looked for.
+    copy_capped(&mut decoder, &mut out_file, limit)?;
     Ok(())
 }
 
@@ -598,10 +665,115 @@ mod tests {
         let target_dir = folder.path.join("out");
         fs::create_dir_all(&target_dir).unwrap();
         let file = fs::File::open(&zip_path).unwrap();
-        let _ = extract_zip(file, &target_dir);
+        let _ = extract_zip(file, &target_dir, ARCHIVE_EXTRACT_LIMIT);
 
         // Verify the file was NOT written outside target_dir
         assert!(!folder.path.join("outside.txt").exists(), "Zip slip successfully prevented!");
+        folder.try_clear();
+    }
+
+    /// The share of an extraction, small enough for a test to fill. The
+    /// shape of the check is the same at every size, so the tests run the
+    /// same code with a share a test can pour past.
+    fn a_small_share() -> u64 {
+        1 << 20
+    }
+
+    /// An extraction that would come out beyond its share is refused, and
+    /// one within the share comes out whole.
+    #[test]
+    fn an_extraction_that_would_come_out_beyond_its_share_is_refused() {
+        use std::io::Write as _;
+
+        let limit = a_small_share();
+        let beyond = vec![0u8; limit as usize + 1];
+        let within = vec![0u8; limit as usize];
+        let folder = TempFolder::new("over_the_share");
+
+        // Rooms for the extraction, as the action itself makes them
+        // before it calls these parts.
+        for room in ["out", "out.gz", "out.ok"] {
+            fs::create_dir_all(folder.path.join(room)).expect("the test room was made");
+        }
+
+        // A zip whose file claims, in its directory, to be longer than
+        // the share is refused from the claim alone.
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        writer
+            .start_file("big.bin", zip::write::FileOptions::default())
+            .expect("the file was started");
+        writer.write_all(&beyond).expect("the file was poured");
+        let archive = writer.finish().expect("the zip was finished").into_inner();
+        fs::write(folder.path.join("over.zip"), &archive).expect("the test zip was written");
+        let refused = fs::File::open(folder.path.join("over.zip"))
+            .map_err(|_| FileActionError::ReadError)
+            .and_then(|file| extract_zip(file, &folder.path.join("out"), limit));
+        assert_eq!(
+            refused,
+            Err(FileActionError::ArchiveTooLarge),
+            "a zip beyond the share is refused"
+        );
+
+        // A gz says nothing of its length, so the pour itself is cut
+        // short, and one byte further is looked for.
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        encoder.write_all(&beyond).expect("the stream was poured");
+        let gz = encoder.finish().expect("the gz was finished");
+        fs::write(folder.path.join("over.gz"), &gz).expect("the test gz was written");
+        let refused = fs::File::open(folder.path.join("over.gz"))
+            .map_err(|_| FileActionError::ReadError)
+            .and_then(|file| extract_gz(file, &folder.path.join("out.gz"), limit));
+        assert_eq!(
+            refused,
+            Err(FileActionError::ArchiveTooLarge),
+            "a gz beyond the share is refused"
+        );
+
+        // One within the share comes out whole, with its own bytes.
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        encoder.write_all(&within).expect("the stream was poured");
+        let gz = encoder.finish().expect("the gz was finished");
+        fs::write(folder.path.join("under.gz"), &gz).expect("the test gz was written");
+        let made_whole = fs::File::open(folder.path.join("under.gz"))
+            .map_err(|_| FileActionError::ReadError)
+            .and_then(|file| extract_gz(file, &folder.path.join("out.ok"), limit));
+        made_whole.expect("a gz within the share comes out");
+        let made = fs::read(folder.path.join("out.ok").join("extracted"))
+            .expect("the extracted file was made");
+        assert_eq!(made, within, "nothing of the stream was lost");
+
+        folder.try_clear();
+    }
+
+    /// An extraction that refuses leaves nothing beside the original:
+    /// the folder that was half-made goes with the refusal, so what is
+    /// left behind is never mistaken for what was made.
+    #[test]
+    fn an_extraction_that_refuses_leaves_nothing_beside_the_original() {
+        let actions = FileActions { publisher: Nothing };
+        let folder = TempFolder::new("refused_sweep");
+        // A zip that is no zip at all: the extraction refuses at the
+        // first look.
+        let source = folder.write("strange.zip", "not an archive");
+        let outcome = crate::radial::execution::run(
+            &Request {
+                operation: "actions.extract".to_string(),
+                inputs: vec![source.clone()],
+                ..Default::default()
+            },
+            &Selection::inspect(std::slice::from_ref(&source)),
+            &crate::radial::registry::Environment::none(),
+            &actions,
+        );
+        assert!(
+            matches!(outcome, Outcome::Failed { .. }),
+            "unexpected outcome: {outcome:?}"
+        );
+        let swept = source.with_extension("zip.extracted");
+        assert!(
+            !swept.exists(),
+            "the leftovers of a refused extraction were swept"
+        );
         folder.try_clear();
     }
 }

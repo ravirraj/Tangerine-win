@@ -303,6 +303,12 @@ struct App {
     annotate_window: crate::platform::windows::annotatewindow::AnnotateWindow,
     /// The window a photo's adjustments are configured in, hidden until edit photo is picked.
     edit_image_window: crate::platform::windows::editimagewindow::EditImageWindow,
+    /// The tray icon and its hidden window, when the tray could be had.
+    ///
+    /// The icon is the one part of the program a person can see while it
+    /// waits, and its menu is the way the program can be opened and
+    /// stopped.
+    tray: Option<crate::platform::windows::tray::TrayWindow>,
 }
 
 /// The end of a drag that has not been acted on yet.
@@ -663,6 +669,18 @@ impl App {
             crate::platform::windows::editimagewindow::EditImageWindow::new(edit_image_sender)
                 .map_err(|reason| reason)?;
 
+        // The tray icon is the one part of the program a person can see
+        // while it waits, and its menu is the way the program is opened
+        // and stopped. If the tray cannot be had, the program goes on
+        // without it, and says why.
+        let tray = match crate::platform::windows::tray::TrayWindow::create() {
+            Ok(tray) => Some(tray),
+            Err(reason) => {
+                diagnostics::log(Level::Warn, "tray", &reason);
+                None
+            }
+        };
+
         Ok(Self {
             controller,
             animation: WheelAnimation::new(),
@@ -724,6 +742,7 @@ impl App {
             collage_window,
             annotate_window,
             edit_image_window,
+            tray,
         })
     }
 
@@ -1994,6 +2013,31 @@ impl App {
         Some(cursor)
     }
 
+    /// Acts on what the tray icon asked of the application.
+    ///
+    /// The icon's window queues the choices, and this takes them in the
+    /// order they were made. Asking for the wheel opens the wheel for the
+    /// pointer, with no files in it, exactly as the development shortcut
+    /// does; asking to stop leaves the stopping to the run loop, which
+    /// puts everything down in the order it belongs.
+    fn handle_tray(&mut self) {
+        let choices = match self.tray.as_ref() {
+            Some(tray) => tray.drain(),
+            None => return,
+        };
+        for choice in choices {
+            match choice {
+                crate::platform::windows::tray::TrayCommand::Open => {
+                    self.open_development_wheel();
+                }
+                crate::platform::windows::tray::TrayCommand::Exit => {
+                    diagnostics::log(Level::Info, "tray", "the tray asked for the program to stop");
+                    self.quit = true;
+                }
+            }
+        }
+    }
+
     /// Handles what the overlay window reports.
     fn handle_overlay_event(&mut self, event: OverlayEvent) {
         match event {
@@ -2230,6 +2274,26 @@ impl App {
             return;
         };
 
+        // The wheel follows the scale of the display it is on. The scale
+        // was only ever read once, when the program was started; a wheel
+        // opened on a display scaled differently from the one it was born
+        // on would have opened at the first display's size. The scale is
+        // read again here, where the wheel is about to be placed, and the
+        // window and its buffer take the size the display asks for.
+        let scale = detect_scale(centre);
+        if (scale - self.scale).abs() > f32::EPSILON * 8.0 {
+            diagnostics::log(
+                Level::Info,
+                "wheel",
+                &format!(
+                    "the wheel is drawn at the scale {:.2} of the display it stands on, it was {:.2}",
+                    scale, self.scale
+                ),
+            );
+            self.ui.resize_for(scale);
+            self.scale = scale;
+        }
+
         // The shape of the wheel follows the number of segments, and that
         // number can change while the wheel is up. So the shape is worked out
         // every time. The window is only moved when the place really changes:
@@ -2268,6 +2332,20 @@ impl App {
         self.overlay_origin = (x, y);
         self.overlay
             .place(x, y, disc.round() as u32, disc.round() as u32);
+        // The window has to be where the wheel belongs before anything is
+        // drawn into it. A move that Windows refused is said out loud, and
+        // the complaint is dealt with the way every other complaint of the
+        // overlay is: the interaction is told of the failure, and the
+        // notice machinery takes over, exactly as when the wheel could not
+        // be drawn. Without this the app would believe the wheel was
+        // placed, and never place it again.
+        if !self.overlay.is_placed() {
+            diagnostics::error("wheel", "the wheel could not be placed on the screen");
+            self.dispatch(InteractionEvent::Failed {
+                reason: "the wheel could not be placed".to_string(),
+            });
+            return;
+        }
 
         if !self.placement_logged {
             self.placement_logged = true;
@@ -2431,6 +2509,7 @@ pub fn run(options: Options) -> Result<(), String> {
             for event in app.overlay.drain_input() {
                 app.handle_overlay_event(event);
             }
+            app.handle_tray();
         }
         if app.quit {
             break;
@@ -2439,6 +2518,12 @@ pub fn run(options: Options) -> Result<(), String> {
 
     timer.stop();
     app.overlay.hide();
+    // The icon goes off the screen while the program is still here to
+    // remove it, so nothing is left on the tray of a program that has
+    // stopped.
+    if let Some(tray) = app.tray.take() {
+        tray.remove();
+    }
     if app.ole.is_ok() {
         // SAFETY: this thread started OLE, so this thread ends it.
         unsafe {

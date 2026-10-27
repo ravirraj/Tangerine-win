@@ -25,14 +25,17 @@
 
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
 
 use slint::platform::software_renderer::MinimalSoftwareWindow;
 use slint::platform::{PointerEventButton, WindowAdapter, WindowEvent};
 use slint::{LogicalPosition, PhysicalSize, SharedPixelBuffer};
+use std::ffi::OsString;
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{BeginPaint, CreateSolidBrush, InvalidateRect};
+use windows::Win32::Media::Multimedia::mciSendStringW;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::AdjustWindowRectExForDpi;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
@@ -50,6 +53,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 use crate::media::frames::{duration_of, frame_at, pillar_of};
 use crate::media::locator;
+use crate::media::runner::{ProcessRunner, SystemRunner};
 use crate::platform::windows::toolwindow::ToolEvent;
 use crate::platform::windows::windowhost::{
     fixed_style, fraction, scale_factor, screen_scale, timecode, to_wide,
@@ -63,9 +67,21 @@ const FADE_TIMER_ID: usize = 52;
 /// The timer the strip is waited on with.
 const STRIP_TIMER_ID: usize = 54;
 
+/// The timer the play of the preview is walked by: a step of the video
+/// is shown once every tick of it, and it is let go of when the walk
+/// ends or the person takes the playhead back.
+const PLAY_TIMER_ID: usize = 55;
+
+/// How much video a step of the play is, and how often it is taken: a
+/// quarter of a second of the video every quarter of a second, the pace
+/// of the video itself. Every step is a seek of the conversion program,
+/// so the steps are no smaller than a seek is worth.
+const PLAY_TICK_MS: u32 = 250;
+const PLAY_STEP: f64 = 0.25;
+
 /// The card's width, in the drawing's own units.
 const CARD_W: i32 = 420;
-/// The least and the most a preview may be tall, so a landscape video
+/// The least a preview may be tall, so a landscape video
 /// keeps its shape and a portrait one does not tower.
 const PREVIEW_MIN: f32 = 190.0;
 const PREVIEW_MAX: f32 = 300.0;
@@ -140,6 +156,10 @@ struct TrimState {
     end: f64,
     playhead: f64,
     dragging: Drag,
+    /// Whether the preview is being played right now: the play's own
+    /// bell walks the playhead a step every tick, until the card's out
+    /// point says no more or the person takes the playhead back.
+    playing: bool,
     /// Where the frame showing was taken, so it is only asked for again
     /// when the playhead has truly moved.
     frame_at: f64,
@@ -175,6 +195,12 @@ struct TrimState {
     /// from the equal row: "each about 0:01.13". A cut added by hand or
     /// taken away leaves, and the saying is gone.
     equal_saying: Option<String>,
+    /// The name the sound of an audio play is spoken under, in the
+    /// media control interface. None says nothing is being played.
+    mci_alias: Option<String>,
+    /// The cut-out wav an audio play speaks from. It is taken back when
+    /// the play is put down.
+    play_sound: Option<PathBuf>,
 }
 
 impl Default for TrimState {
@@ -185,6 +211,7 @@ impl Default for TrimState {
             end: 0.0,
             playhead: 0.0,
             dragging: Drag::Nothing,
+            playing: false,
             frame_at: f64::NEG_INFINITY,
             preview_units: 236.0,
             ffmpeg: None,
@@ -198,6 +225,8 @@ impl Default for TrimState {
             points: Vec::new(),
             parts: 2,
             equal_saying: None,
+            mci_alias: None,
+            play_sound: None,
         }
     }
 }
@@ -393,6 +422,19 @@ unsafe fn wear_strip(piece: StripPiece) {
 /// The window handle, if there is one.
 fn window_handle() -> HWND {
     HWND(WINDOW.get() as *mut _)
+}
+
+/// Draws what the card has, if the window the drawing was made for is
+/// the one asked.
+fn draw_window(window: HWND) {
+    HOST.with(|slot| {
+        let mut borrowed = slot.borrow_mut();
+        if let Some(host) = borrowed.as_mut() {
+            if host.window == window {
+                host.draw();
+            }
+        }
+    });
 }
 
 /// The window, its card, and the buffer the card is drawn into.
@@ -715,6 +757,7 @@ impl TimelineWindow {
                 end: duration,
                 playhead: 0.0,
                 dragging: Drag::Nothing,
+                playing: false,
                 frame_at: 0.0,
                 preview_units,
                 ffmpeg: ffmpeg.clone(),
@@ -728,6 +771,8 @@ impl TimelineWindow {
                 parts: PARTS_MIN,
                 equal_saying: None,
                 shots_taken: Vec::new(),
+                mci_alias: None,
+                play_sound: None,
             };
         });
         // The strip of the video's own moments is asked for apart: it is
@@ -958,14 +1003,6 @@ impl Host {
             self.width,
             self.height,
         );
-    }
-
-    /// Tells the card where the pointer is and what it did, and draws
-    /// what came of it.
-    fn pointer(&mut self, event: WindowEvent) {
-        self.software.window().dispatch_event(event);
-        self.software.request_redraw();
-        self.draw();
     }
 }
 
@@ -1574,6 +1611,9 @@ fn timeline_touched(window: HWND, x: i32, y: i32, pressed: bool) {
                 };
             }
         });
+        // Whatever the press took, the person is taking the pointer's own
+        // turn at where things stand: a play that was walking stands down.
+        unsafe { halt_play(window) };
         unsafe { let _ = SetCapture(window); };
     }
 
@@ -1585,15 +1625,24 @@ fn timeline_touched(window: HWND, x: i32, y: i32, pressed: bool) {
         let share = ((x - bar.left) as f64 / (bar.right - bar.left) as f64).clamp(0.0, 1.0);
         let moment = share * state.duration;
         match state.dragging {
-            Drag::Start => state.start = moment.min(state.end - MIN_SPAN).max(0.0),
-            Drag::End => state.end = moment.max(state.start + MIN_SPAN).min(state.duration),
+            Drag::Start => {
+                state.start = moment.min(state.end - MIN_SPAN).max(0.0);
+                // The preview follows the cap being dragged: what the
+                // playhead stands on is what the card would take, so the
+                // person can see the cut they are making.
+                state.playhead = state.start;
+            }
+            Drag::End => {
+                state.end = moment.max(state.start + MIN_SPAN).min(state.duration);
+                state.playhead = state.end;
+            }
             Drag::Playhead => state.playhead = moment,
             Drag::Nothing => {}
         }
         true
     });
     if moved {
-        let scrubbing = STATE.with(|slot| slot.borrow().dragging) == Drag::Playhead;
+        let scrubbing = STATE.with(|slot| slot.borrow().dragging) != Drag::Nothing;
         if scrubbing {
             refresh_frame(false);
         }
@@ -1637,6 +1686,51 @@ fn released(window: HWND) {
 /// Steps the handle the keyboard is on, back or forward a second — or
 /// five, when Shift is held. A split card has no handles: the playhead
 /// moves.
+/// Plays the preview from where the playhead stands, a step every tick
+/// of the play's bell, until the card's out point; playing again stops
+/// the walk where it stands. A walk that stands at or past the out point
+/// starts over at the card's in point, so there is something to show.
+unsafe fn toggle_play(window: HWND) {
+    let (started, halted) = STATE.with(|slot| {
+        let mut state = slot.borrow_mut();
+        if state.playing {
+            state.playing = false;
+            return (false, true);
+        }
+        if state.duration <= 0.0 {
+            return (false, false);
+        }
+        if state.playhead >= state.end - 0.001 {
+            state.playhead = state.start.max(0.0);
+        }
+        state.playing = true;
+        (true, false)
+    });
+    if started {
+        unsafe { let _ = SetTimer(Some(window), PLAY_TIMER_ID, PLAY_TICK_MS, None); };
+    }
+    if halted {
+        unsafe { let _ = KillTimer(Some(window), PLAY_TIMER_ID); };
+    }
+    unsafe { let _ = InvalidateRect(Some(window), None, true); };
+}
+
+/// Stops the walk of the preview where it stands, if one is walking.
+/// Everything that takes the playhead back from the play - a press on
+/// the bar, the go, the no - says this first. The sound of an audio
+/// card's play goes with the walk.
+unsafe fn halt_play(window: HWND) {
+    let was = STATE.with(|slot| {
+        let was = slot.borrow().playing;
+        slot.borrow_mut().playing = false;
+        was
+    });
+    if was {
+        unsafe { let _ = KillTimer(Some(window), PLAY_TIMER_ID); };
+    }
+    close_play_sound();
+}
+
 unsafe fn step(window: HWND, direction: f64) {
     let shift = unsafe { GetKeyState(VK_SHIFT.0 as i32) < 0 };
     let focused = FOCUS_INDEX.with(|slot| slot.get());
@@ -1651,8 +1745,16 @@ unsafe fn step(window: HWND, direction: f64) {
             state.playhead = (state.playhead + by).clamp(0.0, state.duration);
         } else {
             match focused {
-                0 => state.start = (state.start + by).clamp(0.0, state.end - MIN_SPAN),
-                1 => state.end = (state.end + by).clamp(state.start + MIN_SPAN, state.duration),
+                0 => {
+                    state.start = (state.start + by).clamp(0.0, state.end - MIN_SPAN);
+                    // The steps show what they step: the playhead stands
+                    // on the cap being moved, the way a drag of it does.
+                    state.playhead = state.start;
+                }
+                1 => {
+                    state.end = (state.end + by).clamp(state.start + MIN_SPAN, state.duration);
+                    state.playhead = state.end;
+                }
                 _ => state.playhead = (state.playhead + by).clamp(0.0, state.duration),
             }
         }
@@ -1755,8 +1857,224 @@ unsafe fn toggle_silence(window: HWND) {
 }
 
 /// Preview playback affordance for the selected range.
-unsafe fn play_selection(_window: HWND) {
-    // Affordance for media playback
+/// Says one sentence to the media control interface, or says the code
+/// it answered with.
+///
+/// The playing of a sound is spoken in sentences: an open, a play, a
+/// stop, a close. An answer of zero means it was taken; any other
+/// answer is the interface saying no.
+fn mci_say(sentence: &str) -> Result<(), u32> {
+    let mut words: Vec<u16> = sentence.encode_utf16().collect();
+    words.push(0);
+    let code = unsafe {
+        mciSendStringW(
+            PCWSTR::from_raw(words.as_ptr()),
+            None,
+            None,
+        )
+    };
+    if code == 0 {
+        Ok(())
+    } else {
+        Err(code)
+    }
+}
+
+/// Asks the media control interface a question, and brings its answer
+/// back. None says the interface said no, or nothing.
+#[cfg(test)]
+fn mci_ask(sentence: &str) -> Option<String> {
+    let mut asked: Vec<u16> = sentence.encode_utf16().collect();
+    asked.push(0);
+    // The answer is asked of the interface into a held-out row of
+    // words; an answer begins with zero code and ends with a nothing
+    // word.
+    let mut answer = [0u16; 160];
+    let code = unsafe {
+        mciSendStringW(
+            PCWSTR::from_raw(asked.as_ptr()),
+            Some(&mut answer),
+            None,
+        )
+    };
+    if code != 0 {
+        return None;
+    }
+    let spoken = answer
+        .iter()
+        .copied()
+        .take_while(|word| *word != 0)
+        .collect::<Vec<u16>>();
+    String::from_utf16(&spoken).ok()
+}
+
+/// A name of the sound's own in the media control interface: one play's
+/// own, and only that play's. The names are counted, because the
+/// interface hears every window's plays the same.
+static PLAY_VOICES: AtomicU64 = AtomicU64::new(0);
+
+/// Takes the playing sound back: the interface is told to stop and put
+/// the name down, and the cut the sound spoke from is taken away.
+///
+/// Doing nothing when nothing was played is part of the work: every
+/// putting-down of a walk says this, whichever kind of card it walked.
+fn close_play_sound() {
+    let (alias, cut) = STATE.with(|slot| {
+        let mut state = slot.borrow_mut();
+        (
+            state.mci_alias.take(),
+            state.play_sound.take(),
+        )
+    });
+    if let Some(alias) = alias {
+        let _ = mci_say(&format!("stop {alias}"));
+        let _ = mci_say(&format!("close {alias}"));
+    }
+    if let Some(cut) = cut {
+        let _ = std::fs::remove_file(&cut);
+    }
+}
+
+/// Plays the card's chosen stretch of a sound, and walks the playhead
+/// with the sound.
+///
+/// Saying play again puts the play down, the sound with it. The stretch
+/// is cut out of the file into a wav of the play's own first (so every
+/// kind of sound a card can stand can be heard), and the media control
+/// interface speaks the wav; the walk — the same walk the frames of a
+/// video take — carries the minutes row along while the sound stands,
+/// and puts itself down at the stretch's out end.
+///
+/// The cut is real work the window waits on: a moment, the way the
+/// card's own coming in was.
+unsafe fn play_selection(window: HWND) {
+    // Saying play again is saying stop: the play is put down, the
+    // sound with it.
+    let was = STATE.with(|slot| slot.borrow().playing);
+    if was {
+        unsafe { halt_play(window) };
+        return;
+    }
+
+    // Only a card of sound has a play to say, and only when it has a
+    // stretch said of it and the conversion program to cut with.
+    let job = STATE.with(|slot| {
+        let state = slot.borrow();
+        if !state.audio
+            || state.ffmpeg.is_none()
+            || state.input.as_os_str().is_empty()
+            || state.duration <= 0.0
+            || state.end <= state.start
+        {
+            return None;
+        }
+        Some((
+            state.ffmpeg.clone().expect("the tools stood"),
+            state.input.clone(),
+            state.start,
+            state.end,
+        ))
+    });
+    let Some((tools, input, from, to)) = job else {
+        // No stretch to play: the card stands still, and says nothing.
+        return;
+    };
+
+    // The stretch is cut into a wav of the play's own, near nothing the
+    // user owns: a work file of the temp folder, named with this
+    // program's id and the play's count, so two plays of two windows
+    // can never pour into one another's bucket. A play's cut is taken
+    // back when its play is put down.
+    let voice = PLAY_VOICES.fetch_add(1, Ordering::Relaxed);
+    let cut = std::env::temp_dir().join(format!(
+        "tangerine-trim-play-{}.{}.wav",
+        std::process::id(),
+        voice
+    ));
+    let alias = format!("tangerine_play_{}.{}", std::process::id(), voice);
+    let span_ms = ((to - from) * 1000.0).round().max(1.0) as i64;
+    let from_s = format!("{:.3}", from.max(0.0));
+    let span_s = format!("{:.3}", (to - from).max(0.001));
+    let input_name = input.to_string_lossy().into_owned();
+    let cut_name = cut.to_string_lossy().into_owned();
+    let arguments = [
+        "-hide_banner",
+        "-nostdin",
+        "-y",
+        "-ss",
+        &from_s,
+        "-i",
+        &input_name,
+        "-t",
+        &span_s,
+        "-vn",
+        "-c:a",
+        "pcm_s16le",
+        &cut_name,
+    ]
+    .iter()
+    .map(|word| OsString::from(*word))
+    .collect::<Vec<OsString>>();
+    let made = SystemRunner.run(&tools.ffmpeg, &arguments, None);
+    match made {
+        Ok(answer) if answer.succeeded() => {}
+        Ok(answer) => {
+            crate::diagnostics::log(
+                crate::diagnostics::Level::Warn,
+                "action",
+                &format!(
+                    "the stretch could not be cut to be played: the program said {}",
+                    answer.status.map(|code| code.to_string()).unwrap_or_else(|| "no answer".into())
+                ),
+            );
+            let _ = std::fs::remove_file(&cut);
+            return;
+        }
+        Err(reason) => {
+            crate::diagnostics::log(
+                crate::diagnostics::Level::Warn,
+                "action",
+                &format!("the stretch could not be cut to be played: {reason}"),
+            );
+            let _ = std::fs::remove_file(&cut);
+            return;
+        }
+    }
+
+    // The sound is spoken under the play's own name. Where no wave
+    // device stands to hear it, the say says so, and the walk still
+    // runs: the play of a card is the preview of it, and the minutes
+    // row is what it carries.
+    STATE.with(|slot| {
+        let mut state = slot.borrow_mut();
+        state.mci_alias = Some(alias.clone());
+        state.play_sound = Some(cut.clone());
+    });
+    let open = mci_say(&format!(
+        "open \"{}\" type waveaudio alias {alias}",
+        cut.display()
+    ))
+    .and_then(|_| mci_say(&format!("play {alias} from 0 to {span_ms}")));
+    if let Err(code) = open {
+        crate::diagnostics::log(
+            crate::diagnostics::Level::Warn,
+            "action",
+            &format!("the play could not be heard: mci said {code}"),
+        );
+        close_play_sound();
+    }
+
+    // The walk of it: stood at the in point, walking, the same bell the
+    // frames walk by.
+    STATE.with(|slot| {
+        let mut state = slot.borrow_mut();
+        state.playhead = from.max(0.0);
+        state.playing = true;
+    });
+    refresh_frame(false);
+    refresh_times();
+    unsafe { let _ = SetTimer(Some(window), PLAY_TIMER_ID, PLAY_TICK_MS, None); };
+    unsafe { let _ = InvalidateRect(Some(window), None, true); };
 }
 
 /// Takes away the cut nearest the playhead, when one stands near enough.
@@ -1981,7 +2299,11 @@ unsafe extern "system" fn window_procedure(
                 _ => released(window),
             }
             // The card still sees the pointer, for the hover of its
-            // buttons.
+            // buttons. The telling is not done while the host is held:
+            // a button under the pointer answers the moment the card
+            // hears of it, and its answer steps the card or flips a rail
+            // of its own, which reads the host again — and asking for a
+            // borrow that is already held falls with everything else.
             let position = LogicalPosition::new(x as f32, y as f32);
             let event = match message {
                 WM_LBUTTONDOWN => WindowEvent::PointerPressed {
@@ -1994,12 +2316,16 @@ unsafe extern "system" fn window_procedure(
                 },
                 _ => WindowEvent::PointerMoved { position },
             };
-            HOST.with(|slot| {
-                let mut borrowed = slot.borrow_mut();
-                if let Some(host) = borrowed.as_mut() {
-                    host.pointer(event);
-                }
+            let told = HOST.with(|slot| {
+                let borrowed = slot.borrow();
+                borrowed.as_ref().map(|host| (host.software.clone(), host.window))
             });
+            let Some((software, told_window)) = told else {
+                return LRESULT(0);
+            };
+            software.window().dispatch_event(event);
+            software.request_redraw();
+            draw_window(told_window);
             LRESULT(0)
         }
         WM_KEYDOWN => {
@@ -2039,8 +2365,15 @@ unsafe extern "system" fn window_procedure(
                         2 => unsafe { set_equal(window) },
                         _ => unsafe { run(window) },
                     }
-                } else {
+                } else if key == VK_RETURN.0 {
+                    // Enter says go on every card, as it always did.
                     unsafe { run(window) };
+                } else {
+                    // A trim of a video: Space plays the preview where it
+                    // stands, the way a player does, and playing again
+                    // stops the walk. The go of the card is said with
+                    // Enter alone.
+                    unsafe { toggle_play(window) };
                 }
                 LRESULT(0)
             } else if key == VK_ESCAPE.0 {
@@ -2079,6 +2412,33 @@ unsafe extern "system" fn window_procedure(
                 if matches!(tick, StripTick::Gone) {
                     let _ = unsafe { KillTimer(Some(window), STRIP_TIMER_ID) };
                 }
+            } else if wparam.0 == PLAY_TIMER_ID {
+                // A step of the walk: the playhead is stood a step on, and
+                // the frame of it comes with the times said of it. The
+                // walk ends at the card's out point; the bell is let go of
+                // and the playhead stays where the walk got to.
+                let walking = STATE.with(|slot| {
+                    let mut state = slot.borrow_mut();
+                    if !state.playing || state.duration <= 0.0 {
+                        state.playing = false;
+                        return false;
+                    }
+                    state.playhead = (state.playhead + PLAY_STEP).min(state.end);
+                    state.playing = state.playhead < state.end;
+                    true
+                });
+                if walking {
+                    refresh_frame(false);
+                    refresh_times();
+                }
+                if !STATE.with(|slot| slot.borrow().playing) {
+                    // The walk is done; the sound it walked by goes with
+                    // it — the say of an audio play is taken back here
+                    // when it walked to its own end.
+                    unsafe { let _ = KillTimer(Some(window), PLAY_TIMER_ID); };
+                    close_play_sound();
+                }
+                unsafe { let _ = InvalidateRect(Some(window), None, true); };
             }
             LRESULT(0)
         }
@@ -2099,6 +2459,8 @@ unsafe extern "system" fn window_procedure(
 /// Runs what the window was open for, with the range the handles hold —
 /// or, when the window is asked for a split, with the cuts standing.
 unsafe fn run(window: HWND) {
+    // The person said go: a play that was walking stands down.
+    unsafe { halt_play(window) };
     cancel_strip_worker();
     let (split, shots, empty_points) = STATE.with(|slot| {
         let state = slot.borrow();
@@ -2172,6 +2534,7 @@ unsafe fn run(window: HWND) {
 
 /// Says no to what the window was open for, and puts it away.
 unsafe fn cancel(window: HWND) {
+    unsafe { halt_play(window) };
     cancel_strip_worker();
     send(ToolEvent::Cancelled);
     unsafe { let _ = ShowWindow(window, SW_HIDE); };
@@ -2633,6 +2996,164 @@ mod show_tests {
         window.hide();
     }
 
+    /// Saying play on an audio card begins the walk of the selection:
+    /// the playhead stands where the stretch's in end stands, the walk
+    /// is said as walking, and the stretch is cut to a sound of the
+    /// play's own to be heard. Saying play again puts the play down, and
+    /// the cut the sound spoke from is taken back — nothing of the play
+    /// is left in the temp folder.
+    #[test]
+    fn saying_play_on_an_audio_card_begins_a_walk_of_the_selection() {
+        crate::ui::wheel::install_platform();
+        let folder = std::env::temp_dir().join("open-tangerine-play-selection");
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).expect("the play folder was made");
+        let audio = make_test_audio(&folder);
+        let (sender, _receiver) = std::sync::mpsc::channel();
+        let mut window = TimelineWindow::new(sender).expect("the window was made");
+        // The card's own saying: a sound of two seconds, a stretch said
+        // from 0.4 to 1.2, and the conversion program found where it
+        // stands. The stretch is said on the state the way a real open
+        // of the card would have said it.
+        STATE.with(|slot| {
+            let mut state = slot.borrow_mut();
+            state.audio = true;
+            state.duration = 2.0;
+            state.start = 0.4;
+            state.end = 1.2;
+            state.input = audio.clone();
+            state.ffmpeg = locator::find();
+        });
+
+        unsafe { play_selection(window.window) };
+        STATE.with(|slot| {
+            let state = slot.borrow();
+            assert!(state.playing, "the walk is walking");
+            assert!(
+                (state.playhead - 0.4).abs() < 0.001,
+                "the playhead stood at the stretch's in end, said {}",
+                state.playhead
+            );
+            let cut = state
+                .play_sound
+                .clone()
+                .expect("the cut was said while the play stands");
+            assert!(cut.is_file(), "the cut stood to be heard");
+        });
+
+        // Saying play again puts the play down.
+        unsafe { play_selection(window.window) };
+        STATE.with(|slot| {
+            let state = slot.borrow();
+            assert!(!state.playing, "the walk is put down");
+            assert!(state.mci_alias.is_none(), "the sound's name is taken back");
+            assert!(state.play_sound.is_none(), "the cut is taken back from the saying");
+        });
+        let leftovers: Vec<PathBuf> = std::fs::read_dir(&folder)
+            .expect("the folder is there")
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().map(|ext| ext == "wav").unwrap_or(false))
+            .collect();
+        assert_eq!(
+            leftovers.len(),
+            1,
+            "only the test's own wav stands, yet {} too",
+            leftovers.last().map(|p| p.display().to_string()).unwrap_or_default()
+        );
+        window.hide();
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    /// Saying play on an audio card is heard: the sound stands playing
+    /// by the interface's own word, the walk carries the playhead
+    /// along, and putting the play down takes the sound and its cut
+    /// back with it.
+    #[test]
+    #[ignore = "needs the conversion program; plays real audio"]
+    fn a_play_of_the_selection_is_heard_and_walking() {
+        crate::ui::wheel::install_platform();
+        let folder = std::env::temp_dir().join("open-tangerine-play-heard");
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).expect("the play folder was made");
+        let audio = make_test_audio(&folder);
+        let (sender, _receiver) = std::sync::mpsc::channel();
+        let mut window = TimelineWindow::new(sender).expect("the window was made");
+        STATE.with(|slot| {
+            let mut state = slot.borrow_mut();
+            state.audio = true;
+            state.duration = 2.0;
+            state.start = 0.4;
+            state.end = 1.2;
+            state.input = audio.clone();
+            state.ffmpeg = locator::find();
+        });
+
+        unsafe { play_selection(window.window) };
+        // The walk of it: stood at the in point, and a tick or two of
+        // the bell carries it on.
+        let said = STATE.with(|slot| {
+            let state = slot.borrow();
+            assert!(state.playing, "the walk is walking");
+            (state.mci_alias.clone().expect("the sound's name is said"),
+             state.play_sound.clone().expect("the cut is said"),
+             state.playhead)
+        });
+        let (alias, cut, stood) = said;
+        // The interface's own word for it: the sound stands playing.
+        let mode = mci_ask(&format!("status {alias} mode"));
+        assert_eq!(
+            mode.as_deref(),
+            Some("playing"),
+            "the sound said playing, heard {:?}",
+            mode
+        );
+        assert!(
+            (stood - 0.4).abs() < 0.001,
+            "the playhead stood at the in point, said {}",
+            stood
+        );
+
+        // The bell walks the playhead on: the window's own bell is
+        // served while the messages are pumped.
+        for _ in 0..25 {
+            unsafe {
+                let mut message = MSG::default();
+                while PeekMessageW(&mut message, None, 0, 0, PM_REMOVE).as_bool() {
+                    let _ = TranslateMessage(&message);
+                    DispatchMessageW(&message);
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        STATE.with(|slot| {
+            let state = slot.borrow();
+            assert!(
+                state.playhead > 0.4 && state.playhead <= 1.2,
+                "the playhead walked on within the stretch, said {}",
+                state.playhead
+            );
+            assert!(state.playing, "the walk stands within its stretch");
+        });
+
+        // Saying play again puts the sound down for good: it no longer
+        // says playing, and its cut is gone.
+        unsafe { play_selection(window.window) };
+        let mode_after = mci_ask(&format!("status {alias} mode"));
+        assert_ne!(
+            mode_after.as_deref(),
+            Some("playing"),
+            "the sound was put down"
+        );
+        assert!(!cut.is_file(), "the cut went with the play");
+        assert!(
+            STATE.with(|slot| !slot.borrow().playing),
+            "the walk was put down"
+        );
+        window.hide();
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
     /// Touches the audio trim card where a person's finger and mouse
     /// land — the middle of the card, the strip itself, the transport —
     /// and the window stays whole through every one of them.
@@ -2713,6 +3234,107 @@ mod show_tests {
                 assert!(
                     IsWindowVisible(window.window).as_bool(),
                     "the trim window stays up through a touch at ({}, {})",
+                    spot.0,
+                    spot.1
+                )
+            };
+        }
+        window.hide();
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    /// Presses the speaking controls of the audio trim card — the silence
+    /// rail, the play-selection button, and both of the transport's step
+    /// chips. Every one of them answers by reading the host again, so
+    /// telling the card about the press while the host is still held
+    /// takes the whole window down. The card is heard of only after the
+    /// host has been let go.
+    #[test]
+    #[ignore = "needs the conversion program; opens a window"]
+    fn pressing_the_speaking_controls_of_the_card_leaves_the_window_up() {
+        use windows::Win32::UI::WindowsAndMessaging::{IsWindowVisible, SendMessageW};
+
+        crate::ui::wheel::install_platform();
+        let folder = std::env::temp_dir().join("open-tangerine-press-speaking");
+        std::fs::create_dir_all(&folder).expect("the press folder was made");
+        let audio = make_test_audio(&folder);
+        let (sender, _receiver) = std::sync::mpsc::channel();
+        let mut window = TimelineWindow::new(sender).expect("the window was made");
+        window.show_for(
+            "tools.trim",
+            "Trim",
+            "Keeps the part you choose, trims silences.",
+            &[audio],
+        );
+        // The fade takes a few beats: the window is whole before the
+        // press, the way a person finds it.
+        for _ in 0..60 {
+            unsafe {
+                let mut message = MSG::default();
+                while PeekMessageW(&mut message, None, 0, 0, PM_REMOVE).as_bool() {
+                    let _ = TranslateMessage(&message);
+                    DispatchMessageW(&message);
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        unsafe {
+            assert!(
+                IsWindowVisible(window.window).as_bool(),
+                "the trim window is up before the press"
+            )
+        };
+
+        // Where the presses land: each a control whose answer reads the
+        // host on its own.
+        let spots = {
+            let mut rect = RECT::default();
+            unsafe {
+                let _ = GetClientRect(window.window, &mut rect);
+            }
+            let layout = Layout::of(rect.right, rect.bottom, 1.0);
+            let middle = |box_field: &RECT| {
+                (
+                    (box_field.left + box_field.right) / 2,
+                    (box_field.top + box_field.bottom) / 2,
+                )
+            };
+            [
+                middle(&layout.silence),
+                middle(&layout.play_selection),
+                middle(&layout.step_back),
+                middle(&layout.step_forward),
+            ]
+        };
+        let at = |spot: (i32, i32)| {
+            LPARAM(((spot.1 as isize & 0xFFFF) << 16) | (spot.0 as isize & 0xFFFF))
+        };
+        for spot in spots {
+            unsafe {
+                let _ = SendMessageW(
+                    window.window,
+                    WM_LBUTTONDOWN,
+                    Some(WPARAM(
+                        windows::Win32::System::SystemServices::MK_LBUTTON.0 as usize,
+                    )),
+                    Some(at(spot)),
+                );
+                let _ = SendMessageW(window.window, WM_LBUTTONUP, Some(WPARAM(0)), Some(at(spot)));
+            }
+            for _ in 0..8 {
+                unsafe {
+                    let mut message = MSG::default();
+                    while PeekMessageW(&mut message, None, 0, 0, PM_REMOVE).as_bool() {
+                        let _ = TranslateMessage(&message);
+                        DispatchMessageW(&message);
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            unsafe {
+                assert!(
+                    IsWindowVisible(window.window).as_bool(),
+                    "the trim window stays up through a press at ({}, {})",
                     spot.0,
                     spot.1
                 )
@@ -2859,6 +3481,264 @@ mod show_tests {
         assert_eq!(operation, "tools.snapshots");
         assert_eq!(inputs, vec![expected]);
         assert_eq!(settings.snapshots_ms, vec![0, 1_500]);
+        window.hide();
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    /// Lets the window's own beats run: a few rounds over the queue with
+    /// a small sleep each, so whatever timers were ringing get their
+    /// say, the way the other tests pump their windows.
+    fn pump_breaths(rounds: usize) {
+        for _ in 0..rounds {
+            unsafe {
+                let mut message = MSG::default();
+                while PeekMessageW(&mut message, None, 0, 0, PM_REMOVE).as_bool() {
+                    let _ = TranslateMessage(&message);
+                    DispatchMessageW(&message);
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(8));
+        }
+    }
+
+    /// Space on a trim card plays the preview and says nothing to the
+    /// handler; Enter says go, as it alone ever did. With no video the
+    /// play has nothing to walk on and keeps still - but the go must not
+    /// happen on Space either way.
+    #[test]
+    fn space_on_a_trim_card_says_nothing_and_enter_says_go() {
+        use windows::Win32::UI::WindowsAndMessaging::SendMessageW;
+
+        crate::ui::wheel::install_platform();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let mut window = TimelineWindow::new(sender).expect("the window was made");
+        window.show_for(
+            "tools.trim",
+            "Trim",
+            "Cut the beginning or the end",
+            &[PathBuf::from("not-there.mp4")],
+        );
+        pump_breaths(40);
+        STATE.with(|slot| {
+            let mut state = slot.borrow_mut();
+            state.split = false;
+            state.shots = false;
+            state.audio = false;
+            state.shots_taken.clear();
+        });
+        let card = window.window;
+        // Space: no run is said, and no walk is begun either, with no
+        // video on the card.
+        unsafe {
+            let _ = SendMessageW(
+                card,
+                WM_KEYDOWN,
+                Some(WPARAM(VK_SPACE.0 as usize)),
+                Some(LPARAM(0)),
+            );
+        }
+        assert!(
+            receiver.try_recv().is_err(),
+            "the space key said something to the handler"
+        );
+        assert!(
+            !STATE.with(|slot| slot.borrow().playing),
+            "the space key began a walk with no video"
+        );
+        // Enter says go, as it always did.
+        unsafe {
+            let _ = SendMessageW(
+                card,
+                WM_KEYDOWN,
+                Some(WPARAM(VK_RETURN.0 as usize)),
+                Some(LPARAM(0)),
+            );
+        }
+        match receiver.recv_timeout(std::time::Duration::from_secs(5)) {
+            Ok(crate::platform::windows::toolwindow::ToolEvent::Run {
+                operation, ..
+            }) => assert_eq!(operation, "tools.trim", "the run was the trim's"),
+            other => panic!("the enter key did not say the run: {other:?}"),
+        }
+        window.hide();
+    }
+
+    /// Dragging a cap of the trim stands the playhead on the cap being
+    /// dragged: the preview follows what the card would take, whether it
+    /// is the in cap or the out one.
+    #[test]
+    fn dragging_a_cap_of_the_trim_stands_the_playhead_on_it() {
+        crate::ui::wheel::install_platform();
+        let (sender, _receiver) = std::sync::mpsc::channel();
+        let mut window = TimelineWindow::new(sender).expect("the window was made");
+        window.show_for(
+            "tools.trim",
+            "Trim",
+            "Cut the beginning or the end",
+            &[PathBuf::from("not-there.mp4")],
+        );
+        pump_breaths(40);
+        STATE.with(|slot| {
+            let mut state = slot.borrow_mut();
+            state.split = false;
+            state.shots = false;
+            state.audio = false;
+            state.shots_taken.clear();
+            state.preview_units = 236.0;
+            state.duration = 10.0;
+            state.start = 2.0;
+            state.end = 8.0;
+        });
+        let card = window.window;
+        let (width, height) = HOST.with(|slot| {
+            slot.borrow()
+                .as_ref()
+                .map(|host| (host.width as i32, host.height as i32))
+                .expect("the card was laid out")
+        });
+        let bar = Layout::of(width, height, scale_factor(card)).timeline;
+        let along = |moment: f64| {
+            bar.left + (fraction(moment, 10.0) * (bar.right - bar.left) as f32) as i32
+        };
+        // A press on the in cap, then a slide of it a little way on: the
+        // playhead follows it.
+        timeline_touched(card, along(2.0), bar.top, true);
+        timeline_touched(card, along(4.0), bar.top, false);
+        STATE.with(|slot| {
+            let state = slot.borrow();
+            assert!(
+                (state.start - 4.0).abs() < 0.05,
+                "the in cap slid near 4.0, reads {}",
+                state.start
+            );
+            assert_eq!(
+                state.playhead, state.start,
+                "the playhead did not follow the in cap"
+            );
+        });
+        // The out cap goes the same way.
+        timeline_touched(card, along(8.0), bar.top, true);
+        timeline_touched(card, along(6.0), bar.top, false);
+        STATE.with(|slot| {
+            let state = slot.borrow();
+            assert!(
+                (state.end - 6.0).abs() < 0.05,
+                "the out cap slid near 6.0, reads {}",
+                state.end
+            );
+            assert_eq!(
+                state.playhead, state.end,
+                "the playhead did not follow the out cap"
+            );
+        });
+        released(card);
+        window.hide();
+    }
+
+    /// Plays the preview of a real trim card with Space: the walk takes
+    /// the playhead a step with every tick, and nothing is said to the
+    /// handler; playing again stops the walk where it stands; Enter
+    /// alone says go.
+    #[test]
+    #[ignore = "needs the conversion program; opens a window"]
+    fn space_plays_the_preview_of_a_real_trim_card() {
+        use windows::Win32::UI::WindowsAndMessaging::SendMessageW;
+
+        crate::ui::wheel::install_platform();
+        let folder = std::env::temp_dir().join(format!(
+            "open-tangerine-space-play-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&folder).expect("the play folder was made");
+        let video = make_test_video(&folder);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let mut window = TimelineWindow::new(sender).expect("the window was made");
+        window.show_for(
+            "tools.trim",
+            "Trim",
+            "Cut the beginning or the end",
+            &[video],
+        );
+        // The card comes in: the length of the video must be known
+        // before anything of the play can be asked of it.
+        for _ in 0..400 {
+            pump_breaths(1);
+            if STATE.with(|slot| slot.borrow().duration > 0.0) {
+                break;
+            }
+        }
+        assert!(
+            STATE.with(|slot| slot.borrow().duration > 0.0),
+            "the length of the video was never known"
+        );
+        let card = window.window;
+        let stand_now = || STATE.with(|slot| slot.borrow().playhead);
+        // Space: the walk begins, and nothing is said to the handler.
+        unsafe {
+            let _ = SendMessageW(
+                card,
+                WM_KEYDOWN,
+                Some(WPARAM(VK_SPACE.0 as usize)),
+                Some(LPARAM(0)),
+            );
+        }
+        assert!(STATE.with(|slot| slot.borrow().playing), "the play began");
+        assert!(
+            receiver.try_recv().is_err(),
+            "the space key said something to the handler"
+        );
+        let before = stand_now();
+        pump_breaths(45);
+        let after = stand_now();
+        assert!(
+            STATE.with(|slot| slot.borrow().playing),
+            "the walk was still on"
+        );
+        assert!(
+            after > before,
+            "the walk took the playhead on, stood at {} then {}",
+            before,
+            after
+        );
+        assert!(
+            receiver.try_recv().is_err(),
+            "playing said something to the handler"
+        );
+        // Space again: the walk stops where it stands.
+        unsafe {
+            let _ = SendMessageW(
+                card,
+                WM_KEYDOWN,
+                Some(WPARAM(VK_SPACE.0 as usize)),
+                Some(LPARAM(0)),
+            );
+        }
+        assert!(
+            !STATE.with(|slot| slot.borrow().playing),
+            "playing again stopped the walk"
+        );
+        let stood = stand_now();
+        pump_breaths(12);
+        assert_eq!(
+            stand_now(),
+            stood,
+            "the stopped walk stood still"
+        );
+        // Enter alone says go.
+        unsafe {
+            let _ = SendMessageW(
+                card,
+                WM_KEYDOWN,
+                Some(WPARAM(VK_RETURN.0 as usize)),
+                Some(LPARAM(0)),
+            );
+        }
+        match receiver.recv_timeout(std::time::Duration::from_secs(5)) {
+            Ok(crate::platform::windows::toolwindow::ToolEvent::Run {
+                operation, ..
+            }) => assert_eq!(operation, "tools.trim", "the run was the trim's"),
+            other => panic!("the enter key did not say the run: {other:?}"),
+        }
         window.hide();
         let _ = std::fs::remove_dir_all(&folder);
     }

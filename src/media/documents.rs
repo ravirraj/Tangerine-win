@@ -24,6 +24,8 @@ pub enum DocError {
     WriteError,
     /// The file is not a valid archive.
     InvalidArchive,
+    /// The archive comes out much bigger than an honest one would.
+    ArchiveTooLarge,
     /// The PDF reader is not installed.
     PdfLibraryMissing,
     /// A page of a PDF could not be rendered.
@@ -42,6 +44,9 @@ impl DocError {
             DocError::ReadError => "the source file could not be read",
             DocError::WriteError => "the result could not be written",
             DocError::InvalidArchive => "the file is not a valid archive",
+            DocError::ArchiveTooLarge => {
+                "the archive comes out bigger than a conversion may take"
+            }
             DocError::PdfLibraryMissing => "the PDF reader is not installed",
             DocError::RenderFailed => "a page could not be rendered",
             DocError::OfficeMissing => {
@@ -51,6 +56,15 @@ impl DocError {
         }
     }
 }
+
+/// The most a conversion may pour out of an archive, in bytes.
+///
+/// An archive of the user's own is asked to come out whole. A dishonest
+/// one — the famous zip bomb — says it is small and comes out endless,
+/// and a conversion that pours such a thing into memory takes the whole
+/// machine with it. What would come out beyond this is refused, with an
+/// error that says why.
+const ARCHIVE_DECODE_LIMIT: u64 = 512 * 1024 * 1024;
 
 /// Subtitle format conversions: SRT, VTT, TXT.
 pub mod subtitles {
@@ -191,16 +205,16 @@ pub mod archives {
     /// target format.
     pub fn convert(source: &Path, target_path: &Path, from: &str, to: &str) -> Result<(), DocError> {
         let data = fs::read(source).map_err(|_| DocError::ReadError)?;
-        let files = extract_archive(&data, from)?;
+        let files = extract_archive(&data, from, super::ARCHIVE_DECODE_LIMIT)?;
         repack_archive(&files, target_path, to)
     }
 
     /// Extract all files from an archive into a list of (name, bytes).
-    fn extract_archive(data: &[u8], from: &str) -> Result<Vec<(String, Vec<u8>)>, DocError> {
+    fn extract_archive(data: &[u8], from: &str, limit: u64) -> Result<Vec<(String, Vec<u8>)>, DocError> {
         match from {
-            "zip" => extract_zip(data),
-            "tar" => extract_tar(data),
-            "gz" => extract_gz(data),
+            "zip" => extract_zip(data, limit),
+            "tar" => extract_tar(data, limit),
+            "gz" => extract_gz(data, limit),
             _ => Err(DocError::UnsupportedSource),
         }
     }
@@ -217,18 +231,47 @@ pub mod archives {
 
     // ----- ZIP -----
 
-    fn extract_zip(data: &[u8]) -> Result<Vec<(String, Vec<u8>)>, DocError> {
+    /// Pours an entry of the archive into memory, but no further than
+    /// `remaining`. The read is cut at what still fits, and one byte
+    /// further is looked for: a stream that has one is bigger than was
+    /// allowed, whatever its header said.
+    fn read_capped<R: std::io::Read>(
+        from: &mut R,
+        remaining: u64,
+    ) -> Result<Vec<u8>, DocError> {
+        let mut bytes = Vec::new();
+        let mut limited = from.take(remaining);
+        limited
+            .read_to_end(&mut bytes)
+            .map_err(|_| DocError::ReadError)?;
+        let mut one_more = [0u8; 1];
+        let more = from.read(&mut one_more).map_err(|_| DocError::ReadError)?;
+        if more > 0 {
+            return Err(DocError::ArchiveTooLarge);
+        }
+        Ok(bytes)
+    }
+
+    pub(super) fn extract_zip(data: &[u8], limit: u64) -> Result<Vec<(String, Vec<u8>)>, DocError> {
         let mut files = Vec::new();
         let reader = std::io::Cursor::new(data);
         let mut archive = zip::ZipArchive::new(reader).map_err(|_| DocError::InvalidArchive)?;
+        let mut total = 0u64;
         for i in 0..archive.len() {
             let mut file = archive.by_index(i).map_err(|_| DocError::InvalidArchive)?;
             let name = file.name().to_string();
             if file.is_dir() {
                 continue;
             }
-            let mut bytes = Vec::new();
-            file.read_to_end(&mut bytes).map_err(|_| DocError::ReadError)?;
+            // The directory of the zip says how long the file is once it
+            // comes out. A claim beyond what still fits is refused before
+            // anything is poured; the pour is cut as well, for a file whose
+            // header does not say the truth.
+            if total + file.size() > limit {
+                return Err(DocError::ArchiveTooLarge);
+            }
+            let bytes = read_capped(&mut file, limit - total)?;
+            total += bytes.len() as u64;
             files.push((name, bytes));
         }
         Ok(files)
@@ -249,17 +292,24 @@ pub mod archives {
 
     // ----- TAR -----
 
-    fn extract_tar(data: &[u8]) -> Result<Vec<(String, Vec<u8>)>, DocError> {
+    pub(super) fn extract_tar(data: &[u8], limit: u64) -> Result<Vec<(String, Vec<u8>)>, DocError> {
         let mut files = Vec::new();
         let mut archive = tar::Archive::new(std::io::Cursor::new(data));
+        let mut total = 0u64;
         for entry in archive.entries().map_err(|_| DocError::InvalidArchive)? {
             let mut entry = entry.map_err(|_| DocError::InvalidArchive)?;
             if entry.header().entry_type().is_dir() {
                 continue;
             }
             let name = entry.path().map_err(|_| DocError::InvalidArchive)?.to_string_lossy().to_string();
-            let mut bytes = Vec::new();
-            entry.read_to_end(&mut bytes).map_err(|_| DocError::ReadError)?;
+            // The header of the entry says its length; the claim beyond
+            // what still fits is refused first, and the pour is cut as
+            // well, for a header that does not say the truth.
+            if total + entry.size() > limit {
+                return Err(DocError::ArchiveTooLarge);
+            }
+            let bytes = read_capped(&mut entry, limit - total)?;
+            total += bytes.len() as u64;
             files.push((name, bytes));
         }
         Ok(files)
@@ -280,11 +330,13 @@ pub mod archives {
 
     // ----- GZ -----
 
-    fn extract_gz(data: &[u8]) -> Result<Vec<(String, Vec<u8>)>, DocError> {
+    pub(super) fn extract_gz(data: &[u8], limit: u64) -> Result<Vec<(String, Vec<u8>)>, DocError> {
         // GZ is a single-file compressed stream. Treat the whole content as one file.
         let mut decoder = flate2::read::GzDecoder::new(data);
-        let mut bytes = Vec::new();
-        decoder.read_to_end(&mut bytes).map_err(|_| DocError::InvalidArchive)?;
+        // The pour is cut at the limit itself and one byte further is
+        // asked for: a stream that has one is bigger than was allowed,
+        // however small the compressed file looked.
+        let bytes = read_capped(&mut decoder, limit)?;
         Ok(vec![("extracted".to_string(), bytes)])
     }
 
@@ -959,5 +1011,101 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
         let pages = crate::media::pdf::render_pages(&pdf, 72, crate::media::pdf::Encoding::Png)
             .expect("the pdf reads back");
         assert_eq!(pages.len(), 2, "every picture became a page");
+    }
+
+    /// A small share, for a quick look at the pour of an archive. The
+    /// shape of the check is the same at every size, so the tests run the
+    /// same code with a share a test can fill.
+    fn a_small_share() -> u64 {
+        1 << 20
+    }
+
+    /// A gz that comes out beyond its share is refused, and one that
+    /// comes out within it is given whole.
+    #[test]
+    fn a_gz_that_comes_out_beyond_its_share_is_refused() {
+        use std::io::Write as _;
+
+        let limit = a_small_share();
+        let beyond = vec![0u8; limit as usize + 1];
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        encoder.write_all(&beyond).expect("the stream was poured");
+        let archive = encoder.finish().expect("the gz was finished");
+
+        assert_eq!(
+            super::archives::extract_gz(&archive, limit),
+            Err(DocError::ArchiveTooLarge),
+            "a stream beyond the share is refused"
+        );
+
+        let within = vec![0u8; limit as usize];
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        encoder.write_all(&within).expect("the stream was poured");
+        let archive = encoder.finish().expect("the gz was finished");
+
+        let files = super::archives::extract_gz(&archive, limit)
+            .expect("an archive within the share comes out");
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].0, "extracted");
+        assert_eq!(files[0].1, within, "nothing of the stream was lost");
+    }
+
+    /// A zip whose file claims, in its directory, to be longer than what
+    /// still fits is refused before it is poured.
+    #[test]
+    fn a_zip_whose_files_claim_beyond_what_fits_is_refused() {
+        use std::io::Write as _;
+
+        let limit = a_small_share();
+        let beyond = vec![0u8; limit as usize + 1];
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        writer
+            .start_file("big.bin", zip::write::FileOptions::default())
+            .expect("the file was started");
+        writer.write_all(&beyond).expect("the file was poured");
+        let archive = writer.finish().expect("the zip was finished").into_inner();
+
+        assert_eq!(
+            super::archives::extract_zip(&archive, limit),
+            Err(DocError::ArchiveTooLarge),
+            "a file beyond the share is refused"
+        );
+    }
+
+    /// A tar whose entry is longer than what still fits is refused, and
+    /// one within the share comes out with its name.
+    #[test]
+    fn a_tar_whose_entry_is_beyond_the_share_is_refused() {
+        let limit = a_small_share();
+        let beyond = vec![0u8; limit as usize + 1];
+        let mut builder = tar::Builder::new(Vec::new());
+        let mut header = tar::Header::new_old();
+        header.set_size(beyond.len() as u64);
+        header.set_cksum();
+        builder
+            .append(&header, std::io::Cursor::new(beyond.as_slice()))
+            .expect("the entry was put in");
+        let archive = builder.into_inner().expect("the tar was finished");
+
+        assert_eq!(
+            super::archives::extract_tar(&archive, limit),
+            Err(DocError::ArchiveTooLarge),
+            "an entry beyond the share is refused"
+        );
+
+        let within = vec![7u8; limit as usize];
+        let mut builder = tar::Builder::new(Vec::new());
+        let mut header = tar::Header::new_old();
+        header.set_size(within.len() as u64);
+        header.set_cksum();
+        builder
+            .append(&header, std::io::Cursor::new(within.as_slice()))
+            .expect("the entry was put in");
+        let archive = builder.into_inner().expect("the tar was finished");
+
+        let files = super::archives::extract_tar(&archive, limit)
+            .expect("an entry within the share comes out");
+        assert_eq!(files.len(), 1);
+        assert_eq!(&files[0].1, &within, "nothing of the entry was lost");
     }
 }

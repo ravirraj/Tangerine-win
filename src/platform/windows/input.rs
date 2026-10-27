@@ -17,8 +17,8 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     VK_SHIFT, VK_UP,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetClassNameW, GetCursorPos, GetForegroundWindow, HC_ACTION, HHOOK, MSLLHOOKSTRUCT,
-    SetWindowsHookExW, UnhookWindowsHookEx, WH_MOUSE_LL, WM_MOUSEWHEEL,
+    CallNextHookEx, GetClassNameW, GetCursorPos, GetForegroundWindow, HC_ACTION, HHOOK,
+    MSLLHOOKSTRUCT, SetWindowsHookExW, UnhookWindowsHookEx, WH_MOUSE_LL, WM_MOUSEWHEEL,
 };
 
 use crate::radial::actions::Modifiers;
@@ -161,7 +161,10 @@ unsafe extern "system" fn wheel_hook(code: i32, wparam: WPARAM, lparam: LPARAM) 
         SCROLLS.with(|scrolls| scrolls.borrow_mut().push(delta));
     }
     // The message is never stopped: it belongs to the program underneath.
-    LRESULT(0)
+    // And whatever else is hooked has to see it too: a low level hook that
+    // does not pass the message to the next hook of the chain stops the
+    // machine's own input from going anywhere while the hook is in.
+    unsafe { CallNextHookEx(None, code, wparam, lparam) }
 }
 
 impl WheelWatcher {

@@ -863,29 +863,39 @@ unsafe extern "system" fn channels_card_proc(
                 }
                 0x25 => {
                     // Left arrow
-                    STATE.with(|s| {
+                    let moved = STATE.with(|s| {
                         let mut st = s.borrow_mut();
                         if st.slider_focus == 1 {
                             st.left_gain = (st.left_gain - 5.0).max(0.0);
-                            refresh_card();
+                            true
                         } else if st.slider_focus == 2 {
                             st.right_gain = (st.right_gain - 5.0).max(0.0);
-                            refresh_card();
+                            true
+                        } else {
+                            false
                         }
                     });
+                    if moved {
+                        refresh_card();
+                    }
                 }
                 0x27 => {
                     // Right arrow
-                    STATE.with(|s| {
+                    let moved = STATE.with(|s| {
                         let mut st = s.borrow_mut();
                         if st.slider_focus == 1 {
                             st.left_gain = (st.left_gain + 5.0).min(200.0);
-                            refresh_card();
+                            true
                         } else if st.slider_focus == 2 {
                             st.right_gain = (st.right_gain + 5.0).min(200.0);
-                            refresh_card();
+                            true
+                        } else {
+                            false
                         }
                     });
+                    if moved {
+                        refresh_card();
+                    }
                 }
                 0x20 => {
                     // Space -> toggle play/pause
@@ -969,6 +979,94 @@ pub mod show_tests {
                     DispatchMessageW(&msg);
                 }
             }
+        }
+        window.hide();
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    /// Tabs to the left slider and arrows it three steps: the arrows run
+    /// their answer, the window keeps standing, and the slider has moved.
+    /// An arrow ran its answer while the state was still held — and the
+    /// answer reads the state again — so a Tab and one arrow used to take
+    /// the whole window down.
+    #[test]
+    fn tabbing_to_a_slider_and_arrowing_it_keeps_the_window_up() {
+        use windows::Win32::Foundation::{LPARAM, WPARAM};
+        use windows::Win32::UI::Input::KeyboardAndMouse::{VK_LEFT, VK_RIGHT, VK_TAB};
+        use windows::Win32::UI::WindowsAndMessaging::{
+            IsWindowVisible, SendMessageW,
+        };
+
+        crate::ui::wheel::install_platform();
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let window = ChannelsWindow::new(tx).expect("channels window created");
+        let scratch = std::env::temp_dir().join(format!("ot-chan-arrow-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&scratch);
+        let test_wav = scratch.join("test.wav");
+        let pcm = crate::media::audio::encode_wav_bytes(&[0i16; 8000], 8000, 2);
+        std::fs::write(&test_wav, pcm).expect("test wav written");
+
+        window.show_for("tools.channels", "Channels", "Convert audio channels", &[test_wav]);
+        unsafe {
+            let mut msg = MSG::default();
+            for _ in 0..10 {
+                while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+                    let _ = TranslateMessage(&msg);
+                    DispatchMessageW(&msg);
+                }
+            }
+            assert!(
+                IsWindowVisible(window.window).as_bool(),
+                "the channels window is up before the keys"
+            );
+
+            let tell = |key: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY| {
+                let _ = SendMessageW(
+                    window.window,
+                    WM_KEYDOWN,
+                    Some(WPARAM(key.0 as usize)),
+                    Some(LPARAM(0x0000_0001)), // repeat 1, scan code 0
+                );
+            };
+            // The slider is on: one tab, then the arrows.
+            tell(VK_TAB);
+            for _ in 0..3 {
+                tell(VK_LEFT);
+                for _ in 0..4 {
+                    while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+                        let _ = TranslateMessage(&msg);
+                        DispatchMessageW(&msg);
+                    }
+                }
+                assert!(
+                    IsWindowVisible(window.window).as_bool(),
+                    "the channels window stays up through the left arrow"
+                );
+            }
+            tell(VK_RIGHT);
+            tell(VK_RIGHT);
+            for _ in 0..4 {
+                while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+                    let _ = TranslateMessage(&msg);
+                    DispatchMessageW(&msg);
+                }
+            }
+        }
+        // Three arrows left and two right: 100.0 - 15.0 + 10.0.
+        let (left_gain, focused_on_slider) = STATE.with(|slot| {
+            let st = slot.borrow();
+            (st.left_gain, st.slider_focus == 1)
+        });
+        assert!(focused_on_slider, "the tab put the focus on the left slider");
+        assert!(
+            (left_gain - 95.0).abs() < 0.01,
+            "the arrows moved the gain: got {left_gain}"
+        );
+        unsafe {
+            assert!(
+                IsWindowVisible(window.window).as_bool(),
+                "the channels window stays up through the keys"
+            )
         }
         window.hide();
         let _ = std::fs::remove_dir_all(&scratch);

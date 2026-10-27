@@ -19,6 +19,41 @@ use crate::media::runner::{ProcessRunner, SystemRunner};
 use crate::radial::execution::{Failure, Handler, Outcome, RedactStyle, Request};
 use crate::radial::registry::{operation_by_id, Output};
 use crate::radial::selection::Selection;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// The name a run's work stands under, beside the file the run worked on.
+///
+/// A run owns it, and only that run: the program's own id and a running
+/// number are said inside the name, so two runs working on the same file
+/// at once can never pour into one another's bucket — the media
+/// converter names its own work the same way (convert.rs::temporary_file).
+/// The words say what kind of work stages there and end with the kind of
+/// file it is making, by the extension the finisher's own tools read.
+pub(crate) fn staging_name(original: &Path, words: &str) -> PathBuf {
+    static RUNS: AtomicU64 = AtomicU64::new(1);
+    let stem = original
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "file".to_string());
+    let nth = RUNS.fetch_add(1, Ordering::Relaxed);
+    original.with_file_name(format!("{stem}.{}.{}.{}", std::process::id(), nth, words))
+}
+
+/// Takes a run's staged work back away when the run fails.
+///
+/// The guard is made with the file a run stages into, and it is let go
+/// when the run's function returns — in whatever way it returns. A run
+/// that ended by publishing has nothing under that name any more (the
+/// publish moved it), so the sweep does nothing. A run that failed on
+/// any other page leaves the sweep to take the half-made work back, so
+/// nothing of ours is left beside the user's file.
+struct SweepOf(PathBuf);
+
+impl Drop for SweepOf {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
+}
 
 /// Why a tool operation did not happen.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -283,14 +318,10 @@ impl<P: Publisher> Tools<P> {
         if crate::media::probe::kind_of(&source.format) != Some(crate::media::probe::Kind::Image) {
             return Err(ToolError::UnsupportedKind);
         }
-        let stem = input
-            .file_stem()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "file".to_string());
-        let temporary = input.with_file_name(format!("{stem}.redact-part.{source_ext}"));
-
         let picture = image::open(input).map_err(|_| ToolError::ReadError)?;
         let covered = redact_picture(picture, settings);
+        let temporary = staging_name(input, &format!("redact.{source_ext}"));
+        let _sweep = SweepOf(temporary.clone());
         covered.save(&temporary).map_err(|_| ToolError::WriteError)?;
 
         let finals = metadata_final_names(input, "redacted", &source_ext);
@@ -378,11 +409,8 @@ impl<P: Publisher> Tools<P> {
         let (width, height, _fps) =
             crate::media::frames::shape_of(&self.ffmpeg_tools, input).ok_or(ToolError::ReadError)?;
         let graph = redact_video_filter(settings, width, height)?;
-        let stem = input
-            .file_stem()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "file".to_string());
-        let temporary = input.with_file_name(format!("{stem}.redact-part.{source_ext}"));
+        let temporary = staging_name(input, &format!("redact.{source_ext}"));
+        let _sweep = SweepOf(temporary.clone());
         let arguments = redact_video_args(input, source, &temporary, &graph);
 
         let finals = metadata_final_names(input, "redacted", &source_ext);
@@ -481,7 +509,8 @@ impl<P: Publisher> Tools<P> {
             );
         }
 
-        let temporary = input.with_extension(format!("{source_ext}.part"));
+        let temporary = staging_name(input, &format!("{source_ext}.part"));
+        let _sweep = SweepOf(temporary.clone());
 
         if source_ext == "wav" {
             let wav_bytes = crate::media::audio::encode_wav_bytes(
@@ -491,7 +520,8 @@ impl<P: Publisher> Tools<P> {
             );
             fs::write(&temporary, wav_bytes).map_err(|_| ToolError::WriteError)?;
         } else {
-            let staging_wav = input.with_extension("staging_bleep.wav");
+            let staging_wav = staging_name(input, "staging_bleep.wav");
+            let _sweep_wav = SweepOf(staging_wav.clone());
             let wav_bytes = crate::media::audio::encode_wav_bytes(
                 &samples,
                 pcm.sample_rate,
@@ -629,6 +659,7 @@ impl<P: Publisher> Tools<P> {
             let leaf = format!("{} part {}.{source_ext}", stem, index + 1);
             let final_name = folder.join(&leaf);
             let work_path = folder.join(format!("{leaf}.part"));
+            let _sweep = SweepOf(work_path.clone());
             let arguments = trim_args(input, source, source, Some(&work_path), &asked);
             let made = self.finish(&arguments, source, &work_path, &[final_name], runner);
             match made {
@@ -839,14 +870,19 @@ impl<P: Publisher> Tools<P> {
             return Err(ToolError::ReadError);
         }
 
-        let stem = input
-            .file_stem()
-            .map(|stem| stem.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "video".to_string());
-        let temporary = input.with_file_name(format!("{stem}.speed-part.{source_ext}"));
-        let raw = input.with_file_name(format!("{stem}.speed-raw.bin"));
-        let retime = input.with_file_name(format!("{stem}.speed-frames.bin"));
-        let sound = input.with_file_name(format!("{stem}.speed-sound.wav"));
+        let temporary = staging_name(input, &format!("speed.{source_ext}"));
+        let raw = staging_name(input, "speed-raw.bin");
+        let retime = staging_name(input, "speed-frames.bin");
+        let sound = staging_name(input, "speed-sound.wav");
+        // Whatever page the run ends on, every one of its work files is
+        // taken back: the sweeps go off when the function returns, and a
+        // run that got as far as publishing has nothing to take back.
+        let _sweeps = (
+            SweepOf(temporary.clone()),
+            SweepOf(raw.clone()),
+            SweepOf(retime.clone()),
+            SweepOf(sound.clone()),
+        );
 
         // The frames are decoded to the picture's own numbers, all of
         // them, and gathered in a scratch beside the original.
@@ -1033,11 +1069,8 @@ impl<P: Publisher> Tools<P> {
     /// Merges multiple PDF files into one, all pages copied in sequence.
     fn merge_pdfs(&self, inputs: &[PathBuf]) -> Result<PathBuf, ToolError> {
         let first = &inputs[0];
-        let stem = first
-            .file_stem()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "document".to_string());
-        let temporary = first.with_file_name(format!("{stem}.merge-part.pdf"));
+        let temporary = staging_name(first, "merge.pdf");
+        let _sweep = SweepOf(temporary.clone());
 
         crate::media::pdf::merge(inputs, &temporary).map_err(|err| match err {
             crate::media::pdf::PdfError::LibraryMissing => ToolError::ToolFailed,
@@ -1059,19 +1092,23 @@ impl<P: Publisher> Tools<P> {
             };
         }
         let first = &request.inputs[0];
-        let stem = first
-            .file_stem()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "document".to_string());
-        let temporary = first.with_file_name(format!("{stem}.organize-part.pdf"));
+        // The union of pages is built in its own staged file as well:
+        // per run, and swept if the run stops anywhere before the
+        // publish.
+        let temporary = staging_name(first, "organize.pdf");
+        let _sweep = SweepOf(temporary.clone());
 
         let specs: Vec<crate::media::pdf::PageSpec> = if request.settings.pdf_pages.is_empty() {
             // Default: all pages from all inputs in order, 0 rotation
             let mut all_specs = Vec::new();
             for (doc_idx, input) in request.inputs.iter().enumerate() {
-                match crate::media::pdf::render_pages(input, 72, crate::media::pdf::Encoding::Png) {
-                    Ok(rendered) => {
-                        for page_idx in 0..rendered.len() {
+                // The count of the pages is asked of the document, not
+                // learned by rendering every page first: rendering is the
+                // expensive part of the work, and organizing needs the
+                // count alone.
+                match crate::media::pdf::page_count(input) {
+                    Ok(count) => {
+                        for page_idx in 0..count {
                             all_specs.push(crate::media::pdf::PageSpec {
                                 source_doc: doc_idx,
                                 source_index: page_idx,
@@ -1775,7 +1812,8 @@ impl<P: Publisher> Tools<P> {
             .format_of_extension(&source_ext)
             .or_else(|| manifest.format(&source_ext))
             .ok_or(ToolError::UnsupportedKind)?;
-        let temporary = input.with_extension(format!("{source_ext}.part"));
+        let temporary = staging_name(input, &format!("{source_ext}.part"));
+        let _sweep = SweepOf(temporary.clone());
 
         match crate::media::probe::kind_of(&source.format) {
             Some(crate::media::probe::Kind::Image) => match source.format.as_str() {
@@ -2069,7 +2107,8 @@ impl<P: Publisher> Tools<P> {
         let (normalized_samples, _gain) =
             crate::media::audio::normalize_samples(&pcm.samples, settings.true_peak());
 
-        let temporary = input.with_extension(format!("{source_ext}.part"));
+        let temporary = staging_name(input, &format!("{source_ext}.part"));
+        let _sweep = SweepOf(temporary.clone());
 
         if source_ext == "wav" {
             let wav_bytes = crate::media::audio::encode_wav_bytes(
@@ -2079,7 +2118,8 @@ impl<P: Publisher> Tools<P> {
             );
             fs::write(&temporary, wav_bytes).map_err(|_| ToolError::WriteError)?;
         } else {
-            let staging_wav = input.with_extension("staging_norm.wav");
+            let staging_wav = staging_name(input, "staging_norm.wav");
+            let _sweep_wav = SweepOf(staging_wav.clone());
             let wav_bytes = crate::media::audio::encode_wav_bytes(
                 &normalized_samples,
                 pcm.sample_rate,
@@ -2195,7 +2235,8 @@ impl<P: Publisher> Tools<P> {
             right_gain,
         );
 
-        let temporary = input.with_extension(format!("{source_ext}.part"));
+        let temporary = staging_name(input, &format!("{source_ext}.part"));
+        let _sweep = SweepOf(temporary.clone());
 
         if source_ext == "wav" {
             let wav_bytes = crate::media::audio::encode_wav_bytes(
@@ -2205,7 +2246,8 @@ impl<P: Publisher> Tools<P> {
             );
             fs::write(&temporary, wav_bytes).map_err(|_| ToolError::WriteError)?;
         } else {
-            let staging_wav = input.with_extension("staging_chan.wav");
+            let staging_wav = staging_name(input, "staging_chan.wav");
+            let _sweep_wav = SweepOf(staging_wav.clone());
             let wav_bytes = crate::media::audio::encode_wav_bytes(
                 &converted.samples,
                 converted.sample_rate,
@@ -3502,7 +3544,12 @@ impl<P: Publisher> Handler for Tools<P> {
             };
 
             let target_ext = extension;
-            let temporary = input.with_extension(format!("{target_ext}.part"));
+            // One staging name of this run's very own: two runs of the
+            // same file can stand beside it at once and pour into no one
+            // else's bucket. And a run that stops anywhere short of the
+            // publish takes its half-made work back with it.
+            let temporary = staging_name(input, &format!("{target_ext}.part"));
+            let _sweep = SweepOf(temporary.clone());
 
             let result = self.run_one(
                 &request.operation,
@@ -6367,6 +6414,29 @@ mod tests {
             .expect("rendered pages");
         assert_eq!(pages.len(), 2, "assembled document has 2 pages");
 
+        // The default is every page of the input, told by the count of the
+        // pages, not learned by rendering every page first.
+        let _ = std::fs::remove_file(&made);
+        let request = Request {
+            operation: "tools.organize_pdf".to_string(),
+            inputs: vec![pdf.clone()],
+            ..Default::default()
+        };
+        let outcome = tools.run(&request, &Selection::inspect(&[pdf.clone()]));
+        let outputs = match outcome {
+            Outcome::Succeeded { outputs } => outputs,
+            other => panic!("the default organize failed: {other:?}"),
+        };
+        let default_made = outputs.first().expect("the default output exists");
+        let pages =
+            crate::media::pdf::render_pages(default_made, 72, crate::media::pdf::Encoding::Png)
+                .expect("the default pages rendered");
+        assert_eq!(
+            pages.len(),
+            1,
+            "the default takes every page of the input once"
+        );
+
         let _ = std::fs::remove_dir_all(&scratch);
     }
 
@@ -6773,6 +6843,187 @@ mod tests {
         assert_eq!(adjusted_img.width(), 100);
         assert_eq!(adjusted_img.height(), 100);
 
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    /// A staging name belongs to one run, and only one: two names taken
+    /// one after another are never the same, and each carries the
+    /// program's own id, so another process going at the same file
+    /// cannot say the name either.
+    #[test]
+    fn a_staging_name_is_one_runs_own() {
+        let file = PathBuf::from("C:\\somewhere").join("clip.mp4");
+        let first = staging_name(&file, "mp4.part");
+        let second = staging_name(&file, "mp4.part");
+        assert_ne!(first, second, "no two runs say one name");
+        assert!(first != file, "the staging name is not the file's name");
+        assert!(
+            first.to_string_lossy().contains(&format!(".mp4.part")),
+            "the kind of work is the last word said"
+        );
+        assert!(
+            first.to_string_lossy().contains(&std::process::id().to_string()),
+            "the program's own id is said in the name"
+        );
+    }
+
+    /// A run that stops anywhere short of the publish takes its
+    /// half-made work back with it: the user's folder keeps nothing of
+    /// ours.
+    #[test]
+    fn a_run_that_cannot_publish_sweeps_its_work() {
+        struct StandingPublisher;
+        impl crate::media::publish::Publisher for StandingPublisher {
+            fn publish(
+                &self,
+                _temporary: &Path,
+                _destination: &Path,
+            ) -> Result<(), crate::media::publish::PublishError> {
+                Err(crate::media::publish::PublishError::CouldNotMove)
+            }
+        }
+        let scratch = std::env::temp_dir().join("open-tangerine-sweep-test");
+        let _ = std::fs::remove_dir_all(&scratch);
+        std::fs::create_dir_all(&scratch).expect("the scratch folder was made");
+        let input = scratch.join("photo.png");
+        // A picture the picture library can read and cover, and a
+        // publisher that can never put it where it belongs: the run
+        // stops at the last page, and the sweep takes the staging back.
+        image::DynamicImage::new_rgb8(64, 48)
+            .save(&input)
+            .expect("the test picture was made");
+
+        let tools = Tools {
+            ffmpeg_tools: crate::media::locator::Tools {
+                ffmpeg: PathBuf::new(),
+                ffprobe: PathBuf::new(),
+            },
+            publisher: StandingPublisher,
+        };
+        let request = Request {
+            operation: "tools.redact_image".to_string(),
+            inputs: vec![input.clone()],
+            settings: ToolSettings {
+                redact_areas: vec![RedactArea {
+                    x_mille: 0,
+                    y_mille: 0,
+                    w_mille: 300,
+                    h_mille: 300,
+                    start_ms: None,
+                    end_ms: None,
+                }],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let outcome = tools.run(&request, &Selection::inspect(&[input.clone()]));
+        assert!(
+            matches!(outcome, Outcome::Failed { .. }),
+            "the publish could not happen: {outcome:?}"
+        );
+        let leftovers: Vec<PathBuf> = std::fs::read_dir(&scratch)
+            .expect("the folder is there")
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .map(|name| name.to_string_lossy().contains("redact"))
+                    .unwrap_or(false)
+            })
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "nothing of the run was left beside the file, yet {} stood",
+            leftovers.first().map(|p| p.display().to_string()).unwrap_or_default()
+        );
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    /// Two runs of the same file, going at once, pour into two buckets:
+    /// with one staging name of each run's own, both conversions finish
+    /// and both results stand.
+    #[test]
+    #[ignore = "needs the conversion program"]
+    fn two_runs_of_one_file_stand_beside_each_other() {
+        let ffmpeg = Path::new("vendor").join("ffmpeg").join("ffmpeg.exe");
+        let ffprobe = Path::new("vendor").join("ffmpeg").join("ffprobe.exe");
+        if !ffmpeg.is_file() || !ffprobe.is_file() {
+            eprintln!("the program is not there; this test needs it");
+            return;
+        }
+        struct MovePublisher;
+        impl crate::media::publish::Publisher for MovePublisher {
+            fn publish(
+                &self,
+                temporary: &Path,
+                destination: &Path,
+            ) -> Result<(), crate::media::publish::PublishError> {
+                if destination.is_file() {
+                    return Err(crate::media::publish::PublishError::DestinationExists);
+                }
+                std::fs::rename(temporary, destination)
+                    .map(|_| ())
+                    .map_err(|_| crate::media::publish::PublishError::CouldNotMove)
+            }
+        }
+        let scratch = std::env::temp_dir()
+            .join("open-tangerine-staging-race")
+            .join(std::process::id().to_string());
+        let _ = std::fs::remove_dir_all(&scratch);
+        std::fs::create_dir_all(&scratch).expect("the scratch folder was made");
+        let input = make_test_video(&scratch);
+        let where_the_program_is = crate::media::locator::Tools {
+            ffmpeg: ffmpeg.clone(),
+            ffprobe: ffprobe.clone(),
+        };
+
+        let runs = [
+            (0u64, 1_000u64),
+            (1_000, 2_000),
+        ]
+        .map(|(start, end)| {
+            let tools = Tools {
+                ffmpeg_tools: where_the_program_is.clone(),
+                publisher: MovePublisher,
+            };
+            let input = input.clone();
+            std::thread::spawn(move || {
+                tools.run(
+                    &Request {
+                        operation: "tools.trim".to_string(),
+                        inputs: vec![input.clone()],
+                        settings: ToolSettings {
+                            start_ms: Some(start),
+                            end_ms: Some(end),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    },
+                    &Selection::inspect(std::slice::from_ref(&input)),
+                )
+            })
+            .join()
+            .expect("the run came home")
+        });
+        let outputs = |outcome: Outcome| match outcome {
+            Outcome::Succeeded { outputs } => outputs,
+            other => panic!("a run failed: {other:?}"),
+        };
+        let a = outputs(runs[0].clone());
+        let b = outputs(runs[1].clone());
+        assert_eq!(a.len(), 1, "one file out of the first run");
+        assert_eq!(b.len(), 1, "one file out of the second run");
+        assert_ne!(a[0], b[0], "the two runs' results are two files");
+        let held_a = crate::media::frames::duration_of(&where_the_program_is, &a[0])
+            .expect("the first result has a length");
+        let held_b = crate::media::frames::duration_of(&where_the_program_is, &b[0])
+            .expect("the second result has a length");
+        assert!(
+            (held_a - 1.0).abs() < 0.35 && (held_b - 1.0).abs() < 0.35,
+            "both results carry near a second, said {}s and {}s",
+            held_a,
+            held_b
+        );
         let _ = std::fs::remove_dir_all(&scratch);
     }
 }

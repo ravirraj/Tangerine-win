@@ -71,16 +71,38 @@ pub fn library() -> Option<PathBuf> {
         && let Some(folder) = program.parent()
     {
         candidates.push(folder.join(dll));
-        if folder
-            .file_name()
-            .is_some_and(|name| name == "debug" || name == "release")
-            && let Some(root) = folder.parent().and_then(Path::parent)
-        {
-            candidates.push(root.join("vendor").join("pdfium").join(dll));
+        // The place the repository keeps the library, when the program is
+        // built by cargo: target\release, or target\debug\deps for the
+        // tests. The repository is above the build folders, and the
+        // vendor folder is kept there.
+        //
+        // The folder the program runs in is deliberately not asked: it is
+        // whatever the person who started the program was standing in, and
+        // a library found that way would be one of no known kind, which
+        // binds and then faults.
+        let developed = match folder.file_name().map(|name| name.to_string_lossy().into_owned()) {
+            Some(name) => match name.as_str() {
+                // The tests: target\debug\deps - the repository is three
+                // folders above the folder of the program.
+                "deps" => folder
+                    .parent()
+                    .and_then(Path::parent)
+                    .and_then(Path::parent)
+                    .map(|root| root.join("vendor").join("pdfium").join(dll)),
+                // A build: target\release or target\debug - the repository
+                // is two folders above the folder of the program.
+                "debug" | "release" => folder
+                    .parent()
+                    .and_then(Path::parent)
+                    .map(|root| root.join("vendor").join("pdfium").join(dll)),
+                _ => None,
+            },
+            None => None,
+        };
+        if let Some(candidate) = developed {
+            candidates.push(candidate);
         }
     }
-    candidates.push(PathBuf::from(dll));
-    candidates.push(PathBuf::from("vendor").join("pdfium").join(dll));
     candidates.into_iter().find(|path| path.is_file())
 }
 
