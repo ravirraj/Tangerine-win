@@ -11,7 +11,6 @@ use crate::media::publish::Publisher;
 use crate::radial::execution::{Failure, Handler, Outcome, Request};
 use crate::radial::registry::{operation_by_id, Output};
 use crate::radial::selection::Selection;
-use std::path::Path;
 
 /// The handler for the document operations.
 pub struct Documents<P: Publisher> {
@@ -110,7 +109,8 @@ impl<P: Publisher> Handler for Documents<P> {
 mod tests {
     use super::*;
     use crate::media::publish::PublishError;
-    
+    use std::path::Path;
+
 
     struct Nothing;
 

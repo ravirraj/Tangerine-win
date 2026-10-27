@@ -19,12 +19,11 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DispatchMessageW, GetClientRect, LoadCursorW, PeekMessageW,
-    PostQuitMessage, RegisterClassW, SetForegroundWindow, SetLayeredWindowAttributes, SetWindowPos,
-    SetWindowTextW, ShowWindow, TranslateMessage, CW_USEDEFAULT, IDC_ARROW, LWA_ALPHA, MSG,
-    PM_REMOVE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER, SW_HIDE, SW_SHOW, WM_DESTROY,
-    WM_DPICHANGED, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_PAINT, WNDCLASSW,
-    WS_EX_LAYERED,
+    CreateWindowExW, DefWindowProcW, GetClientRect, LoadCursorW, PostQuitMessage,
+    RegisterClassW, SetForegroundWindow, SetLayeredWindowAttributes, SetWindowPos,
+    SetWindowTextW, ShowWindow, CW_USEDEFAULT, IDC_ARROW, LWA_ALPHA, SWP_NOACTIVATE,
+    SWP_NOMOVE, SWP_NOZORDER, SW_HIDE, SW_SHOW, WM_DESTROY, WM_DPICHANGED, WM_ERASEBKGND,
+    WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_PAINT, WNDCLASSW, WS_EX_LAYERED,
 };
 
 use crate::media::locator;
@@ -822,6 +821,10 @@ mod tests {
 #[cfg(test)]
 pub mod show_tests {
     use super::*;
+    // The tests drive the window themselves, so the pump is charged here.
+    use windows::Win32::UI::WindowsAndMessaging::{
+        DispatchMessageW, MSG, PeekMessageW, PM_REMOVE, TranslateMessage,
+    };
 
     #[test]
     fn showing_and_pumping_the_speed_card_does_not_panic() {
@@ -852,6 +855,10 @@ pub mod show_tests {
 #[cfg(test)]
 pub mod capture_tests {
     use super::*;
+    // The tests drive the window themselves, so the pump is charged here.
+    use windows::Win32::UI::WindowsAndMessaging::{
+        DispatchMessageW, MSG, PeekMessageW, PM_REMOVE, TranslateMessage,
+    };
 
     use crate::media::runner::ProcessRunner;
 

@@ -6,7 +6,7 @@
 //! The work happens on a worker, never on the thread that draws.
 
 use std::fs;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -367,6 +367,8 @@ impl<P: Publisher> Handler for FileActions<P> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // The tests take archives apart by hand; the release reads them whole.
+    use std::io::Read;
 
     struct Nothing;
 

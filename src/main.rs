@@ -3,6 +3,13 @@
 //! The program is a small system utility: it waits in the background, notices
 //! a file drag coming out of Explorer, and puts a radial wheel around the
 //! pointer when the user holds a modifier down.
+//!
+//! The branch still stands parts up whose wiring has not come: a settings
+//! window, a completion chime, the shell menu question, helpers the capture
+//! tests alone read. In a development build the tests speak for them and no
+//! one may be quieted; in a release build nothing does, so this one note says
+//! they are known and meant rather than lost.
+#![cfg_attr(not(debug_assertions), allow(dead_code))]
 
 mod app;
 mod diagnostics;

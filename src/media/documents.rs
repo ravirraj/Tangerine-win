@@ -4,13 +4,12 @@
 //! (SRT, VTT, TXT) and archive format conversion (ZIP, TAR, GZ).
 
 use std::fs;
-use std::io::{Read, Write};
+use std::io::Read;
 use std::path::Path;
 
 use calamine::Reader as _;
 use flate2::write::ZlibEncoder;
 use zip::ZipArchive;
-use zip::ZipWriter;
 
 /// Why a document conversion did not happen.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -762,6 +761,8 @@ mod tests {
     /// Makes a zip of the given parts, the way the office formats are put
     /// together, with the parts named as they are named in those formats.
     fn office_file(path: &Path, parts: &[(&str, &str)]) {
+        use std::io::Write as _;
+        use zip::ZipWriter;
         let file = fs::File::create(path).expect("the office file could be made");
         let mut zip = ZipWriter::new(file);
         for (name, content) in parts {
