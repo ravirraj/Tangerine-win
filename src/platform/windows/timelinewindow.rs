@@ -1520,10 +1520,14 @@ fn timeline_touched(window: HWND, x: i32, y: i32, pressed: bool) {
     if !near {
         return;
     }
-    let along = |moment: f64| {
-        let duration = STATE.with(|slot| slot.borrow().duration);
+    let along = |moment: f64, duration: f64| {
         bar.left + (fraction(moment, duration) * (bar.right - bar.left) as f32) as i32
     };
+    // The length of the whole is read once, before anything of the
+    // state is held: the closures below stand inside the held card,
+    // and a borrow that asks again there would answer with a panic
+    // that lets the window fall with everything else.
+    let duration = STATE.with(|slot| slot.borrow().duration);
 
     if pressed {
         STATE.with(|slot| {
@@ -1539,15 +1543,15 @@ fn timeline_touched(window: HWND, x: i32, y: i32, pressed: bool) {
                 let on_marker = state
                     .points
                     .iter()
-                    .any(|&point| (x - along(point)).abs() <= at(MARKER_REACH as f32));
+                    .any(|&point| (x - along(point, duration)).abs() <= at(MARKER_REACH as f32));
                 state.dragging = if on_marker {
                     Drag::Nothing
                 } else {
                     Drag::Playhead
                 };
             } else {
-                let take_start = (x - along(state.start)).abs() <= at(HANDLE_REACH as f32);
-                let take_end = (x - along(state.end)).abs() <= at(HANDLE_REACH as f32);
+                let take_start = (x - along(state.start, duration)).abs() <= at(HANDLE_REACH as f32);
+                let take_end = (x - along(state.end, duration)).abs() <= at(HANDLE_REACH as f32);
                 state.dragging = if take_start && !take_end {
                     Drag::Start
                 } else if take_end {
@@ -1586,7 +1590,6 @@ fn timeline_touched(window: HWND, x: i32, y: i32, pressed: bool) {
     // A press that took a marker stands the playhead on the cut it took:
     // the pointer need not hold on to anything to say where to go.
     if pressed {
-        let duration = STATE.with(|slot| slot.borrow().duration);
         let moment = ((x - bar.left) as f64 / (bar.right - bar.left) as f64).clamp(0.0, 1.0)
             * duration;
         let reach = MARKER_REACH as f64 * duration / (bar.right - bar.left) as f64;
@@ -2615,6 +2618,95 @@ mod show_tests {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
         window.hide();
+    }
+
+    /// Touches the audio trim card where a person's finger and mouse
+    /// land — the middle of the card, the strip itself, the transport —
+    /// and the window stays whole through every one of them.
+    #[test]
+    #[ignore = "needs the conversion program; opens a window"]
+    fn a_touch_on_the_audio_trim_card_leaves_the_window_up() {
+        use windows::Win32::UI::WindowsAndMessaging::{IsWindowVisible, SendMessageW};
+
+        crate::ui::wheel::install_platform();
+        let folder = std::env::temp_dir().join("open-tangerine-press-audio");
+        std::fs::create_dir_all(&folder).expect("the press folder was made");
+        let audio = make_test_audio(&folder);
+        let (sender, _receiver) = std::sync::mpsc::channel();
+        let mut window = TimelineWindow::new(sender).expect("the window was made");
+        window.show_for(
+            "tools.trim",
+            "Trim",
+            "Keeps the part you choose, trims silences.",
+            &[audio],
+        );
+        // The fade takes a few beats: the window is whole before the
+        // touch, the way a person finds it.
+        for _ in 0..60 {
+            unsafe {
+                let mut message = MSG::default();
+                while PeekMessageW(&mut message, None, 0, 0, PM_REMOVE).as_bool() {
+                    let _ = TranslateMessage(&message);
+                    DispatchMessageW(&message);
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        unsafe {
+            assert!(
+                IsWindowVisible(window.window).as_bool(),
+                "the trim window is up before the touch"
+            )
+        };
+
+        // Where the touch lands: the middle of the card, the strip
+        // itself, the transport above the footer, and the header.
+        let spots = {
+            let mut rect = RECT::default();
+            unsafe {
+                let _ = GetClientRect(window.window, &mut rect);
+            }
+            let mid_x = (rect.left + rect.right) / 2;
+            let layout = Layout::of(rect.right, rect.bottom, 1.0);
+            let strip_y = (layout.timeline.top + layout.timeline.bottom) / 2;
+            [(mid_x, (rect.top + rect.bottom) / 2), (mid_x, strip_y)]
+        };
+        let at = |spot: (i32, i32)| {
+            LPARAM(((spot.1 as isize & 0xFFFF) << 16) | (spot.0 as isize & 0xFFFF))
+        };
+        for spot in spots {
+            unsafe {
+                let _ = SendMessageW(
+                    window.window,
+                    WM_LBUTTONDOWN,
+                    Some(WPARAM(
+                        windows::Win32::System::SystemServices::MK_LBUTTON.0 as usize,
+                    )),
+                    Some(at(spot)),
+                );
+                let _ = SendMessageW(window.window, WM_LBUTTONUP, Some(WPARAM(0)), Some(at(spot)));
+            }
+            for _ in 0..8 {
+                unsafe {
+                    let mut message = MSG::default();
+                    while PeekMessageW(&mut message, None, 0, 0, PM_REMOVE).as_bool() {
+                        let _ = TranslateMessage(&message);
+                        DispatchMessageW(&message);
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            unsafe {
+                assert!(
+                    IsWindowVisible(window.window).as_bool(),
+                    "the trim window stays up through a touch at ({}, {})",
+                    spot.0,
+                    spot.1
+                )
+            };
+        }
+        window.hide();
+        let _ = std::fs::remove_dir_all(&folder);
     }
 
     /// Opens the trim window on a real audio file, lets waveform render,
