@@ -10,6 +10,7 @@
 //! one may be quieted; in a release build nothing does, so this one note says
 //! they are known and meant rather than lost.
 #![cfg_attr(not(debug_assertions), allow(dead_code))]
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
 mod diagnostics;

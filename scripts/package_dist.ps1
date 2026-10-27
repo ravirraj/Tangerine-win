@@ -94,6 +94,7 @@ Write-Host ("Zip package created successfully: {0:N2} MB" -f $ZipSize) -Foregrou
 # Check for Inno Setup compiler to build the installer if available
 $IsccCandidates = @(
     "iscc",
+    "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe",
     "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
     "${env:ProgramFiles}\Inno Setup 6\ISCC.exe"
 )
