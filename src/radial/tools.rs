@@ -1938,8 +1938,51 @@ impl<P: Publisher> Tools<P> {
 
         match crate::media::probe::kind_of(&source.format) {
             Some(crate::media::probe::Kind::Image) => {
+                // What was asked of the file: the tags spelled new, or
+                // the sensitive ones gone. With neither asked, the copy
+                // is a plain fresh encoding — which is also what "remove
+                // all" means on a photograph, for the picture library
+                // makes no block of tags when it makes a picture.
+                let asks_for_changes =
+                    settings.metadata_remove_sensitive || !settings.metadata_tags.is_empty();
+                let is_jpeg_family =
+                    matches!(source_ext.as_str(), "jpg" | "jpeg" | "jpe" | "jfif");
+
                 let img = image::open(input).map_err(|_| ToolError::ReadError)?;
-                img.save(&temporary).map_err(|_| ToolError::WriteError)?;
+
+                if settings.metadata_remove_all || !asks_for_changes {
+                    img.save(&temporary).map_err(|_| ToolError::WriteError)?;
+                    let finals = metadata_final_names(input, suffix, &source_ext);
+                    return self.publish(&finals, &temporary);
+                }
+
+                if !is_jpeg_family {
+                    // The other pictures carry no block of tags the
+                    // program can write yet — said in a notice, rather
+                    // than silently leaving what was asked undone.
+                    return Err(ToolError::NotImplemented);
+                }
+
+                // A fresh photograph with the words asked of it: the
+                // picture itself is made as the library makes it, then
+                // the block of fields is put into it — the camera's own
+                // fields carried over, the asked ones taking their
+                // slots.
+                let mut fresh = Vec::new();
+                img.write_to(&mut std::io::Cursor::new(&mut fresh), image::ImageFormat::Jpeg)
+                    .map_err(|_| ToolError::WriteError)?;
+
+                let original = crate::media::metadata::exif_fields(input).unwrap_or_default();
+                let edits = crate::media::metadata::edits_from_ffmpeg_keys(&settings.metadata_tags);
+                let fields = crate::media::metadata::recompose_exif_fields(
+                    original,
+                    &edits,
+                    settings.metadata_remove_sensitive,
+                );
+                let written = crate::media::metadata::jpeg_with_exif(&fresh, &fields)
+                    .map_err(|_| ToolError::WriteError)?;
+                std::fs::write(&temporary, written).map_err(|_| ToolError::WriteError)?;
+
                 let finals = metadata_final_names(input, suffix, &source_ext);
                 self.publish(&finals, &temporary)
             }
@@ -4696,6 +4739,107 @@ mod tests {
             (picture.width(), picture.height()),
             (240, 320),
             "the turn stood the sides the other way"
+        );
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    // A photograph saves under its own words: the best of what the
+    // window asks is carried through the EXIF block, the way the sound
+    // and movie tags are carried through the conversion program's own
+    // hands.
+
+    fn request_for(operation: &str, inputs: &[PathBuf], settings: ToolSettings) -> Request {
+        Request {
+            operation: operation.to_string(),
+            inputs: inputs.to_vec(),
+            settings,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_jpg_is_saved_with_its_words() {
+        let scratch = std::env::temp_dir().join("open-tangerine-metadata-jpg-test");
+        let _ = std::fs::remove_dir_all(&scratch);
+        std::fs::create_dir_all(&scratch).expect("the scratch folder was made");
+        let input =
+            image::DynamicImage::new_rgb8(64, 48).save(&scratch.join("photo.jpg")).map(|_| scratch.join("photo.jpg")).expect("the picture was made");
+
+        let tools = Tools {
+            ffmpeg_tools: crate::media::locator::Tools {
+                ffmpeg: PathBuf::from("ffmpeg"),
+                ffprobe: PathBuf::from("ffprobe"),
+            },
+            publisher: CopyPublisher,
+        };
+        let request = request_for(
+            "tools.metadata",
+            std::slice::from_ref(&input),
+            ToolSettings {
+                metadata_tags: vec![
+                    ("title".to_string(), "At the harbor".to_string()),
+                    ("artist".to_string(), "Ravi".to_string()),
+                ],
+                ..Default::default()
+            },
+        );
+        let outcome = tools.run(&request, &Selection::inspect(&[input.clone()]));
+        let outputs = match outcome {
+            Outcome::Succeeded { outputs } => outputs,
+            Outcome::Failed { reason } => panic!("the save failed: {:?}", reason),
+            Outcome::Cancelled => panic!("the save was not asked to stop"),
+        };
+        let made = outputs.first().expect("the copy is there");
+        let said = crate::media::metadata::read_tags(made, None);
+        assert_eq!(
+            said.get(&crate::media::metadata::MetadataTag::Title).map(String::as_str),
+            Some("At the harbor"),
+            "the title the window asked stands in the copy"
+        );
+        assert_eq!(
+            said.get(&crate::media::metadata::MetadataTag::Artist).map(String::as_str),
+            Some("Ravi")
+        );
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn a_jpg_asked_plain_carries_no_words() {
+        let scratch = std::env::temp_dir().join("open-tangerine-metadata-clean-jpg-test");
+        let _ = std::fs::remove_dir_all(&scratch);
+        std::fs::create_dir_all(&scratch).expect("the scratch folder was made");
+        let input = scratch.join("photo.jpg");
+        image::DynamicImage::new_rgb8(64, 48)
+            .save(&input)
+            .expect("the picture was made");
+
+        let tools = Tools {
+            ffmpeg_tools: crate::media::locator::Tools {
+                ffmpeg: PathBuf::from("ffmpeg"),
+                ffprobe: PathBuf::from("ffprobe"),
+            },
+            publisher: CopyPublisher,
+        };
+        let request = request_for(
+            "tools.metadata",
+            std::slice::from_ref(&input),
+            ToolSettings {
+                metadata_remove_all: true,
+                ..Default::default()
+            },
+        );
+        let outcome = tools.run(&request, &Selection::inspect(&[input.clone()]));
+        let outputs = match outcome {
+            Outcome::Succeeded { outputs } => outputs,
+            Outcome::Failed { reason } => panic!("the clean save failed: {:?}", reason),
+            Outcome::Cancelled => panic!("the clean save was not asked to stop"),
+        };
+        let made = outputs.first().expect("the clean copy is there");
+        let picture = image::open(made).expect("the picture reads back");
+        assert_eq!(
+            (picture.width(), picture.height()),
+            (64, 48),
+            "the picture is the same picture, with nothing said over it"
         );
         let _ = std::fs::remove_dir_all(&scratch);
     }
